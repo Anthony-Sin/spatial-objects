@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pick your rival — storywood scrap</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/three.module.js",
+  "three/addons/loaders/GLTFLoader.js": "./vendor/three/GLTFLoader.js"
+} }
+</script>
+<style>
+  :root { --paper:#FFF8EC; --paper2:#FDF3E3; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { min-height: 100%; background: var(--paper2); }
+  body { font-family: "Fredoka","Baloo 2","Avenir Next","Trebuchet MS",system-ui,sans-serif;
+    color: var(--ink); padding: 26px 30px 120px; }
+
+  .mast { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+  .wm { font-weight: 700; font-size: 26px; letter-spacing: .08em; color: var(--ink); }
+  .wm span { display: block; font-weight: 500; font-size: 10px; letter-spacing: .3em;
+    text-transform: uppercase; color: rgba(43,33,24,.55); margin-top: 3px; }
+  .back { margin-left: auto; font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--ink); text-decoration: none; border-bottom: 2px solid rgba(43,33,24,.35);
+    padding-bottom: 2px; }
+  .back + .back { margin-left: 14px; }
+  .back:hover { color: var(--coral); border-color: var(--coral); }
+  .note { margin-top: 8px; font-size: 12px; color: rgba(43,33,24,.6); letter-spacing: .06em; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 18px; margin-top: 22px; max-width: 1100px; }
+  .cell { position: relative; background: var(--paper); border: 2.5px solid var(--ink);
+    border-radius: 20px; overflow: hidden; cursor: pointer;
+    box-shadow: 0 5px 0 rgba(43,33,24,.35); transition: transform .18s cubic-bezier(.34,1.56,.64,1); }
+  .cell:nth-child(3n+1) { transform: rotate(-1.2deg); }
+  .cell:nth-child(3n+2) { transform: rotate(.8deg); }
+  .cell:hover { transform: translateY(-4px) rotate(0deg); }
+  .cell canvas { width: 100%; display: block; aspect-ratio: 6 / 5; }
+  .cell .nm { padding: 9px 14px 2px; font-weight: 700; font-size: 15px; letter-spacing: .04em; }
+  .cell .lic { padding: 0 14px 12px; font-size: 10px; letter-spacing: .16em;
+    text-transform: uppercase; color: rgba(43,33,24,.55); }
+  .cell .st { position: absolute; top: 10px; right: 10px; font-size: 9px; font-weight: 700;
+    letter-spacing: .14em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px;
+    border: 2px solid var(--ink); background: var(--sun); }
+  .cell.sel { border-color: var(--coral); border-width: 3.5px;
+    box-shadow: 0 7px 0 rgba(255,107,87,.55); }
+  .cell.sel .st { background: var(--coral); color: var(--paper); }
+  .cell.dead { cursor: not-allowed; opacity: .45; filter: grayscale(.7); }
+  .cell.dead .st { background: rgba(43,33,24,.15); }
+  .cell.proto .st { background: var(--leaf); color: var(--paper); }
+
+  .enterbar { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 16px; background: var(--paper);
+    border: 3px solid var(--ink); border-radius: 20px; padding: 12px 18px;
+    box-shadow: 0 6px 0 rgba(43,33,24,.4), 0 14px 34px rgba(0,0,0,.18); z-index: 10; }
+  .enterbar .pick { font-size: 13px; letter-spacing: .1em; text-transform: uppercase; }
+  .enterbar .pick b { color: var(--coral); }
+  .enterbar a { display: inline-block; background: var(--leaf); color: var(--paper);
+    text-decoration: none; font-weight: 700; font-size: 14px; letter-spacing: .1em;
+    text-transform: uppercase; padding: 10px 20px; border-radius: 14px;
+    border: 2.5px solid var(--ink); box-shadow: 0 4px 0 var(--ink);
+    transition: transform .15s; }
+  .enterbar a:hover { background: var(--coral); transform: translateY(-2px); }
+  .enterbar a:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+  .enterbar a.dim { background: rgba(43,33,24,.25); pointer-events: none; }
+</style>
+</head>
+<body>
+  <header class="mast">
+    <div class="wm">PICK YOUR RIVAL<span>storywood scrap · character lineup</span></div>
+    <a class="back" href="./boxing.html">ring →</a>
+    <a class="back" href="./">app</a>
+  </header>
+  <div class="note" data-note>loading the lineup…</div>
+  <div class="grid" data-grid></div>
+
+  <div class="enterbar">
+    <div class="pick">your rival: <b data-pick>—</b></div>
+    <a data-enter class="dim" href="./boxing.html">enter the ring →</a>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    const $ = (s) => document.querySelector(s);
+    const grid = $('[data-grid]'), note = $('[data-note]');
+    const SLOT_W = 240, SLOT_H = 200, GAP = 3;
+
+    /* ---------- roster: manifest candidates + protoBoxer VARIANTS ---------- */
+    const manifest = await fetch('./shared/boxing/assetManifest.json')
+      .then(r => r.ok ? r.json() : { candidates: [] })
+      .catch(() => ({ candidates: [] }));
+    const proto = await import('./shared/boxing/protoBoxer.js').catch(() => null);
+    const VARIANTS = proto?.VARIANTS || [];
+    const VINFO = proto?.VARIANT_INFO || {};
+
+    // manifest "PROP" entries (ring/gloves/bag) are set dressing, not fighters
+    const fighters = (manifest.candidates || [])
+      .filter(c => !/^PROP/i.test(c.notes || '') && (c.type || 'glb') === 'glb');
+    const nProps = (manifest.candidates || []).length - fighters.length;
+    // GLB fighters only — procedural variants benched per player direction
+    const entries = fighters.map(c => ({ id: c.id, name: c.name || c.id,
+      type: c.type || 'glb', lic: c.license || 'unknown', cand: c }));
+    if (!entries.length)
+      note.textContent = 'no rivals found yet — check assetManifest.json + protoBoxer.js';
+    else note.textContent =
+      `${entries.length} contender${entries.length === 1 ? '' : 's'} in the lineup · click to scout` +
+      (nProps ? ` · ${nProps} prop${nProps === 1 ? '' : 's'} stayed backstage` : '');
+
+    /* ---------- DOM cells ---------- */
+    const cells = entries.map((e, i) => {
+      const d = document.createElement('div');
+      d.className = 'cell' + (e.type === 'proto' ? ' proto' : '');
+      d.innerHTML = `<canvas width="${SLOT_W}" height="${SLOT_H}"></canvas>
+        <div class="st">${e.type === 'proto' ? 'proto' : 'glb'}</div>
+        <div class="nm">${e.name}</div><div class="lic">${e.lic}</div>`;
+      grid.append(d);
+      const rec = { e, i, el: d, ctx: d.querySelector('canvas').getContext('2d'),
+        obj: null, impl: null, ok: false };
+      d.onclick = () => select(rec);
+      return rec;
+    });
+
+    /* ---------- one shared render pass for every thumbnail ----------
+       Each fighter lives at x = i*GAP*… in one scene; we render each slot
+       column of an offscreen WebGL canvas, then drawImage into the cells. */
+    const glc = document.createElement('canvas');
+    const ren = new THREE.WebGLRenderer({ canvas: glc, antialias: true,
+      preserveDrawingBuffer: true, alpha: true });
+    ren.setSize(SLOT_W * Math.max(1, cells.length), SLOT_H, false);
+    ren.setPixelRatio(1);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xfdf3e3);
+    scene.add(new THREE.HemisphereLight(0xfff2dd, 0x8a7f6c, 1.15));
+    const key = new THREE.DirectionalLight(0xffe6bd, 1.6); key.position.set(3, 6, 4);
+    scene.add(key);
+    const cam = new THREE.PerspectiveCamera(40, SLOT_W / SLOT_H, .1, 60);
+    const ACC = [0xff6b57, 0xffc53d, 0x4fb06d, 0x5da9e9, 0xb565d8];
+    for (const c of cells) {
+      const x = c.i * 3;
+      // paper pedestal + accent disc backdrop per slot
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(.95, 40),
+        new THREE.MeshBasicMaterial({ color: ACC[c.i % ACC.length] }));
+      disc.position.set(x, .78, -.8); scene.add(disc);
+      const ped = new THREE.Mesh(new THREE.CylinderGeometry(.8, .9, .12, 28),
+        new THREE.MeshStandardMaterial({ color: 0xfff8ec, roughness: .9 }));
+      ped.position.set(x, -.06, 0); scene.add(ped);
+      const trim = new THREE.Mesh(new THREE.TorusGeometry(.85, .035, 10, 40).rotateX(Math.PI / 2),
+        new THREE.MeshStandardMaterial({ color: 0x2b2118, roughness: .9 }));
+      trim.position.set(x, .01, 0); scene.add(trim);
+    }
+
+    const die = (c, why) => {
+      c.el.classList.add('dead'); c.el.querySelector('.st').textContent = why;
+    };
+    const loadGlb = (c) => new Promise((res) => {
+      const cand = c.e?.cand || c.cand;
+      if (!cand?.path) return res(null);
+      new GLTFLoader().load('./' + String(cand.path).replace(/^\.?\//, ''),
+        g => {
+          const o = g.scene || g.scenes?.[0]; if (!o) return res(null);
+          if (cand.scale) o.scale.setScalar(cand.scale);
+          else {
+            const b = new THREE.Box3().setFromObject(o);
+            const h = b.max.y - b.min.y || 1; o.scale.setScalar(1.5 / h);
+          }
+          {   // manifest yOffset = the lift that grounds the feet; else auto-rest
+            const b = new THREE.Box3().setFromObject(o);
+            o.position.y += cand.yOffset ?? -b.min.y;
+          }
+          o.rotation.y = cand.yaw || 0;
+          res({ o, clips: g.animations || [] });
+        }, undefined, () => res(null));
+    });
+
+    const loaders = cells.map(async (c) => {
+      const x = c.i * 3;
+      if (c.e.type === 'proto') {
+        try {
+          c.impl = proto.buildBoxer(THREE, { variant: c.e.variant });
+          c.impl.group.position.set(x, .02, 0);
+          c.impl.snap?.('idle', 0);            // instant idle pose for the thumb
+          scene.add(c.impl.group); c.ok = true;
+        } catch { die(c, 'not built'); }
+      } else if (c.e.type === 'glb') {
+        const got = await loadGlb(c);
+        if (got) {
+          c.obj = got.o;
+          c.obj.position.x += x; c.obj.position.y += .02;
+          const idle = got.clips.find(k => k.name.toLowerCase().includes('idle'));
+          if (idle) { c.mixer = new THREE.AnimationMixer(c.obj); c.mixer.clipAction(idle).play(); }
+          scene.add(c.obj); c.ok = true;
+        }
+        else die(c, 'missing');
+      } else die(c, c.e.type);
+    });
+    await Promise.allSettled(loaders);
+    if (!cells.some(c => c.ok)) note.textContent = 'nobody showed up to the weigh-in…';
+
+    /* ---------- selection ---------- */
+    const pickEl = $('[data-pick]'), enterEl = $('[data-enter]');
+    let picked = null;
+    try { picked = localStorage.getItem('boxing:npc'); } catch {}
+    function select(rec) {
+      if (!rec.ok || rec.el.classList.contains('dead')) return;
+      picked = rec.e.id;
+      try { localStorage.setItem('boxing:npc', picked); } catch {}
+      for (const c of cells) c.el.classList.toggle('sel', c === rec);
+      pickEl.textContent = rec.e.name.toUpperCase();
+      enterEl.classList.remove('dim');
+      note.textContent = `${rec.e.name} wraps their hands — see you in the ring`;
+    }
+    const pre = cells.find(c => c.e.id === picked && c.ok) || cells.find(c => c.ok);
+    if (pre) select(pre);
+
+    /* ---------- thumbnail loop ---------- */
+    let last = performance.now(), t = 0;
+    const slotCam = new THREE.Vector3(), look = new THREE.Vector3();
+    function loop() {
+      requestAnimationFrame(loop);
+      const now = performance.now(), dt = Math.min(.05, (now - last) / 1000); last = now; t += dt;
+      for (const c of cells) {
+        if (c.impl) c.impl.tick(dt, {});
+        if (c.mixer) c.mixer.update(dt);
+        if (c.obj && !c.mixer) {   // rigless GLBs idle-sway so cells feel alive
+          c.obj.rotation.y = Math.sin(t * .8 + c.i) * .35;
+          c.obj.position.y = .02 + Math.sin(t * 2.2 + c.i * 1.7) * .03;
+        }
+      }
+      for (const c of cells) {
+        const x = c.i * 3;
+        slotCam.set(x + .9, 1.35, 2.9); look.set(x, .72, 0);
+        cam.position.copy(slotCam); cam.lookAt(look);
+        ren.setViewport(c.i * SLOT_W, 0, SLOT_W, SLOT_H);
+        ren.setScissor(c.i * SLOT_W, 0, SLOT_W, SLOT_H);
+        ren.setScissorTest(true);
+        ren.render(scene, cam);
+        c.ctx.clearRect(0, 0, SLOT_W, SLOT_H);
+        c.ctx.drawImage(glc, c.i * SLOT_W, 0, SLOT_W, SLOT_H, 0, 0, SLOT_W, SLOT_H);
+      }
+    }
+    if (cells.length) loop();
+  </script>
+</body>
+</html>

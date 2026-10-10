@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>storywood scrap — pip's punch-out</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/three.module.js",
+  "three/addons/loaders/GLTFLoader.js": "./vendor/three/GLTFLoader.js"
+} }
+</script>
+<style>
+  :root { --paper:#FFF8EC; --paper2:#FDF3E3; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: #241c12; }
+  body { font-family: "Fredoka","Baloo 2","Avenir Next","Trebuchet MS",system-ui,sans-serif;
+    color: var(--paper); }
+  #world { position: fixed; inset: 0; display: block; }
+  #hands { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+
+  .mast { position: fixed; top: 22px; left: 30px; right: 30px; z-index: 20;
+    display: flex; align-items: baseline; gap: 20px; pointer-events: none; }
+  .wm { font-weight: 700; font-size: 22px; letter-spacing: .1em; color: var(--sun);
+    text-shadow: 0 2px 0 var(--ink), 0 4px 14px rgba(0,0,0,.5); }
+  .wm span { display:block; font-weight: 500; font-size: 9px; letter-spacing: .3em;
+    color: rgba(255,248,236,.65); text-transform: uppercase; margin-top: 3px; text-shadow: none; }
+  .status { font-size: 10px; letter-spacing: .2em; text-transform: uppercase;
+    color: #9fd8b7; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
+  .back { margin-left: auto; font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+    color: rgba(255,248,236,.85); text-decoration: none; border-bottom: 2px solid rgba(255,248,236,.4);
+    padding-bottom: 2px; pointer-events: auto; }
+  .back + .back { margin-left: 14px; }
+  .back:hover { color: var(--sun); border-color: var(--sun); }
+
+  /* bout card — chunky rounded paper sticker */
+  .card { position: fixed; top: 84px; left: 50%; transform: translateX(-50%) rotate(-1deg); z-index: 20;
+    min-width: 380px; border: 2.5px solid var(--ink); background: var(--paper);
+    border-radius: 20px; padding: 12px 20px 14px; color: var(--ink);
+    box-shadow: 0 6px 0 rgba(43,33,24,.45), 0 14px 34px rgba(0,0,0,.45); }
+  .card .who { font-size: 10px; letter-spacing: .3em; text-transform: uppercase;
+    color: var(--coral); font-weight: 700; }
+  .card .job { font-weight: 700; font-size: 20px; margin: 3px 0 8px; letter-spacing: .04em; }
+  .card .job .clock { float: right; color: var(--sky); }
+  .hp-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .hp-row .lbl { width: 44px; font-size: 10px; font-weight: 700; letter-spacing: .18em;
+    text-transform: uppercase; }
+  .hp-row .track { flex: 1; height: 12px; border: 2px solid var(--ink); border-radius: 8px;
+    background: rgba(43,33,24,.12); overflow: hidden; }
+  .hp-row .track i { display: block; height: 100%; width: 100%;
+    border-radius: 5px; transition: width .18s cubic-bezier(.34,1.56,.64,1); }
+  .hp-row.you .track i { background: var(--coral); }
+  .hp-row.npc .track i { background: var(--sky); }
+  .hp-row.stam .track { height: 7px; }
+  .hp-row.stam .track i { background: var(--sun); }
+
+  .score { position: fixed; top: 88px; right: 30px; z-index: 20; text-align: right; }
+  .score .n { font-weight: 700; font-size: 38px; color: var(--sun);
+    text-shadow: 0 2px 0 var(--ink), 0 4px 14px rgba(0,0,0,.55); }
+  .score .l { font-size: 9px; letter-spacing: .3em; text-transform: uppercase;
+    color: rgba(255,248,236,.65); }
+
+  /* event feed — stacked paper pills under the score */
+  .feed { position: fixed; top: 152px; right: 30px; z-index: 20; display: flex;
+    flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none; }
+  .feed div { background: var(--paper); color: var(--ink); border: 2px solid var(--ink);
+    border-radius: 999px; padding: 3px 12px; font-size: 10.5px; font-weight: 700;
+    letter-spacing: .12em; text-transform: uppercase;
+    animation: feedin .25s cubic-bezier(.34,1.56,.64,1); }
+  @keyframes feedin { from { transform: translateX(30px) scale(.6); opacity: 0; } }
+
+  .peep { position: fixed; left: 30px; bottom: 30px; z-index: 20; width: 238px;
+    border: 2.5px solid var(--ink); border-radius: 16px; overflow: hidden;
+    box-shadow: 0 6px 0 rgba(43,33,24,.45), 0 12px 30px rgba(0,0,0,.5); }
+  .peep video { width: 100%; display: block; transform: scaleX(-1); }
+  .peep .tag { position: absolute; left: 0; right: 0; bottom: 0; font-size: 8.5px;
+    letter-spacing: .18em; text-transform: uppercase; color: var(--paper);
+    background: rgba(43,33,24,.7); padding: 4px 8px; }
+  .peep canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  .legend { position: fixed; right: 30px; bottom: 30px; z-index: 20; text-align: right;
+    font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase;
+    color: rgba(255,248,236,.85); text-shadow: 0 1px 6px rgba(0,0,0,.85); line-height: 2; }
+  .legend b { color: var(--sun); }
+
+  .peep[hidden] { display: none !important; }
+  /* fight declutter: instructions + cam preview hide once gloves are up */
+  body.fighting .legend, body.fighting .peep { display: none !important; }
+  /* contrast: dark outline behind all paper-light HUD text over bright scene */
+  .legend, .status, .wm, .back, .score .l, .feed div, .tele, .flash {
+    text-shadow: 0 1px 2px rgba(20,14,8,.95), 0 0 10px rgba(20,14,8,.6); }
+  .mast .back { pointer-events: auto; }
+
+  /* telegraph "!" sticker */
+  .tele { position: fixed; top: 26%; left: 50%; z-index: 30;
+    transform: translate(-50%,-50%) scale(0); width: 74px; height: 74px;
+    border: 3px solid var(--ink); border-radius: 50%; background: var(--coral);
+    color: var(--paper); font-weight: 700; font-size: 44px; line-height: 68px;
+    text-align: center; text-shadow: 0 2px 0 var(--ink); pointer-events: none;
+    box-shadow: 0 5px 0 rgba(43,33,24,.5); }
+  .tele.on { transform: translate(-50%,-50%) scale(1) rotate(-6deg);
+    transition: transform .16s cubic-bezier(.34,1.56,.64,1);
+    animation: telepulse .3s infinite alternate; }
+  @keyframes telepulse { to { transform: translate(-50%,-50%) scale(1.12) rotate(5deg); } }
+
+  .flash { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); z-index: 30;
+    font-weight: 700; font-size: 42px; color: var(--sun); letter-spacing: .06em;
+    text-shadow: 0 3px 0 var(--ink), 0 6px 22px rgba(0,0,0,.7);
+    opacity: 0; transition: opacity .35s; pointer-events: none; }
+
+  /* damage vignette — red rim pulse when the player eats a hit */
+  .vin { position: fixed; inset: 0; z-index: 15; pointer-events: none; opacity: 0;
+    background: radial-gradient(ellipse at center, transparent 46%,
+      rgba(200,26,14,.38) 78%, rgba(160,10,8,.62) 100%); }
+
+  /* end-of-fight card */
+  .endcard { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(0);
+    z-index: 35; background: var(--paper); color: var(--ink); border: 3px solid var(--ink);
+    border-radius: 24px; padding: 26px 40px; text-align: center;
+    box-shadow: 0 8px 0 rgba(43,33,24,.5), 0 20px 50px rgba(0,0,0,.5);
+    transition: transform .3s cubic-bezier(.34,1.56,.64,1); }
+  .endcard.on { transform: translate(-50%,-50%) scale(1) rotate(-1.5deg); }
+  .endcard .big { font-size: 34px; font-weight: 700; }
+  .endcard .sub { font-size: 12px; letter-spacing: .2em; text-transform: uppercase;
+    color: rgba(43,33,24,.6); margin: 6px 0 16px; }
+  .replay { padding: 10px 22px; color: var(--paper); background: var(--leaf);
+    border: 2.5px solid var(--ink); border-radius: 14px; font: 700 13px inherit;
+    letter-spacing: .1em; text-transform: uppercase; cursor: pointer;
+    box-shadow: 0 4px 0 var(--ink); }
+  .replay:hover { background: var(--coral); }
+  .replay:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--ink); }
+
+  @media (max-width: 700px) {
+    .mast { top: 12px; left: 14px; right: 14px; flex-wrap: wrap; gap: 6px 12px; }
+    .wm { width: 100%; font-size: 18px; }
+    .status { font-size: 8px; }
+    .back { margin-left: 0; font-size: 9px; }
+    .card { top: 94px; width: calc(100% - 28px); min-width: 0; padding: 10px 12px; }
+    .card .job { font-size: 16px; }
+    .score { top: 18px; right: 14px; }
+    .score .n { font-size: 24px; }
+    .feed { top: 60px; right: 14px; }
+    .peep { left: 14px; bottom: 14px; width: 116px; }
+    .legend { right: 14px; bottom: 14px; font-size: 8px; line-height: 1.6; max-width: 55vw; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="world"></canvas>
+  <canvas id="hands"></canvas>
+
+  <header class="mast">
+    <div class="wm">STORYWOOD SCRAP<span>pip's punch-out · exhibition bout</span></div>
+    <div class="status" data-status>booting…</div>
+    <a class="back" href="./lineup.html">lineup →</a>
+    <a class="back" href="./">app</a>
+  </header>
+
+  <div class="card">
+    <div class="who">BOUT CARD · <span data-npcname>PIP</span> VS YOU</div>
+    <div class="job"><span data-round>ROUND 1</span><span class="clock" data-time>1:30</span></div>
+    <div class="hp-row you"><div class="lbl">YOU</div><div class="track"><i data-php></i></div></div>
+    <div class="hp-row stam"><div class="lbl">STAM</div><div class="track"><i data-stam></i></div></div>
+    <div class="hp-row npc"><div class="lbl" data-npclbl>PIP</div><div class="track"><i data-nhp></i></div></div>
+  </div>
+
+  <div class="score"><div class="n" data-score>0</div><div class="l">ringside pts</div></div>
+  <div class="feed" data-feed></div>
+  <div class="vin" data-vin></div>
+  <div class="tele" data-tele>!</div>
+  <div class="flash" data-flash></div>
+
+  <div class="endcard" data-end>
+    <div class="big" data-endtitle>YOU WIN!</div>
+    <div class="sub" data-endsub></div>
+    <button class="replay" data-replay>Run it back</button>
+  </div>
+
+  <div class="peep">
+    <video data-cam muted playsinline></video>
+    <canvas data-nose></canvas>
+    <div class="tag" data-peep>face · —</div>
+  </div>
+
+  <div class="legend">
+    <div><b>punch</b> — thrust a fist at the camera · <b>guard</b> — gloves up by your face</div>
+    <div><b>lean</b> — sway / dodge a telegraph · <b>c</b> — recenter · <b>m</b> — mute</div>
+    <div><b>mouse</b> — left/right drag = each glove · <b>shift</b>-drag = sway</div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import Hands from './shared/hands.js';
+    import { Face } from './shared/face.js';
+    import { buildScene } from './shared/boxing/scene.js';
+    import { drawBoxGlove } from './shared/boxing/boxglove.js';
+
+    const params = new URLSearchParams(location.search);
+    const $ = (s) => document.querySelector(s);
+    const status = $('[data-status]');
+    const el = {
+      round: $('[data-round]'), time: $('[data-time]'), php: $('[data-php]'),
+      nhp: $('[data-nhp]'), stam: $('[data-stam]'), score: $('[data-score]'), feed: $('[data-feed]'),
+      tele: $('[data-tele]'), flash: $('[data-flash]'), end: $('[data-end]'),
+      vin: $('[data-vin]'),
+      endTitle: $('[data-endtitle]'), endSub: $('[data-endsub]'),
+      npcName: $('[data-npcname]'), npcLbl: $('[data-npclbl]'), peep: $('[data-peep]'),
+    };
+
+    /* ================= renderer / stage ================= */
+    const cvs = $('#world');
+    const ren = new THREE.WebGLRenderer({ canvas: cvs, antialias: true });
+    ren.setPixelRatio(Math.min(devicePixelRatio, 2));
+    ren.shadowMap.enabled = true;
+    const cam = new THREE.PerspectiveCamera(68, 1, .05, 120);
+    cam.position.set(0, 1.7, 4.6); cam.lookAt(0, 1, 0);
+
+    const world = buildScene(THREE, ren);
+    const scene = world.scene;
+
+    /* ================= webcam + trackers =================
+       ?notrack skips camera + landmarkers entirely (e2e drives __forceHands) */
+    const video = $('[data-cam]');
+    const noTrack = !!params.get('notrack');
+    if (!noTrack) try {
+      if (params.get('vid')) {
+        video.src = params.get('vid'); video.loop = true; video.muted = true; await video.play();
+      } else {
+        video.srcObject = await navigator.mediaDevices.getUserMedia(
+          { video: { width: 960, height: 540 }, audio: false });
+        await video.play();
+      }
+      status.textContent = 'camera live';
+    } catch { status.textContent = 'mouse mode'; $('.peep').hidden = true; }
+    if (noTrack) { status.textContent = 'synthetic mode'; $('.peep').hidden = true; }
+    let hands = null, face = null;
+    if (!noTrack && (video.srcObject || video.src)) {
+      try { face = await Face.create(video, './vendor/mediapipe'); status.textContent = `face · ${face.delegate}`; } catch {}
+      try { hands = await Hands.create(video, './vendor/mediapipe'); } catch {}
+    }
+
+    /* ================= game glue =================
+       Sibling contract modules may still be in flight — if game.js can't
+       load, the page degrades to an idle ring instead of a black screen. */
+    let game = null;
+    window.__boxing = { THREE, scene, cam, log: [] };
+    try {
+      const { createGame } = await import('./shared/boxing/game.js');
+      game = await createGame({ THREE, renderer: ren, cam, world, hands, face });
+      const nm = (game.fight.state.npc.name || game.npc.name || 'PIP').toUpperCase();
+      el.npcName.textContent = nm;
+      el.npcLbl.textContent = nm.split(' ')[0];   // tiny row label gets the short name
+      window.__boxing = { THREE, scene, cam, game, npc: game.npc, log: [],
+        get fight() { return game.fight; }, get sim() { return game.sim; },
+        get tracker() { return game.tracker; }, get state() { return game.fight.state; } };
+    } catch (e) {
+      console.warn('boxing: game glue unavailable — idle ring only', e);
+      status.textContent = 'ring ready — modules pending';
+    }
+
+    /* procedural SFX — lazily imported; unlocks on first gesture (autoplay) */
+    let audio = null;
+    try {
+      const { BoxingAudio } = await import('./shared/boxing/audio.js');
+      audio = new BoxingAudio();
+      const un = () => audio.unlock();
+      addEventListener('pointerdown', un, { once: true });
+      addEventListener('keydown', un, { once: true });
+    } catch {}
+
+    /* ================= HUD ================= */
+    const FEED = {
+      'round-start': (s) => `ROUND ${s.round} — GLOVES UP`,
+      'player-punch': () => 'YOU SWING',
+      'player-hit': (s, lb) => lb?.dmg ? `${String(lb.kind).toUpperCase()} −${Math.round(lb.dmg)}` : 'CONNECTED',
+      'npc-hit': () => 'LANDED IT',
+      'player-miss': (s, lb) => `WHIFF${lb?.reason ? ' · ' + String(lb.reason).toUpperCase() : '…'}`,
+      'npc-blocked': () => 'BLOCKED',
+      'npc-punch': () => 'INCOMING',
+      'player-hit-taken': (s, lb) => lb?.dmg ? `OUCH −${Math.round(lb.dmg)}` : 'OUCH',
+      'player-blocked': () => 'BLOCKED IT',
+      'player-dodged': () => 'DODGED',
+      'ko': () => 'K.O.!',
+      'win': () => 'YOU WIN!',
+      'lose': () => 'DOWN FOR THE COUNT',
+    };
+    const FLASH = {
+      'player-hit': 'POW!', 'npc-hit': 'POW!', 'player-hit-taken': 'TAGGED!',
+      'ko': 'K.O.!', 'player-blocked': 'BLOCKED', 'player-dodged': 'SLIPPED',
+    };
+    let flashT = 0, vinT = 0, blockT = 0;
+    const flash = (t) => { el.flash.textContent = t; el.flash.style.opacity = 1; flashT = performance.now(); };
+    const feed = (t) => {
+      const d = document.createElement('div'); d.textContent = t;
+      el.feed.prepend(d);
+      while (el.feed.children.length > 5) el.feed.lastChild.remove();
+    };
+    let ended = false;
+    const showEnd = (win, st) => {
+      if (ended) return; ended = true;
+      el.endTitle.textContent = win ? 'YOU WIN!' : 'DOWN GOES YOU';
+      el.endSub.textContent = `${st.npc.name || 'PIP'} · score ${st.player.score}`;
+      el.end.classList.add('on');
+    };
+    $('[data-replay]').onclick = () => location.reload();
+
+    const clock = (t) => `${Math.floor(t / 60)}:${String(Math.max(0, Math.ceil(t % 60))).padStart(2, '0')}`;
+    const hud = (out) => {
+      const st = out.state;
+      document.body.classList.toggle('fighting', st.phase === 'fighting');
+      el.php.style.width = `${Math.max(0, st.player.hp / (st.player.maxHp || 100) * 100)}%`;
+      el.nhp.style.width = `${Math.max(0, st.npc.hp / (st.npc.maxHp || 100) * 100)}%`;
+      el.stam.style.width = `${Math.min(1, Math.max(0, st.player.stamina)) * 100}%`;
+      el.round.textContent = `ROUND ${st.round}`;
+      el.time.textContent = clock(st.timeLeft);
+      el.score.textContent = st.player.score;
+      el.tele.classList.toggle('on', st.npc.action === 'windup');
+      for (const e of out.events) {
+        window.__boxing.log.push(e);
+        const f = FEED[e]; if (f) feed(f(st, st.lastBlow));
+        if (FLASH[e]) flash(FLASH[e]);
+        if (e === 'player-hit-taken' || (e === 'ko' && st.phase === 'playerdown')) vinT = performance.now();
+        if (e === 'player-blocked') blockT = performance.now();
+        if (e === 'win') showEnd(true, st);
+        if (e === 'lose') showEnd(false, st);
+      }
+      if (flashT && performance.now() - flashT > 1100) { el.flash.style.opacity = 0; flashT = 0; }
+      el.vin.style.opacity = vinT ? Math.max(0, 1 - (performance.now() - vinT) / 500) : 0;
+    };
+
+    /* ================= mouse fallback =================
+       left-drag = left glove thrust, right-drag = right glove,
+       shift-drag = sway. Synthetic fists whose landmark span swells on
+       press — the same "hand grows bigger = punch" signal the tracker eats. */
+    const mouse = { l: false, r: false, lx: .3, ly: .55, rx: .7, ry: .55, tL: 9, tR: 9,
+      swaying: false, sway: 0 };
+    const lmFist = (cx, cy, s) => {   // mitten-ish 21-pt cloud; span(lm0→lm9) = 1.35·s
+      const SH = [[0,1.15],[.55,.78],[.8,.5],[1.0,.32],[1.12,.18],
+        [.36,-.12],[.4,-.4],[.42,-.6],[.44,-.74],
+        [0,-.2],[0,-.48],[0,-.7],[0,-.86],
+        [-.34,-.12],[-.38,-.36],[-.4,-.55],[-.42,-.68],
+        [-.6,-.05],[-.66,-.26],[-.7,-.42],[-.72,-.52]];
+      return SH.map(([x, y]) => ({ x: cx + x * s, y: cy + y * s, z: 0 }));
+    };
+    const synth = (side, cx, cy, s) => ({
+      side, kind: 'fist', lm: lmFist(cx, cy, s),
+      palm: { x: cx, y: cy }, wrist: { x: cx, y: cy + s * 1.15 },
+      indexTip: { x: cx + s * .4, y: cy - s * .7 },
+      pinchAt: { x: cx + s * .6, y: cy - s * .4 }, pinchD: .2, nExt: 0, nExtAll: 0 });
+    // swell on press → the throw fires; keep holding and the glove pumps,
+    // re-arming for another punch each cycle (thrust-thrust-thrust)
+    const spanFor = (t) => {
+      const base = .04 + .055 * Math.min(1, t / .2);
+      return t > .55 ? base + Math.sin((t - .55) * 9) * .018 : base;
+    };
+    const mouseHands = () => {
+      const arr = [];
+      if (mouse.l) arr.push(synth('left', mouse.lx, mouse.ly, spanFor(mouse.tL)));
+      if (mouse.r) arr.push(synth('right', mouse.rx, mouse.ry, spanFor(mouse.tR)));
+      return { hands: arr, pinch: null, point: null, orbit: null, zoom: null, spread: null };
+    };
+    const mouseFace = () => ({ found: true,
+      nose: { x: .5 + mouse.sway * .38, y: .45 }, size: .3,
+      center: { x: .5 + mouse.sway * .38, y: .45 } });
+    const mouseLive = () => mouse.l || mouse.r || mouse.swaying;
+
+    cvs.addEventListener('contextmenu', e => e.preventDefault());
+    cvs.addEventListener('pointerdown', e => {
+      cvs.setPointerCapture(e.pointerId);
+      const x = e.clientX / innerWidth, y = e.clientY / innerHeight;
+      if (e.shiftKey || e.button === 1) { mouse.swaying = true; mouse.sway = (x - .5) * 2; }
+      else if (e.button === 2) { mouse.r = true; mouse.rx = x; mouse.ry = y; mouse.tR = 0; }
+      else { mouse.l = true; mouse.lx = x; mouse.ly = y; mouse.tL = 0; }
+    });
+    cvs.addEventListener('pointermove', e => {
+      const x = e.clientX / innerWidth, y = e.clientY / innerHeight;
+      if (mouse.swaying) mouse.sway = THREE.MathUtils.clamp((x - .5) * 2, -1, 1);
+      if (mouse.l) { mouse.lx = x; mouse.ly = y; }
+      if (mouse.r) { mouse.rx = x; mouse.ry = y; }
+    });
+    const releaseMouse = (e) => {
+      if (e.button === 2) mouse.r = false;
+      else if (e.button === 1 || e.shiftKey) { mouse.swaying = false; mouse.sway = 0; }
+      else mouse.l = false;
+    };
+    cvs.addEventListener('pointerup', releaseMouse);
+    cvs.addEventListener('pointercancel', releaseMouse);
+    addEventListener('keydown', e => {
+      if (e.key === 'c' || e.key === 'C') { game?.calibrate(); mouse.sway = 0; }
+      if (e.key === 'm' || e.key === 'M') { if (audio) { audio.unlock(); audio.muted = !audio.muted; } }
+    });
+
+    /* ================= glove overlay =================
+       Gloves are the PLAYER — always on screen. A real hand drives its
+       mitt when tracked; when tracking drops the mitt drifts back to a
+       neutral guard slot, dimmed — it never vanishes. Reach grows the
+       mitt (bigger = closer) but clamps at the NPC contact plane so
+       gloves can't punch through the world. */
+    const hc = $('#hands'), hx = hc.getContext('2d');
+    const GUARD = { left: { x: .30, y: .68 }, right: { x: .70, y: .68 } };
+    const gloves = {
+      left:  { x: .3, y: .68, size: 60, ang: 0, dim: .7, reach: 1 },
+      right: { x: .7, y: .68, size: 60, ang: 0, dim: .7, reach: 1 },
+    };
+    let overlayT = 0;
+    const drawOverlay = (hs, dt) => {
+      overlayT += dt;
+      hx.clearRect(0, 0, hc.width, hc.height);
+      const dbg = game?.tracker?.debug?.() || {};
+      const found = {};
+      for (const hnd of (hs.hands || []))
+        if (hnd?.lm?.length >= 21 && hnd.side && found[hnd.side] == null) found[hnd.side] = hnd;
+      for (const side of ['left', 'right']) {
+        const g = gloves[side], hnd = found[side];
+        let tx, ty, tsize, tang = 0;
+        if (hnd) {
+          const P = hnd.lm.map(p => ({ x: (1 - p.x) * hc.width, y: p.y * hc.height }));
+          const mcp = [0, 5, 9, 13, 17];
+          tx = mcp.reduce((s, i) => s + P[i].x, 0) / 5;
+          ty = mcp.reduce((s, i) => s + P[i].y, 0) / 5;
+          tsize = Math.max(26, Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y));
+          tang = Math.atan2(P[9].y - P[0].y, P[9].x - P[0].x);
+          g.dim += (1 - g.dim) * .18;
+        } else {
+          tx = GUARD[side].x * hc.width; ty = GUARD[side].y * hc.height;
+          tsize = hc.width * .052;
+          g.dim += (.72 - g.dim) * .08;
+        }
+        ty += Math.sin(overlayT * 2.1 + (side === 'left' ? 0 : 2.4)) * hc.height * .009;  // guard bob
+        const k = hnd ? .4 : .07;
+        g.x += (tx - g.x) * k; g.y += (ty - g.y) * k;
+        g.size += (tsize - g.size) * k;
+        g.ang += ((tang || 0) - g.ang) * (hnd ? .3 : .1);
+        // contact clamp — display reach capped by ring distance
+        let dispReach = dbg.reach?.[side] ?? 1;
+        const d = game?.sim?.distance?.() ?? 9;
+        dispReach = Math.min(dispReach, d <= 1.25 ? 1.3 : 1.05);
+        g.reach += (dispReach - g.reach) * .3;
+        const squash = Math.max(0, Math.min(1, (g.reach - 1.04) * 2.4));
+        drawBoxGlove(hx, null, { side, kind: hnd?.kind || 'fist',
+          manual: { x: g.x, y: g.y, size: g.size, ang: g.ang },
+          reach: g.reach, squash, dim: g.dim });
+      }
+      // block cue — expanding shield ring at center when a guard eats a hit
+      const bt = blockT && (performance.now() - blockT) / 1000;
+      if (bt >= 0 && bt < .45) {
+        const p = bt / .45, r = 30 + p * 110;
+        hx.beginPath(); hx.arc(hc.width / 2, hc.height * .52, r, 0, 7);
+        hx.lineWidth = 8 * (1 - p) + 2; hx.strokeStyle = `rgba(255,197,61,${.9 * (1 - p)})`;
+        hx.stroke();
+        hx.beginPath(); hx.arc(hc.width / 2, hc.height * .52, r * .7, 0, 7);
+        hx.lineWidth = 3; hx.strokeStyle = `rgba(43,33,24,${.5 * (1 - p)})`; hx.stroke();
+      }
+      // guard meters — two little shields at the bottom corners
+      const g = game?.tracker.guard;
+      if (g) for (const [v, x] of [[g.left, hc.width * .18], [g.right, hc.width * .82]]) {
+        hx.beginPath(); hx.roundRect(x - 40, hc.height - 26, 80, 10, 5);
+        hx.fillStyle = 'rgba(43,33,24,.55)'; hx.fill();
+        hx.beginPath(); hx.roundRect(x - 40, hc.height - 26, 80 * Math.min(1, v), 10, 5);
+        hx.fillStyle = v >= .6 ? '#ffc53d' : 'rgba(255,248,236,.5)'; hx.fill();
+      }
+    };
+
+    /* nose dot on the peephole */
+    const nc = $('[data-nose]'), nx = nc.getContext('2d');
+    const noseDot = () => {
+      const w = nc.width = nc.clientWidth, h = nc.height = nc.clientHeight;
+      nx.clearRect(0, 0, w, h);
+      if (face?.state.found) {
+        nx.beginPath(); nx.arc(face.state.nose.x * w, face.state.nose.y * h, 4, 0, 7);
+        nx.fillStyle = '#ff6b57'; nx.fill();
+      }
+    };
+
+    /* ================= loop ================= */
+    function resize() {
+      ren.setSize(innerWidth, innerHeight);
+      cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix();
+      hc.width = innerWidth; hc.height = innerHeight;
+    }
+    addEventListener('resize', resize); resize();
+
+    const EMPTY_HS = { hands: [], pinch: null, point: null, orbit: null, zoom: null, spread: null };
+    let last = performance.now(), fpsN = 0, fpsT = last, orbitT = 0;
+    function loop() {
+      requestAnimationFrame(loop);
+      const now = performance.now(), dt = Math.min(.05, (now - last) / 1000); last = now;
+      mouse.tL += dt; mouse.tR += dt;
+      noseDot();
+      const hs = window.__forceHands || (mouseLive() ? mouseHands() : hands?.state || EMPTY_HS);
+      const fs = window.__forceFace || (mouse.swaying ? mouseFace() : face?.state || null);
+      if (game) {
+        const out = game.step(dt, hs, fs);
+        // distance trace while the NPC presses — __boxing.pressLog for tests
+        if (out.state.phase === 'fighting' && game.fight.npcDir() === 'press') {
+          const pl = window.__boxing.pressLog || (window.__boxing.pressLog = []);
+          if (pl.length < 600) pl.push(out.sim.distance());
+        }
+        hud(out);
+        if (audio) {
+          for (const e of out.events) audio.handleEvent(e, out.state);
+          audio.update(dt, out.state);
+        }
+      } else {
+        // idle ring: slow orbit while contract modules land
+        orbitT += dt; world.update(dt, {});
+        cam.position.set(Math.sin(orbitT * .2) * 5, 2.2, Math.cos(orbitT * .2) * 5);
+        cam.lookAt(0, .9, 0);
+      }
+      drawOverlay(hs, dt);
+      ren.render(scene, cam);
+      if (++fpsN === 60) { const f = Math.round(60000 / (now - fpsT)); fpsN = 0; fpsT = now;
+        if (face) status.textContent = `face · ${face.delegate} · ${f} fps`; }
+    }
+    loop();
+  </script>
+</body>
+</html>

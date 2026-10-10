@@ -1,235 +1,74 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>spatial objects</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bout night — webcam boxing</title>
 <link rel="icon" href="data:,">
-<script type="importmap">
-{ "imports": {
-    "three": "./vendor/three/three.module.js",
-    "three-mesh-bvh": "./vendor/three/three-mesh-bvh.module.js",
-    "three-bvh-csg": "./vendor/three/three-bvh-csg.module.js"
-} }
-</script>
 <style>
-  :root {
-    --paper: #f3ede1; --paper2: #ece4d4; --ink: #33291d;
-    --hair: #b9ac93; --accent: #d85c3a; --accent2: #4f8f6b;
-  }
-  * { box-sizing: border-box; margin: 0; }
-  html, body { height: 100%; overflow: hidden; }
-  body { background: var(--paper); color: var(--ink);
-    font-family: "Avenir Next", "Futura", "Trebuchet MS", system-ui, sans-serif; }
+  :root { --paper:#FFF8EC; --ink:#2B2118; --coral:#FF6B57; --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  * { box-sizing:border-box; margin:0; }
+  body { min-height:100vh; display:grid; place-items:center; overflow:hidden; background:var(--paper);
+    color:var(--ink); font-family:"Fredoka","Baloo 2","Avenir Next","Trebuchet MS",system-ui,sans-serif;
+    background-image:radial-gradient(rgba(43,33,24,.05) 1.5px, transparent 1.5px); background-size:26px 26px; }
+  .stage { text-align:center; padding:20px; position:relative; }
 
-  /* viewport frame */
-  .frame { position: fixed; inset: 12px; pointer-events: none; z-index: 60; }
-  .frame .e { position: absolute; background: var(--hair); opacity: .8; }
-  .frame .top{top:0;left:0;right:0;height:1px} .frame .bottom{bottom:0;left:0;right:0;height:1px}
-  .frame .left{left:0;top:0;bottom:0;width:1px} .frame .right{right:0;top:0;bottom:0;width:1px}
-  .frame .c { position:absolute; width:18px; height:18px; border:1.5px solid var(--ink); }
-  .frame .tl{top:-1px;left:-1px;border-right:0;border-bottom:0}
-  .frame .tr{top:-1px;right:-1px;border-left:0;border-bottom:0}
-  .frame .bl{bottom:-1px;left:-1px;border-right:0;border-top:0}
-  .frame .br{bottom:-1px;right:-1px;border-left:0;border-top:0}
+  /* gloves */
+  .gloves { position:relative; height:130px; margin-bottom:6px; }
+  .glove { position:absolute; left:50%; top:8px; width:96px; height:96px; }
+  .glove svg { display:block; filter:drop-shadow(0 4px 0 rgba(43,33,24,.9)); }
+  .glove.l { transform:translateX(-112%) rotate(-14deg); animation:bobL 2.4s ease-in-out infinite; }
+  .glove.r { transform:translateX(12%) rotate(14deg) scaleX(-1); animation:bobR 2.4s ease-in-out infinite; animation-delay:.3s; }
+  @keyframes bobL { 0%,100%{transform:translateX(-112%) rotate(-14deg) translateY(0)} 50%{transform:translateX(-112%) rotate(-10deg) translateY(-14px)} }
+  @keyframes bobR { 0%,100%{transform:translateX(12%) rotate(14deg) scaleX(-1) translateY(0)} 50%{transform:translateX(12%) rotate(10deg) scaleX(-1) translateY(-14px)} }
 
-  /* masthead */
-  .mast { position: fixed; top: 30px; left: 40px; right: 40px; z-index: 50;
-    display: flex; align-items: baseline; gap: 24px; transition: opacity .3s; }
-  .wordmark { font-family: Georgia, "Times New Roman", serif; font-size: 26px; letter-spacing: .12em; }
-  .wordmark span { display:block; font-style: italic; font-size: 10px; letter-spacing: .28em;
-    color: var(--hair); text-transform: uppercase; margin-top: 2px; }
-  .status { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--accent2); }
-  .mode { margin-left: auto; display: flex; border: 1px solid var(--hair); border-radius: 99px;
-    overflow: hidden; background: var(--paper); }
-  .mode button { border: 0; background: none; padding: 7px 16px; font: inherit; font-size: 10.5px;
-    letter-spacing: .18em; text-transform: uppercase; color: #6e6250; cursor: pointer; }
-  .mode button.on { background: var(--ink); color: var(--paper); }
-  .gallery { font-size:10.5px; letter-spacing:.18em; text-transform:uppercase; color:#6e6250;
-    text-decoration:none; border-bottom: 1px solid var(--hair); padding-bottom:2px; }
-  .micbtn { margin-left: auto; border: 1px solid var(--hair); background: var(--paper);
-    border-radius: 99px; padding: 7px 14px; font: inherit; font-size: 10.5px;
-    letter-spacing: .18em; color: #6e6250; cursor: pointer; }
-  .micbtn.on { background: var(--accent2); border-color: var(--accent2); color: var(--paper); }
-  .micbtn ~ .mode { margin-left: 0; }
+  .belt { display:inline-block; background:var(--sun); color:var(--ink); font-weight:700;
+    font-size:11px; letter-spacing:.32em; padding:6px 20px 6px 22px; border-radius:99px;
+    border:2.5px solid var(--ink); transform:rotate(-2deg); margin-bottom:10px;
+    box-shadow:0 3px 0 var(--ink); }
+  h1 { font-weight:700; letter-spacing:.04em; font-size:clamp(46px,9vw,84px); line-height:.95;
+    text-shadow:4px 4px 0 var(--coral), 8px 8px 0 rgba(43,33,24,.12); margin-bottom:4px; }
+  h1 span { color:var(--coral); text-shadow:4px 4px 0 var(--ink), 8px 8px 0 rgba(43,33,24,.12); }
+  .tag { color:#8a7f6c; font-style:italic; font-size:15px; margin-bottom:34px; }
 
-  /* ===== SUBJECT (the mirrored webcam) — compact frame, top right ===== */
-  .subject { position: fixed; right: 40px; top: 110px; width: min(340px, 27vw); z-index: 35;
-    display: flex; flex-direction: column; gap: 8px; transition: all .45s cubic-bezier(.6,0,.25,1); }
-  .subject-head { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-  .subject-head > span { font-size: 10px; letter-spacing: .3em; color: var(--hair); }
-  .feed { position: relative; aspect-ratio: 4/3; border: 1px solid var(--ink); overflow: hidden;
-    background: var(--paper2); box-shadow: 8px 8px 0 rgba(51,41,29,.13); }
-  .feed video { position: absolute; inset: 0; width: 100%; height: 100%;
-    object-fit: cover; transform: scaleX(-1); display: block; }
-  .subject-note { font-family: Georgia, serif; font-style: italic; font-size: 11px;
-    color: #6e6250; flex-shrink: 0; }
+  .menu { display:flex; flex-direction:column; gap:14px; align-items:center; }
+  .btn { display:block; min-width:300px; padding:17px 40px; border:2.5px solid var(--ink);
+    color:var(--ink); text-decoration:none; font-size:15px; font-weight:700; letter-spacing:.14em;
+    text-transform:uppercase; border-radius:22px; background:#fff;
+    box-shadow:0 5px 0 var(--ink); transition:transform .16s cubic-bezier(.34,1.56,.64,1), box-shadow .16s; }
+  .btn:hover { transform:translateY(-3px) rotate(-1deg); box-shadow:0 8px 0 var(--ink); }
+  .btn:active { transform:translateY(3px); box-shadow:0 1px 0 var(--ink); }
+  .btn.main { background:var(--coral); color:#fff; font-size:17px; }
+  .btn.alt { background:var(--sky); color:#fff; }
+  .btn small { display:block; font-size:9px; letter-spacing:.2em; opacity:.75; margin-top:3px; font-weight:600; }
 
-  .chip { border: 1px solid var(--hair); background: var(--paper); font-size: 11px;
-    letter-spacing: .14em; text-transform: uppercase; padding: 6px 12px; display: flex;
-    gap: 10px; min-width: 160px; justify-content: space-between; }
-  .chip b { color: var(--accent); font-weight: 700; }
-  .chip[data-hot="true"] b { color: var(--accent2); }
-
-  /* ===== BENCH (the CAD canvas) ===== */
-  .bench { position: fixed; left: 40px; right: 40px; top: 110px; bottom: 56px; z-index: 20;
-    transition: all .45s cubic-bezier(.6,0,.25,1); }
-  .bench > canvas { width: 100%; height: 100%; display: block;
-    border: 1px solid var(--hair); border-radius: 4px; }
-
-  .dock { position: absolute; left: 12px; top: 50%; translate: 0 -50%; z-index: 5; }
-  .dock [data-tools] { display: flex; flex-direction: column; gap: 7px; }
-  .dock button { width: 42px; height: 42px; border: 1px solid var(--hair);
-    background: rgba(243,237,225,.94); color: var(--ink); cursor: pointer; border-radius: 4px;
-    position: relative; font-size: 16px; display: grid; place-items: center; transition: all .15s; }
-  .dock button span { position: absolute; left: 52px; top: 50%; translate: 0 -50%; white-space: nowrap;
-    font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink);
-    background: var(--paper); padding: 4px 9px; border: 1px solid var(--hair);
-    opacity: 0; pointer-events: none; transition: opacity .15s; }
-  .dock button:hover span, .dock button.on span { opacity: 1; }
-  .dock button.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-
-  /* ===== HUD (gesture + speed + held) ===== */
-  .hud { position: fixed; left: 40px; bottom: 26px; z-index: 50; display: flex;
-    align-items: center; gap: 14px; font-size: 10.5px; letter-spacing: .16em;
-    text-transform: uppercase; color: #6e6250; transition: all .45s cubic-bezier(.6,0,.25,1); }
-  .hud .g { color: var(--ink); border: 1px solid var(--hair); padding: 5px 12px;
-    background: var(--paper); min-width: 86px; text-align: center; }
-  .hud .speedw { display: flex; align-items: center; gap: 8px; }
-  .hud .speedbar { width: 90px; height: 3px; background: var(--paper2); position: relative; }
-  .hud .speedbar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); width: 0%; transition: width .15s; }
-  .hud .held { color: var(--accent2); }
-  .hud .toolchip { color: var(--ink); border: 1px solid var(--ink); padding: 5px 12px;
-    background: var(--paper); }
-  .hud .vkey { color: var(--hair); }
-
-  /* tool-switch toast */
-  .toast { position: fixed; left: 50%; top: 22%; translate: -50% 0; z-index: 70;
-    font-size: 12px; letter-spacing: .3em; text-transform: uppercase; color: var(--ink);
-    border: 1px solid var(--ink); background: var(--paper); padding: 10px 22px;
-    opacity: 0; transition: opacity .25s; pointer-events: none; }
-  .toast.show { opacity: 1; }
-
-  /* ===== IMMERSIVE mode — camera becomes the stage ===== */
-  body.immersive .mast .legend, body.immersive .subject-note { opacity: 0; pointer-events: none; }
-  body.immersive .subject { inset: 0; width: 100%; z-index: 10; gap: 0; }
-  body.immersive .subject-head { position: absolute; top: 76px; left: 40px; right: 40px; z-index: 2;
-    pointer-events: none; }
-  body.immersive .subject-head > span { color: rgba(51,41,29,.55); }
-  body.immersive .feed { border: 0; aspect-ratio: auto; flex: 1; box-shadow: none; }
-  body.immersive .bench { left: auto; top: auto; right: 40px; bottom: 84px;
-    width: min(430px, 34vw); height: min(46vh, 480px); z-index: 30;
-    filter: drop-shadow(10px 10px 0 rgba(51,41,29,.16)); }
-  body.immersive .hud { left: 40px; bottom: 30px; }
-  body.immersive .hud, body.immersive .chip { backdrop-filter: none; }
-
-  /* foot rail */
-  .rail { position: fixed; right: 40px; bottom: 30px; z-index: 50;
-    font-size: 10px; letter-spacing: .24em; color: var(--hair); text-transform: uppercase; }
-  body.immersive .rail { opacity: 0; }
-
-  /* AR lens: the full-window overlay canvas */
-  .arlens { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 40; pointer-events: none; }
+  .how { display:flex; gap:12px; justify-content:center; margin-top:38px; flex-wrap:wrap; }
+  .how div { background:#fff; border:2px solid var(--ink); border-radius:16px; padding:10px 18px;
+    font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
+    box-shadow:0 3px 0 var(--ink); }
+  .how div:nth-child(1){transform:rotate(-2deg)} .how div:nth-child(2){transform:rotate(1.2deg)} .how div:nth-child(3){transform:rotate(-1deg)}
+  .how b { color:var(--coral); display:block; font-size:12px; margin-bottom:2px; }
+  .foot { margin-top:30px; color:#b9ac93; font-size:9px; letter-spacing:.22em; text-transform:uppercase; }
 </style>
 </head>
 <body>
-  <div class="frame" aria-hidden="true">
-    <i class="e top"></i><i class="e right"></i><i class="e bottom"></i><i class="e left"></i>
-    <i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i>
-  </div>
-
-  <header class="mast">
-    <div class="wordmark">SPATIAL OBJECTS</div>
-    <nav class="legend" style="display:flex;gap:16px;font-size:11px;color:#6e6250">
-      <span><b>L pinch</b> on cam — import</span><span><b>R pinch</b> move</span>
-      <span><b>palm</b> orbit</span><span><b>two palms</b> explode</span>
-      <span><b>hold fingers</b> tool</span>
-    </nav>
-    <div class="status" data-status>warming up</div>
-    <button class="micbtn" data-mic title="voice commands — say a tool name">MIC</button>
-    <div class="mode">
-      <button data-mode="studio" class="on">Studio</button>
-      <button data-mode="immersive">Immersive</button>
+  <div class="stage">
+    <div class="gloves" aria-hidden="true">
+      <div class="glove l"><svg viewBox="0 0 96 96"><path d="M30 40 C18 40 12 52 14 64 C16 78 28 88 46 88 C64 88 80 78 82 60 C84 44 76 30 62 28 L58 22 C56 16 48 14 42 18 C40 10 30 8 26 14 C22 20 26 28 30 32 Z" fill="#FF6B57" stroke="#2B2118" stroke-width="4" stroke-linejoin="round"/><rect x="26" y="70" width="44" height="18" rx="8" fill="#fff" stroke="#2B2118" stroke-width="4"/><path d="M34 74 v10 M44 74 v10 M54 74 v10" stroke="#2B2118" stroke-width="3" stroke-linecap="round"/></svg></div>
+      <div class="glove r"><svg viewBox="0 0 96 96"><path d="M30 40 C18 40 12 52 14 64 C16 78 28 88 46 88 C64 88 80 78 82 60 C84 44 76 30 62 28 L58 22 C56 16 48 14 42 18 C40 10 30 8 26 14 C22 20 26 28 30 32 Z" fill="#5DA9E9" stroke="#2B2118" stroke-width="4" stroke-linejoin="round"/><rect x="26" y="70" width="44" height="18" rx="8" fill="#fff" stroke="#2B2118" stroke-width="4"/><path d="M34 74 v10 M44 74 v10 M54 74 v10" stroke="#2B2118" stroke-width="3" stroke-linecap="round"/></svg></div>
     </div>
-    <a class="gallery" href="./gallery.html">mockups</a>
-  </header>
-
-  <section class="subject">
-    <div class="subject-head"><span>SUBJECT</span><div class="chip" data-detect><span>detector idle</span></div></div>
-    <div class="feed"><video data-cam muted playsinline></video></div>
-    <p class="subject-note">Hold an object in frame — or pinch-drag a box around it. What you draw lands in the tray, sized to fit.</p>
-  </section>
-
-  <main class="bench">
-    <canvas data-cad></canvas>
-    <div class="dock"><div data-tools></div></div>
-  </main>
-
-  <div class="hud">
-    <span class="g" data-gesture>idle</span>
-    <span class="speedw"><i>vel</i><span class="speedbar"><i data-speedbar></i></span><b data-speed>0</b></span>
-    <span class="held" data-held></span>
-    <span class="toolchip" data-toolchip>select</span>
-    <span class="vkey"><b data-fps>—</b> fps · V — view · 1-6 — tool</span>
+    <div class="belt">WEBCAM · HAND-TRACKED</div>
+    <h1>BOUT <span>NIGHT</span></h1>
+    <p class="tag">your hands are the gloves — punch at the camera</p>
+    <nav class="menu">
+      <a class="btn main" href="./boxing.html">Enter the Ring<small>fight the champ</small></a>
+      <a class="btn alt" href="./lineup.html">Choose Your Fighter<small>pick who you're up against</small></a>
+    </nav>
+    <div class="how">
+      <div><b>Hands up</b>fists = guards up</div>
+      <div><b>Punch</b>throw toward the camera</div>
+      <div><b>Dodge</b>lean your head, feet stay put</div>
+    </div>
+    <div class="foot">c — recenter · works with mouse fallback too</div>
   </div>
-  <div class="toast" data-toast></div>
-
-  <div class="rail"><span>HAND-DRIVEN CAD · LOCAL MODELS</span></div>
-
-  <canvas class="arlens" data-hands></canvas>
-
-  <script type="module">
-    import { boot } from './shared/ui.js';
-    const app = await boot(document.body, {
-      video: '[data-cam]', overlay: '[data-hands]', cad: '[data-cad]',
-      chip: '[data-detect]', status: '[data-status]', tools: '[data-tools]',
-      cadOpts: { bg: 0xefe8da },
-    }).catch(e => { document.querySelector('[data-status]').textContent = 'boot failed — ' + e.message; });
-
-    /* mode toggle — studio ⇄ immersive (V key too) */
-    const setMode = (m) => {
-      document.body.classList.toggle('immersive', m === 'immersive');
-      document.querySelectorAll('.mode button').forEach(b =>
-        b.classList.toggle('on', b.dataset.mode === m));
-    };
-    document.querySelectorAll('.mode button').forEach(b => b.onclick = () => setMode(b.dataset.mode));
-    addEventListener('keydown', e => {
-      if (e.key === 'v' || e.key === 'V')
-        setMode(document.body.classList.contains('immersive') ? 'studio' : 'immersive');
-    });
-
-    /* HUD — gesture, velocity, held part */
-    const gEl = document.querySelector('[data-gesture]'),
-          sBar = document.querySelector('[data-speedbar]'),
-          sNum = document.querySelector('[data-speed]'),
-          fNum = document.querySelector('[data-fps]'),
-          hEl = document.querySelector('[data-held]');
-    addEventListener('x:hud', e => {
-      const d = e.detail;
-      gEl.textContent = d.gesture;
-      sBar.style.width = Math.min(100, d.speed / 18) + '%';
-      sNum.textContent = d.speed;
-      fNum.textContent = d.fps;
-      hEl.textContent = d.held ? 'holding · ' + d.held : (d.clutch ? 'in hand — hold steady' : '');
-    });
-
-    /* tool chip + switch toast */
-    const chipT = document.querySelector('[data-toolchip]'), toast = document.querySelector('[data-toast]');
-    let toastT;
-    const flash = (t) => { toast.textContent = t; toast.classList.add('show');
-      clearTimeout(toastT); toastT = setTimeout(() => toast.classList.remove('show'), 1100); };
-    addEventListener('x:tool', e => {
-      chipT.textContent = e.detail.label;
-      flash('tool · ' + e.detail.label);
-    });
-
-    /* mic toggle + heard-word flash */
-    const mic = document.querySelector('[data-mic]');
-    mic.onclick = () => { const on = app?.voice?.(); mic.classList.toggle('on', !!on); };
-    addEventListener('x:voice', e => {
-      mic.classList.toggle('on', !!e.detail.on);
-      if (e.detail.word) flash('“' + e.detail.word + '”');
-    });
-  </script>
 </body>
 </html>
