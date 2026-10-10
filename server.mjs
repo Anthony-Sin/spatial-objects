@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import sharp from 'sharp';
 import ort from 'onnxruntime-node';
 import mqtt from 'mqtt';
-import { relayKey, seal, unseal } from './relay-crypto.mjs';
+import { relayKey, seal, unseal, chunkSeal, joinChunks } from './relay-crypto.mjs';
 
 const port = Number(process.env.PORT || 8791);
 const token = process.env.SPATIAL_TOKEN || randomBytes(18).toString('base64url');
@@ -142,14 +142,18 @@ async function startRelay(){
   const inputTopic=`spatial/${relay}/frames`,outputTopic=`spatial/${relay}/results`;
   const client=mqtt.connect('wss://demo.tbmq.io/mqtt',{username:'demo',clientId:`spatial_pc_${randomBytes(7).toString('hex')}`,reconnectPeriod:1500,keepalive:30});
   const sendMessage=async object=>{
-    try{client.publish(outputTopic,await seal(key,object),{qos:0})}
+    try{for(const part of chunkSeal(await seal(key,object)))client.publish(outputTopic,part,{qos:0})}
     catch(error){console.error('Relay publish failed:',error.message)}
   };
   const handle=makeProcessor(sendMessage);
+  const pending=new Map();
   client.on('connect',()=>{client.subscribe(inputTopic,error=>{if(error)console.error('Relay subscribe failed:',error.message);else console.log('Relay connected and listening')})});
   client.on('message',async(topic,payload)=>{
     if(topic!==inputTopic)return;
-    try{await handle(await unseal(key,payload))}catch(error){console.error('Relay message failed:',error.message)}
+    try{
+      const joined=joinChunks(pending,payload);
+      if(joined)await handle(await unseal(key,joined));
+    }catch(error){console.error('Relay message failed:',error.message)}
   });
   client.on('error',error=>console.error('Relay connection:',error.message));
 }
