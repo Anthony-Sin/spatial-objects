@@ -2,11 +2,11 @@
 
    buildScene(THREE, renderer) → { scene, ring, update(dt, state) }
 
-   A Punch-Out!!-flavored toy boxing ring in the house palette (warm paper,
+   A toy boxing ring in the house palette (warm paper,
    ink outlines, saturated accents): canvas-textured mat, corner posts +
    turnbuckle pads (player RED corner at +x/+z, NPC BLUE at −x/−z), three
-   rope lines per side, a bobbing blob-crowd floating in the warm void,
-   stage-light cones and a key spotlight over the mat.
+   rope lines per side, a bobbing blob-crowd against a dark backdrop,
+   and a key spotlight over the mat.
 
    update(dt, state) is driven by game.js each frame:
      state = { events: [...drained fight events...], fight: fight.state, sim }
@@ -17,14 +17,14 @@
 const C = {
   paper: 0xfff8ec, paper2: 0xfdf3e3, ink: 0x2b2118,
   coral: 0xff6b57, sun: 0xffc53d, leaf: 0x4fb06d, sky: 0x5da9e9, berry: 0xb565d8,
-  void_: 0x241c12, apron: 0x3a2d20,
+  void_: 0x171c2a, apron: 0x30394a,
 };
 const RING = 2.95;          // post-to-post half-extent; sim plays inside ~r2.6
 const ROPE_Y = [1.32, 1.0, .68];
 const ROPE_COL = [C.coral, C.paper, C.sky];
 
-/* the mat's painted top — paper canvas with ink rings, corner triangles and
-   a doodle star at center. Falls back to flat color where no DOM canvas. */
+/* The mat's painted top has corner markings and a clear center.
+   Falls back to flat color where no DOM canvas. */
 function matTexture(THREE) {
   if (typeof document === 'undefined') return null;
   const cv = document.createElement('canvas'); cv.width = cv.height = 512;
@@ -37,18 +37,6 @@ function matTexture(THREE) {
   x.beginPath(); x.moveTo(512, 392); x.lineTo(512, 512); x.lineTo(392, 512); x.closePath(); x.fill();
   x.fillStyle = '#5da9e9';
   x.beginPath(); x.moveTo(0, 0); x.lineTo(120, 0); x.lineTo(0, 120); x.closePath(); x.fill();
-  // center doodle star + ring
-  x.strokeStyle = '#2b2118'; x.lineWidth = 6;
-  x.beginPath(); x.arc(256, 256, 92, 0, 7); x.stroke();
-  x.fillStyle = '#ffc53d';
-  x.save(); x.translate(256, 256); x.rotate(-.2);
-  x.beginPath();
-  for (let i = 0; i < 10; i++) {
-    const r = i % 2 ? 30 : 66, a = i * Math.PI / 5 - Math.PI / 2;
-    x[i ? 'lineTo' : 'moveTo'](Math.cos(a) * r, Math.sin(a) * r);
-  }
-  x.closePath(); x.fill(); x.stroke();
-  x.restore();
   // faint paper speckle
   x.fillStyle = 'rgba(43,33,24,.05)';
   for (let i = 0; i < 350; i++) x.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
@@ -59,47 +47,51 @@ function matTexture(THREE) {
 
 const lerp = (a, b, t) => a + (b - a) * t;
 
-export function buildScene(THREE, renderer) {
+export function buildScene(THREE, renderer, opts = {}) {
+  const low = !!opts.low;               // iGPU/software: trim accent lights + shadow res
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(C.void_);
   scene.fog = new THREE.Fog(C.void_, 9, 19);
   if (renderer) renderer.shadowMap.enabled = true;
 
+  /* Lambert over Standard: our lighting is ~all diffuse (roughness .92,
+     metalness 0) — Lambert shades it the same for ~half the fragment cost,
+     which matters most on iGPUs where every lit fragment pays 5 lights. */
   const flat = (c, opts = {}) =>
-    new THREE.MeshStandardMaterial({ color: c, roughness: .92, metalness: 0, ...opts });
+    new THREE.MeshLambertMaterial({ color: c, ...opts });
   const basic = (c, opts = {}) => new THREE.MeshBasicMaterial({ color: c, ...opts });
 
   /* ---------- lights ---------- */
   scene.add(new THREE.HemisphereLight(0xfff2dd, 0x2b2118, .85));
   const key = new THREE.DirectionalLight(0xffe6bd, .9);
   key.position.set(4, 7, 3); key.castShadow = true;
-  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.mapSize.set(low ? 512 : 1024, low ? 512 : 1024);
   key.shadow.camera.left = key.shadow.camera.bottom = -5;
   key.shadow.camera.right = key.shadow.camera.top = 5;
   scene.add(key);
   const spot = new THREE.SpotLight(0xffe9b8, 90, 16, .52, .65, 1.6);
   spot.position.set(0, 7.2, 0); spot.target.position.set(0, 0, 0);
   scene.add(spot, spot.target);
-  // warm accent glows over the two corners
-  const redGlow = new THREE.PointLight(C.coral, 8, 7); redGlow.position.set(RING, 1.6, RING);
-  const bluGlow = new THREE.PointLight(C.sky, 8, 7); bluGlow.position.set(-RING, 1.6, -RING);
-  scene.add(redGlow, bluGlow);
+  // warm accent glows over the two corners — Lambert lights cost per lit
+  // fragment, so weak GPUs drop the accents (spot+key carry the look)
+  const redGlow = low ? { intensity: 0 } : new THREE.PointLight(C.coral, 8, 7);
+  const bluGlow = low ? { intensity: 0 } : new THREE.PointLight(C.sky, 8, 7);
+  if (!low) { redGlow.position.set(RING, 1.6, RING); bluGlow.position.set(-RING, 1.6, -RING);
+    scene.add(redGlow, bluGlow); }
 
   /* ---------- ring platform ---------- */
   const ring = new THREE.Group(); scene.add(ring);
   const topTex = matTexture(THREE);
   const topMat = topTex
-    ? new THREE.MeshStandardMaterial({ map: topTex, roughness: .95 })
+    ? new THREE.MeshLambertMaterial({ map: topTex })
     : flat(C.paper2);
   const mat = new THREE.Mesh(
     new THREE.BoxGeometry(RING * 2 + .3, .3, RING * 2 + .3),
     [flat(C.apron), flat(C.apron), topMat, flat(C.apron), flat(C.apron), flat(C.apron)]);
   mat.position.y = -.15; mat.receiveShadow = true; ring.add(mat);
-  // apron skirt + sun-gold trim band under the mat edge
+  // dark apron skirt keeps the mat edge visually quiet
   const skirt = new THREE.Mesh(new THREE.BoxGeometry(RING * 2 + 1.0, .55, RING * 2 + 1.0), flat(C.ink));
   skirt.position.y = -.58; ring.add(skirt);
-  const band = new THREE.Mesh(new THREE.BoxGeometry(RING * 2 + 1.04, .12, RING * 2 + 1.04), flat(C.sun));
-  band.position.y = -.34; ring.add(band);
 
   /* ---------- posts + corner pads ---------- */
   const posts = [], pads = [];
@@ -136,27 +128,18 @@ export function buildScene(THREE, renderer) {
   }
 
   /* ---------- the void + blob crowd ---------- */
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(14, 40).rotateX(-Math.PI / 2), flat(0x1b1510));
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(14, 40).rotateX(-Math.PI / 2), flat(0x111722));
   floor.position.y = -.86; floor.receiveShadow = true; scene.add(floor);
   const wall = new THREE.Mesh(
     new THREE.CylinderGeometry(13, 13, 9, 36, 1, true),
-    basic(0x2a211a, { side: THREE.BackSide }));
+    basic(0x222b3c, { side: THREE.BackSide }));
   wall.position.y = 3.4; scene.add(wall);
-
-  // stage-light cones — translucent shafts from the rafters onto the mat
-  const coneMat = basic(0xffe9b8, { transparent: true, opacity: .055,
-    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-  for (const [x, z, tilt] of [[0, 0, 0], [2.4, 1.6, .3], [-2.4, -1.6, -.3]]) {
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(2.6, 7, 24, 1, true), coneMat);
-    cone.position.set(x * .5, 3.6, z * .5); cone.rotation.z = tilt * .2;
-    scene.add(cone);
-  }
 
   // crowd: instanced blob heads ringing the arena in bleacher arcs
   const N = 150;
   const crowd = new THREE.InstancedMesh(
     new THREE.SphereGeometry(.17, 10, 8),
-    new THREE.MeshStandardMaterial({ roughness: .9 }), N);
+    new THREE.MeshLambertMaterial(), N);
   const crowdCols = [C.paper, C.sun, C.leaf, C.sky, C.coral, C.berry, C.paper2];
   const cd = [];                                   // per-head data
   const dummy = new THREE.Object3D(), col = new THREE.Color();
@@ -197,7 +180,7 @@ export function buildScene(THREE, renderer) {
   };
 
   /* ---------- per-frame animation ---------- */
-  let t = 0, excite = 0, jolt = 0, tel = 0;
+  let t = 0, excite = 0, jolt = 0, tel = 0, crowdFrame = 0;
   const spotWarm = new THREE.Color(0xffe9b8), spotHot = new THREE.Color(C.coral);
 
   function update(dt, state = {}) {
@@ -219,17 +202,20 @@ export function buildScene(THREE, renderer) {
     spot.intensity = 90 + tel * (30 + Math.sin(t * 31) * 22) + excite * 18;
     redGlow.intensity = 8 + excite * 10; bluGlow.intensity = 8 + tel * 10;
 
-    // ropes jolt when a hit lands
-    for (const r of ropes)
+    // ropes jolt when a hit lands — skip the writes entirely while calm
+    if (jolt > .001) for (const r of ropes)
       r.position.y = r.userData.y0 + Math.sin(t * 26 + r.userData.ph) * jolt * .045;
 
-    // crowd bobs — higher when the fight is spicy
-    for (let i = 0; i < N; i++) {
-      const c = cd[i];
-      dummy.position.set(c.x, c.y + Math.sin(t * c.sp + c.ph) * (.05 + excite * .3), c.z);
-      dummy.updateMatrix(); crowd.setMatrixAt(i, dummy.matrix);
+    // crowd bobs at 30Hz — 150 matrix composes + a 9.6KB instance upload is
+    // a lot to spend per frame on background blob heads
+    if ((crowdFrame++ & 1) === 0) {
+      for (let i = 0; i < N; i++) {
+        const c = cd[i];
+        dummy.position.set(c.x, c.y + Math.sin(t * c.sp + c.ph) * (.05 + excite * .3), c.z);
+        dummy.updateMatrix(); crowd.setMatrixAt(i, dummy.matrix);
+      }
+      crowd.instanceMatrix.needsUpdate = true;
     }
-    crowd.instanceMatrix.needsUpdate = true;
 
     // confetti fall
     if (confetti.visible) {

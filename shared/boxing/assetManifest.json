@@ -1,62 +1,6 @@
 {
   "candidates": [
     {
-      "id": "kenney-blocky-red",
-      "name": "Blocky Character (red)",
-      "type": "glb",
-      "path": "vendor/models/glb/boxing/kenney-blocky-red.glb",
-      "source": "https://kenney.nl/assets/blocky-characters",
-      "license": "CC0",
-      "notes": "Kenney 'Blocky Characters' pack, character-b. 72 tris, single 1024px colormap texture (embedded by scout; original pack ships external Textures/*.png). Coral-red shirt matches house palette. 27 baked animations incl. idle, attack-melee-right/left, die, walk, emote-yes/no — articulated as plain node hierarchy (root/leg/arm/torso/head), no skin. Raw height 9u, lowest vert y=-1 so scale 0.144 + yOffset +0.144 puts feet at 0, height ~1.3. Likely faces -Z or +Z; flip in loader if backwards."
-    },
-    {
-      "id": "kenney-blocky-yellow",
-      "name": "Blocky Character (yellow)",
-      "type": "glb",
-      "path": "vendor/models/glb/boxing/kenney-blocky-yellow.glb",
-      "source": "https://kenney.nl/assets/blocky-characters",
-      "license": "CC0",
-      "notes": "Same rig/mesh as red variant, character-d texture: sun-yellow shirt. Identical stats: 72 tris, 1 embedded colormap, 27 node animations incl. melee attacks + die. Recolorable by swapping the embedded texture. Feet land at y=0 with this scale/offset."
-    },
-    {
-      "id": "kenney-blocky-purple",
-      "name": "Blocky Character (purple)",
-      "type": "glb",
-      "path": "vendor/models/glb/boxing/kenney-blocky-purple.glb",
-      "source": "https://kenney.nl/assets/blocky-characters",
-      "license": "CC0",
-      "notes": "Same rig/mesh, character-e texture: berry-purple shirt, light skin. Identical stats: 72 tris, 1 embedded colormap, 27 node animations incl. melee attacks + die. Good third lineup variant."
-    },
-    {
-      "id": "gnome-boxer",
-      "name": "Gnome Boxer",
-      "type": "glb",
-      "path": "vendor/models/glb/boxing/gnome-boxer.glb",
-      "source": "https://poly.pizza/m/6uAogR8224",
-      "license": "CC-BY",
-      "scale": 0.187,
-      "notes": "By portomat — 'a gnome with big gloves'. Thematically perfect: chibi gnome already wearing boxing gloves. 226 tris, 5 flat-color materials (no texture — recolor via material.color). No rig/anims. Raw bbox y -1..5.935 (origin ~1u above lowest vertex — probably a glove hanging low); scale 0.187 + yOffset +0.187 gives ~1.3 tall. ATTRIBUTION REQUIRED (CC-BY): credit 'portomat via poly.pizza'."
-    },
-    {
-      "id": "male-fighter",
-      "name": "Male Fighter",
-      "type": "glb",
-      "path": "vendor/models/glb/boxing/male-fighter.glb",
-      "source": "https://poly.pizza/m/GorWw41SFf",
-      "license": "CC0",
-      "notes": "By mastjie. Low-poly humanoid fighter, 4232 tris, 1 texture (f_txr_03.png embedded). 7 animation clips but only ~4 are real ('...Action'..'Action.003' — unnamed Blender actions, likely idle/punches; CameraAction/SpotAction/CubeAction are export junk to ignore). No skin — node/morph anims. Authored tiny: raw height 0.043u, feet already at y=0; scale 30 -> ~1.29 tall. Facing/poses unknown — verify in lineup."
-    },
-    {
-      "id": "eye-fighter",
-      "name": "Eye Fighter",
-      "type": "glb",
-      "path": "vendor/models/glb/boxing/eye-fighter.glb",
-      "source": "https://poly.pizza/m/3ghMF4tnfq",
-      "license": "CC0",
-      "notes": "By Polygonal Mind (100Avatars series). Oddball cyclops-blob fighter — very Punch-Out!!-style weird opponent. 3736 tris, 1 texture. Flat-card style: bbox x only 0.006 thick, y 0..0.038, z 0..0.042 — likely authored facing +/-X or Z-up; scale ~32 by Y-extent and it may need a Y-rotation (or X-rotation if Z is up). Verify orientation in lineup; cheap fallback is a billboard. AUTO-FIT applied; flat-card model — may need pitch fix in-scene.",
-      "yaw": 1.5707963267948966
-    },
-    {
       "id": "boxing-ring",
       "name": "Boxing Ring (prop)",
       "type": "glb",

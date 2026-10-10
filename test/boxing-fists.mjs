@@ -223,14 +223,16 @@ const settle = (ft, h, f = fc(), n = 30) => { for (let i = 0; i < n; i++) ft.upd
   check('1-frame span spike → no punch', ft.punches.length === 0, JSON.stringify(ft.punches));
 }
 {
-  // ...but a 2-frame throw is real and must still fire
+  // ...but a 2-result throw is real and must still fire. Distinct values per
+  // update = real tracking results; repeated numbers are the same result
+  // held across render frames and must not count as new samples.
   const ft = new FistTracker();
   settle(ft, hand('left', .4, .55, 1.6));
   drain(ft);
-  for (const s of [2.4, 2.4, 1.6, 1.6, 1.6])
+  for (const s of [1.8, 2.2, 2.4, 1.6, 1.6, 1.6])
     ft.update(hs(hand('left', .4, .55, s)), fc(), DT);
   const ev = drain(ft);
-  check('2-frame throw → still fires', ev.length === 1 && ev[0].kind === 'jab', JSON.stringify(ev));
+  check('2-result throw → still fires', ev.length === 1 && ev[0].kind === 'jab', JSON.stringify(ev));
 }
 {
   // calibrate() must honor instance MIN_SPAN (was global TUNING)

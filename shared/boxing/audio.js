@@ -26,6 +26,7 @@ export const EVENT_SFX = {
   'npc-blocked': 'thud',        // player punch eats PIP's gloves
   'player-blocked': 'thud',     // guard absorbs PIP's swing
   'player-dodged': 'dodge',     // clean head-movement whoosh
+  'counter': 'dodge',           // bright cue on the reply punch
   'player-hit-taken': 'hurt',   // heavy low thud + little "oof" chirp
   'ko': 'ko',                   // buzzer + slow-mo pitch drop + crowd swell
   'win': 'win',
@@ -52,6 +53,7 @@ export class BoxingAudio {
     this._buf = null;         // shared 1s white-noise buffer
     this._crowd = null;       // {src, filter, gain, lfo} murmur bed
     this._crowdLevel = 0;     // swell target, decays in update()
+    this._lastCrowdG = -1;    // gain last scheduled — skip redundant param ramps
     this._breathT = 0;        // timer for the gassed-stamina panting cue
   }
 
@@ -108,7 +110,7 @@ export class BoxingAudio {
       case 'player-hit-taken':
         this._crowdLevel = Math.min(1, this._crowdLevel + .4);
         return this.play('hurt', { dmg: b.dmg });
-      case 'player-dodged':
+      case 'player-dodged': case 'counter':
         return this.play('dodge');
       case 'round-start':
         return this.play('bell', { times: 3 });
@@ -143,7 +145,10 @@ export class BoxingAudio {
     this._crowdLevel = Math.max(0, this._crowdLevel - .45 * dt);   // swell decays
     if (this._crowd) {  // subtle murmur — cute arcade, not stadium
       const g = .05 + .3 * this._crowdLevel;
-      this._crowd.gain.gain.setTargetAtTime(g, this._now(), .12);
+      if (Math.abs(g - this._lastCrowdG) > 1e-4) {   // don't re-schedule a settled ramp
+        this._lastCrowdG = g;
+        this._crowd.gain.gain.setTargetAtTime(g, this._now(), .12);
+      }
     }
     // gassed fighter → audible heavy breathing under ~30% stamina
     if (fighting && fight?.player && fight.player.stamina < .3) {
@@ -228,6 +233,7 @@ export class BoxingAudio {
     src.connect(f); f.connect(g); g.connect(this.master);
     src.start(); lfo.start();
     g.gain.setTargetAtTime?.(.05, this._now(), .3);
+    this._lastCrowdG = .05;                     // ramp target just scheduled above
     this._crowd = { src, gain: g, lfo };
   }
 

@@ -71,7 +71,6 @@
 <body>
   <header class="mast">
     <div class="wm">PICK YOUR RIVAL<span>storywood scrap · character lineup</span></div>
-    <a class="back" href="./gloves.html">mitts →</a>
     <a class="back" href="./boxing.html">ring →</a>
     <a class="back" href="./">menu</a>
   </header>
@@ -102,26 +101,23 @@
     // manifest "PROP" entries (ring/gloves/bag) are set dressing, not fighters
     const fighters = (manifest.candidates || [])
       .filter(c => !/^PROP/i.test(c.notes || '') && (c.type || 'glb') === 'glb');
-    const nProps = (manifest.candidates || []).length - fighters.length;
     // full roster: house-made proto variants FIRST (they're the favorites),
     // then the downloaded GLB contenders
     const protos = VARIANTS.map(v => ({ id: `proto:${v}`, name: VINFO[v]?.name || v,
-      type: 'proto', lic: 'procedural · house-made', variant: v }));
+      type: 'proto', lic: VINFO[v]?.desc || 'original fighter', variant: v }));
     const entries = [...protos,
       ...fighters.map(c => ({ id: c.id, name: c.name || c.id,
         type: c.type || 'glb', lic: c.license || 'unknown', cand: c }))];
     if (!entries.length)
       note.textContent = 'no rivals found yet — check assetManifest.json + protoBoxer.js';
-    else note.textContent =
-      `${entries.length} contender${entries.length === 1 ? '' : 's'} in the lineup · click to scout` +
-      (nProps ? ` · ${nProps} prop${nProps === 1 ? '' : 's'} stayed backstage` : '');
+    else note.textContent = `${entries.length} contenders in the lineup · choose your rival`;
 
     /* ---------- DOM cells ---------- */
     const cells = entries.map((e, i) => {
       const d = document.createElement('div');
       d.className = 'cell' + (e.type === 'proto' ? ' proto' : '');
       d.innerHTML = `<canvas width="${SLOT_W}" height="${SLOT_H}"></canvas>
-        <div class="st">${e.type === 'proto' ? 'proto' : 'glb'}</div>
+        <div class="st">${e.type === 'proto' ? 'original' : 'glb'}</div>
         <div class="nm">${e.name}</div><div class="lic">${e.lic}</div>`;
       grid.append(d);
       const rec = { e, i, el: d, ctx: d.querySelector('canvas').getContext('2d'),
@@ -135,8 +131,12 @@
        column of an offscreen WebGL canvas, then drawImage into the cells. */
     const glc = document.createElement('canvas');
     const ren = new THREE.WebGLRenderer({ canvas: glc, antialias: true,
-      preserveDrawingBuffer: true, alpha: true });
-    ren.setSize(SLOT_W * Math.max(1, cells.length), SLOT_H, false);
+      preserveDrawingBuffer: true, alpha: true, powerPreference: 'low-power' });
+    // wrap the strip into rows — one N-wide line can blow past the 16k canvas
+    // cap on big rosters; grid keeps the backing store small either way
+    const COLS = Math.min(Math.max(1, cells.length), Math.floor(8192 / SLOT_W));
+    const ROWS = Math.ceil(cells.length / COLS);
+    ren.setSize(SLOT_W * COLS, SLOT_H * ROWS, false);
     ren.setPixelRatio(1);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xfdf3e3);
@@ -223,29 +223,34 @@
     if (pre) select(pre);
 
     /* ---------- thumbnail loop ---------- */
-    let last = performance.now(), t = 0;
+    let last = performance.now(), t = 0, acc = 0;
     const slotCam = new THREE.Vector3(), look = new THREE.Vector3();
     function loop() {
       requestAnimationFrame(loop);
-      const now = performance.now(), dt = Math.min(.05, (now - last) / 1000); last = now; t += dt;
+      const now = performance.now(), dt = Math.min(.1, (now - last) / 1000); last = now;
+      acc += dt;
+      if (acc < 1 / 30) return;   // picker thumbs don't need vsync — 30fps halves GPU
+      t += acc;
       for (const c of cells) {
-        if (c.impl) c.impl.tick(dt, {});
-        if (c.mixer) c.mixer.update(dt);
+        if (c.impl) c.impl.tick(acc, {});
+        if (c.mixer) c.mixer.update(acc);
         if (c.obj && !c.mixer) {   // rigless GLBs idle-sway so cells feel alive
           c.obj.rotation.y = Math.sin(t * .8 + c.i) * .35;
           c.obj.position.y = .02 + Math.sin(t * 2.2 + c.i * 1.7) * .03;
         }
       }
+      acc = 0;
       for (const c of cells) {
         const x = c.i * 3;
+        const col = c.i % COLS, row = (c.i / COLS) | 0;
         slotCam.set(x + .9, 1.35, 2.9); look.set(x, .72, 0);
         cam.position.copy(slotCam); cam.lookAt(look);
-        ren.setViewport(c.i * SLOT_W, 0, SLOT_W, SLOT_H);
-        ren.setScissor(c.i * SLOT_W, 0, SLOT_W, SLOT_H);
+        ren.setViewport(col * SLOT_W, row * SLOT_H, SLOT_W, SLOT_H);
+        ren.setScissor(col * SLOT_W, row * SLOT_H, SLOT_W, SLOT_H);
         ren.setScissorTest(true);
         ren.render(scene, cam);
         c.ctx.clearRect(0, 0, SLOT_W, SLOT_H);
-        c.ctx.drawImage(glc, c.i * SLOT_W, 0, SLOT_W, SLOT_H, 0, 0, SLOT_W, SLOT_H);
+        c.ctx.drawImage(glc, col * SLOT_W, row * SLOT_H, SLOT_W, SLOT_H, 0, 0, SLOT_W, SLOT_H);
       }
     }
     if (cells.length) loop();

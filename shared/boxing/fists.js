@@ -31,44 +31,51 @@ export const TUNING = {
   REACH_CAP: 1.8,       // reach that maps to power 1
   POWER_FLOOR: .15,     // any emitted punch reports at least this much
   // smoothing
-  VEL_SMOOTH: 24,       // /s — EMA on d(reach)/dt
-  PALM_SMOOTH: 16,      // /s — EMA on palm velocity
+  VEL_SMOOTH: 30,       // /s — EMA on d(reach)/dt
+  PALM_SMOOTH: 20,      // /s — EMA on palm velocity
   CALM_RV: .55,         // reach/s — |reachVel| under ⇒ calm ⇒ baseline adapts
   CALM_PV: .45,         // norm/s — palm speed ceiling for "calm"
   // punch state machine
-  FIRE_VEL: 1.5,        // reach/s — thrust speed that starts a throw
+  FIRE_VEL: 1.2,        // reach/s — thrust speed that starts a throw
   FIRE_FRAMES: 2,       // consecutive hot frames required — a 1-frame
                         // landmark spike can never fire a phantom punch
-  EMIT_VEL: -.05,       // reach/s — forward motion over ⇒ emit the event
+  EMIT_VEL: .12,        // reach/s — thrust stalls near apex ⇒ emit NOW
+                        // (was -.05: waited for actual retraction — punches
+                        // felt ~250ms late)
   RESET_VEL: .25,       // reach/s — must drop below to re-arm (the retract)
-  MAX_THROW_T: .3,      // s — hand held out this long ⇒ emit anyway
+  MAX_THROW_T: .24,     // s — hand held out this long ⇒ emit anyway
   PUNCH_MAX: 16,        // safety cap if a consumer forgets to drain
   // dropouts
   MISS_GRACE: 5,        // frames a hand may vanish before the throw cancels
   RESNAP_MISS: 45,      // frames gone ⇒ re-snap baseline on return
   MIN_SPAN: .02,        // degenerate landmark cloud ⇒ treat as missing
   // guard
-  GUARD_RATE: 10,       // /s — guard smoothing
+  GUARD_RATE: 14,       // /s — guard smoothing
   GUARD_FALL: 4,        // /s — guard decay while the hand is missing
   GUARD_Y_FULL: .36, GUARD_Y_ZERO: .58,       // no-face height band (norm y)
   GUARD_NOSE_LO: .18, GUARD_NOSE_RANGE: .2,   // face-anchored band below nose
   GUARD_REACH_LO: .85, GUARD_REACH_HI: 1.02,  // closeness band on reach
   // sway / face
-  FACE_SMOOTH: 8,       // /s — nose EMA
-  SWAY_SMOOTH: 9,       // /s — sway EMA
+  FACE_SMOOTH: 15,      // /s — nose EMA (was 8: the 4-layer sway chain put
+                        // ~400ms between a real head lean and the dodge)
+  SWAY_SMOOTH: 15,      // /s — sway EMA
   SWAY_RANGE: .13,      // nose-x units of lean that map to ±1
   DT_MAX: .1,           // s — clamp dt (tab-switch spikes)
 };
 
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const ema = (cur, tgt, rate, dt) => cur + (tgt - cur) * (1 - Math.exp(-rate * dt));
+const SIDES = ['left', 'right'];
+const NO_FACE = {};                              // shared — faceState may be null
 
 export class FistTracker {
   constructor(opts = {}) {
     this.T = { ...TUNING, ...opts };        // per-instance tuning overrides
     this.punches = [];
     this.guard = { left: 0, right: 0 };
+    this.reach = { left: 1, right: 1 };     // live view — overlay reads this instead of debug()
     this.sway = 0;
+    this._pick = { left: null, right: null };   // one pick pass instead of find() per side
     this._t = 0;
     this._s = { left: this._blank(), right: this._blank() };
     this._nose = { x: .5, y: .5 };          // smoothed nose (guard band + sway)
@@ -80,7 +87,7 @@ export class FistTracker {
     return {
       seen: false, miss: 0,
       baseline: 0, lastSpan: 0, reach: 1, prevReach: 1, reachVel: 0,
-      vx: 0, vy: 0, px: 0, py: 0,
+      vx: 0, vy: 0, px: 0, py: 0, prevSpan: 0, sampT: 0, stale: 0,
       state: 'idle', hot: 0, peak: 1, tThrow: 0, acc: { t: 0, x: 0, y: 0 },
       guard: 0,
     };
@@ -112,7 +119,7 @@ export class FistTracker {
     this._t += dt;
 
     // ---- face: sway + the anchor for the guard height band --------------
-    const f = faceState || {};
+    const f = faceState || NO_FACE;
     const faceFound = !!(f.found && f.nose
       && Number.isFinite(f.nose.x) && Number.isFinite(f.nose.y));
     if (faceFound) {
@@ -128,31 +135,55 @@ export class FistTracker {
 
     // ---- hands ------------------------------------------------------------
     const hands = Array.isArray(handsState?.hands) ? handsState.hands : [];
-    for (const side of ['left', 'right']) {
+    const pick = this._pick; pick.left = pick.right = null;
+    for (let i = 0, n = hands.length; i < n; i++) {
+      const h = hands[i];
+      if (!this._usable(h)) continue;
+      const s = this._sideOf(h);
+      if (pick[s] === null) pick[s] = h;    // first usable per side — same as find()
+    }
+    for (const side of SIDES) {
       const S = this._s[side];
-      const h = hands.find(h => this._usable(h) && this._sideOf(h) === side);
-      if (!h) { this._missed(S, dt); this.guard[side] = S.guard; continue; }
+      const h = pick[side];
+      if (!h) { this._missed(S, dt); this.guard[side] = S.guard; this.reach[side] = S.reach; continue; }
 
       const reacq = S.miss > 0;               // gap → snap, don't spike
       S.miss = 0;
       const lm = h.lm;
       const span = Math.hypot(lm[9].x - lm[0].x, lm[9].y - lm[0].y);
-      if (!(span > T.MIN_SPAN)) { this._missed(S, dt); this.guard[side] = S.guard; continue; }
+      if (!(span > T.MIN_SPAN)) { this._missed(S, dt); this.guard[side] = S.guard; this.reach[side] = S.reach; continue; }
+      /* fresh = a new tracking result just landed. Results arrive ~30Hz while
+         update() runs per render frame (40-60fps) — identical numbers mean
+         the last result is still current. Velocity must derive off the
+         sample interval, not dt: repeat frames would inject 0s and halve
+         the measured punch speed, and per-frame deltas on a fresh sample
+         would inflate it by the render/result rate ratio. */
+      const fresh = span !== S.prevSpan || h.palm.x !== S.px || h.palm.y !== S.py;
+      if (fresh) S.stale = 0;
+      else if (++S.stale > 30) {            // frozen stream = effectively lost
+        this._missed(S, dt); this.guard[side] = S.guard; this.reach[side] = S.reach; continue;
+      }
       S.lastSpan = span;
 
       if (!S.seen || !(S.baseline > 0)) {     // first sight → rest size = now
         S.baseline = span; S.prevReach = 1; S.reachVel = 0;
         S.vx = S.vy = 0; S.px = h.palm.x; S.py = h.palm.y;
+        S.prevSpan = span; S.sampT = this._t;
         S.state = 'idle'; S.seen = true;
       }
       const reach = span / S.baseline;
-      S.reach = reach;
-      if (reacq) { S.prevReach = reach; S.reachVel = 0; S.vx = S.vy = 0; S.px = h.palm.x; S.py = h.palm.y; }
+      S.reach = reach; this.reach[side] = reach;
+      if (reacq) { S.prevReach = reach; S.reachVel = 0; S.vx = S.vy = 0;
+        S.px = h.palm.x; S.py = h.palm.y; S.prevSpan = span; S.sampT = this._t; }
 
-      S.reachVel = ema(S.reachVel, (reach - S.prevReach) / dt, T.VEL_SMOOTH, dt);
-      S.vx = ema(S.vx, (h.palm.x - S.px) / dt, T.PALM_SMOOTH, dt);
-      S.vy = ema(S.vy, (h.palm.y - S.py) / dt, T.PALM_SMOOTH, dt);
-      S.prevReach = reach; S.px = h.palm.x; S.py = h.palm.y;
+      if (fresh && !reacq) {
+        const dtS = Math.min(.2, Math.max(.005, this._t - S.sampT));
+        S.sampT = this._t;
+        S.reachVel = ema(S.reachVel, (reach - S.prevReach) / dtS, T.VEL_SMOOTH, dtS);
+        S.vx = ema(S.vx, (h.palm.x - S.px) / dtS, T.PALM_SMOOTH, dtS);
+        S.vy = ema(S.vy, (h.palm.y - S.py) / dtS, T.PALM_SMOOTH, dtS);
+        S.prevReach = reach; S.prevSpan = span; S.px = h.palm.x; S.py = h.palm.y;
+      }
 
       // baseline span chases the hand only while calm & not mid-throw — a
       // punch grows span fast, so freezing during motion keeps reach honest
@@ -166,7 +197,9 @@ export class FistTracker {
       // debounce: thrust speed must persist FIRE_FRAMES frames before the
       // throw engages — a single-frame span spike (real MediaPipe pop-outs)
       // heats up once then collapses below threshold, so it can't emit
-      S.hot = (fistish && S.reachVel > T.FIRE_VEL) ? S.hot + 1 : 0;
+      // count only fresh results — one spiked sample can't double-count via
+      // held velocity on repeat frames
+      if (fresh) S.hot = (fistish && S.reachVel > T.FIRE_VEL) ? S.hot + 1 : 0;
       if (S.state === 'idle' && S.hot >= T.FIRE_FRAMES) {
         S.state = 'throw'; S.peak = reach; S.tThrow = 0;
         S.acc.t = S.acc.x = S.acc.y = 0;
@@ -227,7 +260,7 @@ export class FistTracker {
     // neutral pose snapshot: sway re-centers, current span becomes rest size
     this._cx = this._nose.x;
     this.sway = 0;
-    for (const side of ['left', 'right']) {
+    for (const side of SIDES) {
       const S = this._s[side];
       if (S.seen && S.lastSpan > this.T.MIN_SPAN) {
         S.baseline = S.lastSpan; S.prevReach = 1; S.reach = 1; S.reachVel = 0;

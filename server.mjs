@@ -19,7 +19,7 @@ const MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp',
   '.svg': 'image/svg+xml', '.wasm': 'application/wasm',
   '.task': 'application/octet-stream', '.onnx': 'application/octet-stream',
-  '.woff2': 'font/woff2', '.ttf': 'font/ttf',
+  '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.tflite': 'application/octet-stream',
 };
 
 createServer(async (req, res) => {
@@ -30,12 +30,24 @@ createServer(async (req, res) => {
     if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end('no'); }
     const st = await stat(file).catch(() => null);
     if (!st || !st.isFile()) { res.writeHead(404); return res.end('not found'); }
-    res.writeHead(200, {
+    // vendored models/wasm (~20MB) never change mid-fight — cache them hard.
+    // Source files revalidate instead: no-store forced a full refetch of
+    // everything on every reload; last-modified gives us cheap 304s.
+    const cacheable = path.startsWith('/vendor/');
+    const hdrs = {
       'content-type': MIME[extname(file)] || 'application/octet-stream',
-      'cache-control': 'no-store',
+      'cache-control': cacheable ? 'max-age=86400, immutable' : 'no-cache',
+      'last-modified': st.mtime.toUTCString(),
       'cross-origin-opener-policy': 'same-origin',
       'cross-origin-embedder-policy': 'credentialless',
-    });
+      'cross-origin-resource-policy': 'same-origin',
+      'origin-agent-cluster': '?1',
+    };
+    const ims = Date.parse(req.headers['if-modified-since'] || 0);
+    if (!cacheable && ims && st.mtimeMs <= ims + 999) {   // 1s slack for sec-granularity
+      res.writeHead(304, hdrs); return res.end();
+    }
+    res.writeHead(200, hdrs);
     res.end(await readFile(file));
   } catch (e) { res.writeHead(500); res.end(String(e)); }
 }).listen(PORT, '0.0.0.0', () => {

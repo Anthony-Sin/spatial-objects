@@ -2,12 +2,8 @@
    Run: node test/boxing-ring.mjs   (no deps, no server)
    Prints PASS/FAIL lines; exits non-zero on any failure.
 
-   CONTRACT ADDENDUM A1: the player's FEET STAY PLANTED — `sway` and
-   `playerDodge` inputs are accepted but never move `player.pos` (they're
-   head-lean/dodge inputs consumed by fight.js/scene). Player foot position
-   may only "settle" within the corner zone: |pos − spawn| ≤ playerLeash
-   (0.1u) under ANY input, including the npc bulldozing into the player.
-   All ring locomotion belongs to the NPC.
+   Sway and dodge leave the feet in place. `playerStep` permits short
+   forward/backward movement inside the corner leash.
 */
 import { RingSim, TUNING } from '../shared/boxing/ring.js';
 
@@ -23,7 +19,7 @@ const playerDisp = sim => Math.hypot(sim.player.pos.x - sim._home.x,
                                      sim.player.pos.z - sim._home.z);
 
 // Legal = finite positions, inside ropes, not overlapping (>0.9·Σradii),
-// and — A1 — player feet inside the corner-zone leash.
+// and player feet inside the corner-zone leash.
 function legality(sim) {
   for (const [n, f] of [['player', sim.player], ['npc', sim.npc]]) {
     if (!Number.isFinite(f.pos.x) || !Number.isFinite(f.pos.z)) return `${n} non-finite pos`;
@@ -113,7 +109,7 @@ const wrap = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a
     minD >= need - 1e-9, `minD=${minD.toFixed(3)} need=${need.toFixed(3)}`);
 }
 
-/* 4 — A1: sway does NOT move the player's feet ----------------------------- */
+/* 4 — sway does NOT move the player's feet ------------------------------- */
 {
   let maxPD = 0;
   const sim = new RingSim();
@@ -138,6 +134,22 @@ const wrap = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a
   run(sim3, 3, () => ({ npcDir: 'hold' }));
   check('idle 3s: zero motion', playerDisp(sim3) <= 0.001,
     `disp=${playerDisp(sim3).toFixed(4)}`);
+}
+
+/* 4b — depth footwork enters range and returns to neutral --------------- */
+{
+  const sim = new RingSim();
+  const home = sim.player.pos.z;
+  const forward = run(sim, 1.5, () => ({ npcDir: 'hold', playerStep: 1 }));
+  check('step in: legal every frame', !forward, forward);
+  check('step in moves the player toward the opponent', sim.player.pos.z < home - .45,
+    `z=${sim.player.pos.z.toFixed(2)} home=${home}`);
+  const back = run(sim, 1.5, () => ({ npcDir: 'hold', playerStep: -1 }));
+  check('step back: legal every frame', !back, back);
+  check('step back opens space', sim.player.pos.z > home + .12,
+    `z=${sim.player.pos.z.toFixed(2)} home=${home}`);
+  run(sim, 1.5, () => ({ npcDir: 'hold', playerStep: 0 }));
+  check('neutral posture returns to corner mark', Math.abs(sim.player.pos.z - home) < .06);
 }
 
 /* 5 — 'circle' actually orbits: bearing accumulates + direction flips ----- */

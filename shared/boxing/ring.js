@@ -1,14 +1,11 @@
 /* shared/boxing/ring.js — ring auto-footwork / pathfinding sim.
 
    Pure-JS 2D steering sim on the ring's ground plane (x right / z down).
-   No THREE, no DOM — runs in plain node. All ring locomotion is done by
-   the NPC: per contract ADDENDUM A1 the player's FEET STAY PLANTED in
-   their corner zone — `sway`/`playerDodge` inputs are accepted but ignored
-   for foot position (they're head-lean/dodge inputs consumed by fight.js;
-   the camera lean is a scene-layer effect, not ring locomotion).
+   No THREE, no DOM — runs in plain node. Sway and dodge move the camera;
+   a separate depth step moves the player a short distance along the ring.
 
      const sim = new RingSim({ radius:2.6, npcSpeed:1.4, playerDrift:1.0 });
-     sim.step(dt, { sway:-1..1, playerDodge:-1|0|1,
+     sim.step(dt, { sway:-1..1, playerDodge:-1|0|1, playerStep:-1..1,
                     npcDir:'press'|'circle'|'retreat'|'hold',
                     npcStunned:false });                    // every frame
      sim.player / sim.npc → { pos:{x,z}, vel:{x,z}, radius, heading }
@@ -32,8 +29,8 @@
 export const TUNING = {
   radius: 2.6,           // ring radius to the ropes (world units)
   bodyRadius: 0.34,      // fighter footprint radius (collision + rope clamp)
-  npcSpeed: 1.4,         // npc max steering speed (units/s)
-  playerDrift: 1.0,      // legacy no-op (A1: player feet are planted)
+  npcSpeed: 1.85,        // close the first gap and re-engage promptly
+  playerDrift: 1.0,      // legacy option retained for callers
   accel: 5.5,            // velocity approach rate /s — smooth accel & decel
   stunDamp: 8.0,         // stunned npc velocity decay rate /s (deadened drift)
   punchRange: 0.9,       // 'press' preferred hold distance, center to center
@@ -43,13 +40,12 @@ export const TUNING = {
   orbitSpeed: 1.1,       // tangential npc speed while circling
   orbitFlipMin: 2.0,     // seconds, min/max between circle direction flips
   orbitFlipMax: 4.2,
-  // --- A1: the player's feet are planted (corner zone) -------------------
-  // No sway/dodge/spring locomotion — only a stiff servo back to spawn
-  // after collision shoves, hard-bounded by the leash. Legacy constructor
-  // opts like `playerDrift` are still accepted (ignored) for API compat.
-  playerLeash: 0.1,      // max |pos − spawn| the player may ever reach (m)
-  anchorGain: 22,        // spring rate /s pulling the player back to spawn
-  anchorSpeed: 0.5,      // cap on that settle-back speed (units/s)
+  // Small forward/back steps preserve the first-person corner framing.
+  playerLeash: 0.72,     // max |pos − spawn| including collision pushes
+  stepForward: 0.65,     // lean in to enter range
+  stepBack: 0.25,        // lean out to create breathing room
+  anchorGain: 10,        // approach rate toward the chosen step position
+  anchorSpeed: 1.5,      // responsive but still bounded footwork
   playerPushShare: 0.08, // fraction of body separation the player absorbs
 };
 
@@ -77,10 +73,10 @@ export class RingSim {
   reset() {
     const { t } = this;
     // Spawn: player planted in its corner zone on +Z (camera side),
-    // npc nearer center, gap ~1.9. _home anchors the planted player.
+    // npc starts at mid range so the opening exchange arrives quickly.
     this._home = { x: 0, z: 1.5 };
     this.player = { pos: { x: this._home.x, z: this._home.z }, vel: { x: 0, z: 0 }, radius: t.bodyRadius, heading: Math.PI };
-    this.npc    = { pos: { x: 0, z: -0.4 }, vel: { x: 0, z: 0 }, radius: t.bodyRadius, heading: 0 };
+    this.npc    = { pos: { x: 0, z: -0.05 }, vel: { x: 0, z: 0 }, radius: t.bodyRadius, heading: 0 };
     this._rng = mulberry32(this._seed);
     this._orbit = 1;                                        // circle direction ±1
     this._flipT = lerp(t.orbitFlipMin, t.orbitFlipMax, this._rng());
@@ -92,13 +88,11 @@ export class RingSim {
     if (!(dt > 0)) return;                    // ignore 0 / negative / NaN dt
     dt = Math.min(dt, 0.1);                   // stability cap for huge hitches
     const t = this.t, P = this.player, N = this.npc;
-    // input.sway / input.playerDodge are accepted but deliberately NOT
-    // read — A1: they steer the head/camera lean (fight.js/scene), never
-    // the player's feet.
-    const inp = {
-      dir: typeof input.npcDir === 'string' ? input.npcDir : 'hold',
-      stun: !!input.npcStunned,
-    };
+    // Sway and dodge steer the head only. Depth controls footwork.
+    const inp = this._inp || (this._inp = { dir: 'hold', stun: false, step: 0 });
+    inp.dir = typeof input.npcDir === 'string' ? input.npcDir : 'hold';
+    inp.stun = !!input.npcStunned;
+    inp.step = Number.isFinite(+input.playerStep) ? clamp(+input.playerStep, -1, 1) : 0;
 
     // ---- shared geometry (recomputed post-collision via _syncHeadings) ----
     let dx = N.pos.x - P.pos.x, dz = N.pos.z - P.pos.z;
@@ -165,14 +159,14 @@ export class RingSim {
     N.vel.x += (nvx - N.vel.x) * nk;
     N.vel.z += (nvz - N.vel.z) * nk;
 
-    // ================= player: feet planted (A1) =================
-    // NO locomotion — no spring to mid range, no sway strafe, no dodge hop.
-    // The only player velocity is a stiff, speed-capped servo back to the
-    // corner-zone spawn point, undoing the small collision shove it may
-    // have taken (cm-scale settle, further bounded by the leash below).
+    // ================= player: short depth step =================
+    // Absolute step target returns to neutral as the boxer straightens up.
+    // The x anchor keeps lateral dodges as head movement, so attacks remain
+    // readable and the player cannot walk out of the camera's corner lane.
     {
       const ax = (this._home.x - P.pos.x) * t.anchorGain;
-      const az = (this._home.z - P.pos.z) * t.anchorGain;
+      const stepZ = inp.step >= 0 ? -inp.step * t.stepForward : -inp.step * t.stepBack;
+      const az = (this._home.z + stepZ - P.pos.z) * t.anchorGain;
       const am = Math.hypot(ax, az);
       const sc = am > t.anchorSpeed ? t.anchorSpeed / am : 1;
       const pk = 1 - Math.exp(-t.accel * dt);
@@ -183,14 +177,12 @@ export class RingSim {
     // ================= integrate + resolve =================
     P.pos.x += P.vel.x * dt; P.pos.z += P.vel.z * dt;
     N.pos.x += N.vel.x * dt; N.pos.z += N.vel.z * dt;
-    // Relax: asymmetric push-apart (npc yields, player takes only a shove
-    // share) → rope clamps → corner leash, iterated to converge; final
+    // Relax: asymmetric push-apart (npc yields most of the overlap)
+    // → rope clamps → corner leash, iterated to converge; final
     // npc-only separation guarantees no residual overlap.
+    // Helpers report whether they moved anything — converged early = loop done.
     for (let i = 0; i < 4; i++) {
-      this._pushApart();
-      this._clamp(P);
-      this._clamp(N);
-      this._leashPlayer();
+      if (!(this._pushApart() | this._clamp(P) | this._clamp(N) | this._leashPlayer())) break;
     }
     this._pushNpcOff();
     this._clamp(N);
@@ -210,23 +202,22 @@ export class RingSim {
     return Math.atan2(-dx, -dz);
   }
 
-  // Soft separation — ASYMMETRIC (A1): the npc absorbs almost all of it;
-  // the planted player takes only `playerPushShare` (a cm-scale shove,
-  // then reeled back in by the anchor servo + leash).
+  // Soft separation — the npc absorbs almost all of it; the player takes
+  // only a small shove, then eases back toward its chosen step position.
   _pushApart() {
     const P = this.player, N = this.npc, min = P.radius + N.radius;
     let dx = N.pos.x - P.pos.x, dz = N.pos.z - P.pos.z;
     let d = Math.hypot(dx, dz);
-    if (d >= min) return;
+    if (d >= min) return 0;
     if (d < 1e-6) { dx = 1; dz = 0; d = 1e-6; }
     const ov = min - d, ux = dx / d, uz = dz / d;
     const ps = ov * this.t.playerPushShare;
     P.pos.x -= ux * ps; P.pos.z -= uz * ps;
     N.pos.x += ux * (ov - ps); N.pos.z += uz * (ov - ps);
+    return 1;
   }
 
-  // Final separation pass each step: any residual overlap is taken out of
-  // the npc alone — the player must never be bulldozed out of its corner.
+  // Final separation pass: residual overlap is taken out of the npc alone.
   _pushNpcOff() {
     const P = this.player, N = this.npc, min = P.radius + N.radius;
     let dx = N.pos.x - P.pos.x, dz = N.pos.z - P.pos.z;
@@ -237,8 +228,7 @@ export class RingSim {
     N.pos.x += (dx / d) * ov; N.pos.z += (dz / d) * ov;
   }
 
-  // Corner-zone leash: hard bound on how far the player's feet may ever
-  // be from spawn (A1 — feet planted, tiny settle only).
+  // Corner-zone leash bounds forward and backward footwork.
   _leashPlayer() {
     const P = this.player, lim = this.t.playerLeash;
     const dx = P.pos.x - this._home.x, dz = P.pos.z - this._home.z;
@@ -246,7 +236,9 @@ export class RingSim {
     if (r > lim) {
       P.pos.x = this._home.x + (dx / r) * lim;
       P.pos.z = this._home.z + (dz / r) * lim;
+      return 1;
     }
+    return 0;
   }
 
   // Hard clamp inside the ropes (ring radius − body radius); bleeds the
@@ -254,11 +246,12 @@ export class RingSim {
   _clamp(f) {
     const lim = this.t.radius - f.radius;
     const r = Math.hypot(f.pos.x, f.pos.z);
-    if (r <= lim) return;
+    if (r <= lim) return 0;
     const nx = f.pos.x / r, nz = f.pos.z / r;
     f.pos.x = nx * lim; f.pos.z = nz * lim;
     const vout = f.vel.x * nx + f.vel.z * nz;
     if (vout > 0) { f.vel.x -= vout * nx; f.vel.z -= vout * nz; }
+    return 1;
   }
 
   // heading = yaw for a "+Z-facing" model to face its opponent.

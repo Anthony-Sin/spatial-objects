@@ -27,7 +27,7 @@ const until = (f, pred, secs, mk, seen = []) => {
   }
   return pred(f.state);
 };
-const toFighting = (f, seen = []) => until(f, s => s.phase === 'fighting', 4, null, seen);
+const toFighting = (f, seen = []) => until(f, s => s.phase === 'fighting', TUNING.introT + 1, null, seen);
 
 /* 0 — intro → round-start → fighting */
 {
@@ -53,6 +53,14 @@ const toFighting = (f, seen = []) => until(f, s => s.phase === 'fighting', 4, nu
     f.state.events.join(','));
   check('cross @power 1 deals TUNING.dmg.cross', Math.abs(drop - TUNING.dmg.cross) < .01, `drop=${drop}`);
   check('npc staggers into hurt', f.state.npc.action === 'hurt', f.state.npc.action);
+}
+{
+  const f = new Fight({ seed: 7 });
+  toFighting(f);
+  f.state.npc.action = 'press';
+  const hp0 = f.state.npc.hp;
+  f.step(DT, inp({ punches: [{ kind: 'jab', side: 'left', power: .15 }], distance: 1.35 }));
+  check('a visible mid-range jab connects', f.state.npc.hp < hp0);
 }
 
 /* 2 — npc windup → punch lands on idle player */
@@ -144,7 +152,7 @@ const captureKind = () => {   // remembers the last telegraphed swing kind/side
   const f = new Fight({ seed: 3 });
   const DIRS = new Set(['press', 'circle', 'retreat', 'hold']);
   let bad = 0, seenDirs = new Set();
-  for (let i = 0; i < 600; i++) {   // 10s across phases with a wandering gap
+  for (let i = 0; i < Math.ceil((TUNING.introT + 10) / DT); i++) {
     const d = f.npcDir();
     if (!DIRS.has(d)) bad++;
     seenDirs.add(d);
@@ -285,7 +293,27 @@ const captureKind = () => {   // remembers the last telegraphed swing kind/side
     min < TUNING.gassedT && sawGassed, `min=${min.toFixed(3)} gassed=${sawGassed}`);
 }
 
-/* 11 — NaN / garbage inputs can't bypass checks */
+/* 11 — defending opens a counter; consecutive clean hits build a chain */
+{
+  const f = new Fight({ seed: 7 });
+  toFighting(f);
+  f._pk = { kind: 'jab', side: 'left' };
+  f._impact(inp({ guard: { right: 1 } }));
+  check('a blocked attack opens a counter window', f.state.player.counterT > 0);
+  f.state.npc.action = 'press';
+  const hp0 = f.state.npc.hp;
+  f.step(DT, inp({ punches: [{ kind: 'jab', side: 'left', power: 1 }] }));
+  check('counter punch deals bonus damage and emits cue',
+    Math.abs(hp0 - f.state.npc.hp - TUNING.dmg.jab * TUNING.counterDamage) < .01
+      && f.state.events.includes('counter'), `damage=${hp0 - f.state.npc.hp}`);
+  f.state.npc.action = 'press';
+  f.step(DT, inp({ punches: [{ kind: 'cross', side: 'right', power: 1 }] }));
+  check('consecutive hits build the combo', f.state.player.combo === 2 && f.state.player.bestCombo === 2);
+  for (let i = 0; i < Math.ceil(TUNING.comboWindow / DT) + 2; i++) f.step(DT, inp({ distance: 4 }));
+  check('combo expires when pressure drops', f.state.player.combo === 0);
+}
+
+/* 12 — NaN / garbage inputs can't bypass checks */
 {
   const f = new Fight({ seed: 7 });
   toFighting(f);

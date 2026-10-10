@@ -3,9 +3,15 @@
 // namespace (Group/Mesh/geometries/materials) to prove it builds, poses,
 // ticks, and disposes without WebGL. Run: node test/boxing-proto.mjs
 import { VARIANTS, VARIANT_INFO, buildBoxer } from '../shared/boxing/protoBoxer.js';
+import { entranceSign } from '../shared/boxing/entrance.js';
 
 let failed = 0;
 const ok = (cond, msg) => { if (cond) console.log('  ok', msg); else { failed++; console.error('FAIL', msg); } };
+ok(entranceSign({ hands: [{ kind: 'palm' }] }) === 'wave', 'one open palm waves');
+ok(entranceSign({ hands: [{ kind: 'palm' }, { kind: 'palm' }] }) === 'hype', 'two palms hype the crowd');
+ok(entranceSign({ hands: [{ kind: 'point' }] }) === 'point', 'point gesture calls out the rival');
+ok(entranceSign({ hands: [{ kind: 'fist' }, { kind: 'fist' }] }) === 'ready', 'two fists square up');
+ok(entranceSign({ hands: [{ kind: 'other', nExt: 2 }] }) === 'victory', 'two fingers make a victory pose');
 
 // ---- minimal THREE stub ----
 class V3 {
@@ -87,14 +93,14 @@ ok(b.parts.gloveL.position.z > restZ + .15,
   `jab extends gloveL (+${(b.parts.gloveL.position.z - restZ).toFixed(2)} z)`);
 
 b.snap('down', 1);                               // snap = instant pose apply
-ok(b.parts.root.rotation.x < -1.2, `down tips body backward (rx=${b.parts.root.rotation.x.toFixed(2)})`);
+ok(b.parts.root.rotation.z < -1.2, `down tips body sideways (rz=${b.parts.root.rotation.z.toFixed(2)})`);
 for (let i = 0; i < 30; i++) b.tick(1 / 60);
 
 // a consumer that pins down t01 at 1 (like npc.js) still gets a fall ramp
 const c = buildBoxer(THREE, { variant: 'bean' });
 c.pose('idle', 0); c.tick(1 / 60);
 const rots = [];
-for (let i = 0; i < 30; i++) { c.pose('down', 1); c.tick(1 / 60); rots.push(c.parts.root.rotation.x); }
+for (let i = 0; i < 30; i++) { c.pose('down', 1); c.tick(1 / 60); rots.push(c.parts.root.rotation.z); }
 ok(rots[1] > -.8 && rots[29] < -1.3, 'pinned down t01 still ramps the fall');
 // cyclic poses accept t01 > 1 without freezing
 c.pose('celebrate', 2.75);
@@ -124,6 +130,17 @@ b.pose('idle', 0);
 const y0 = b.parts.torso.scale.y;
 b.tick(.4);
 ok(Math.abs(b.parts.torso.scale.y - y0) > .002, 'tick adds breathing motion');
+
+const moving = buildBoxer(THREE, { variant: 'bean' });
+const standing = buildBoxer(THREE, { variant: 'bean' });
+let strideDiff = 0;
+for (let i = 0; i < 40; i++) {
+  moving.pose('idle', i / 60); standing.pose('idle', i / 60);
+  moving.tick(1 / 60, {}, 1.5); standing.tick(1 / 60, {}, 0);
+  strideDiff = Math.max(strideDiff,
+    Math.abs(moving.parts.footL.position.z - standing.parts.footL.position.z));
+}
+ok(strideDiff > .025, `moving fighter takes visible steps (${strideDiff.toFixed(3)})`);
 
 // ---- determinism ----
 const run = () => {

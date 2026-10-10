@@ -1,144 +1,227 @@
-/* shared/hands.js — webcam hand tracking via MediaPipe HandLandmarker.
+/* shared/hands.js — webcam hand tracker. Public state shape unchanged
+   (.state {hands, pinch, point, orbit, zoom, spread}); the only change is
+   WHERE inference runs:
+     - worker path (preferred): a dedicated track-worker.js hosts
+       HandLandmarker off the main thread, so a 10–30ms detect can never
+       eat a vsync on the render thread.
+     - inline path: exact old behaviour, kept as the automatic fallback.
+   Frames cross as transferred VideoFrames — zero copy, never queued
+   (one in flight, stale frames are dropped, not buffered).
 
-   const hands = await Hands.create(videoEl, vendorUrl);
-   hands.state → {
-     ok,                    // tracker live
-     hands: [Hand],         // 0–2 hands, newest-first
-     pinch,                 // primary pinch {x,y,px,py} | null  (screen px)
-     orbit,                 // open-palm drag {x,y,dx,dy} | null
-     zoom,                  // two-pinch spread {d,dd,cx,cy} | null
-     spread,                // two open palms moving {d,dd,cx,cy} | null
-   }
-   Landmark coords are normalized 0–1 with x mirrored (selfie view) so the
-   cursor matches what the user sees; .px/.py variants are screen pixels
-   against the element the tracker was bound to.
-
-   Gestures:
-     pinch   — thumb tip ~ index tip            → grab / tap / select
-     palm    — all four fingers extended        → orbit when moving
-     zoom    — BOTH hands pinching, spread apart→ dolly
-     spread  — BOTH palms open, moving apart    → explode / assemble
-     point   — only index extended              → hover cursor
-     fist    — none extended                    → hold modifier
+   Boot policy: the worker starts immediately; if it hasn't answered in 30s
+   an inline landmarker covers the gap — and whenever the worker finally
+   posts 'ready' it adopts the pump (closing the inline copy). Slow-booting
+   machines therefore never sit on main-thread inference forever.
 */
-import { FilesetResolver, HandLandmarker }
-  from '../vendor/mediapipe/vision_bundle.mjs';
+const LERP = 1;            // display raw measured motion; extra EMA caused visible lag
+const BOOT_MS = 30000;     // worker boot grace before inline covers the gap
+const INLINE_EVERY = 3;    // inline detects block the thread — third-rate only
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const EXTENDED = (lm, tip, pip, mcp) => {
-  // finger tip farther from wrist than pip → extended (palm-relative)
-  const w = lm[0];
-  const d = (a) => Math.hypot(a.x - w.x, a.y - w.y);
-  return d(lm[tip]) > d(lm[pip]) * 1.12;
-};
-
-class Hands {
-  static async create(video, vendorUrl) {
+export class Hands {
+  constructor() {
+    this.state = { hands: [], pinch: null, point: null, orbit: null, zoom: null, spread: null };
+    this.delegate = 'none';
+    this._worker = null; this._inFlight = false;
+    this.landmarker = null;                       // inline fallback only
+    this._t = -1; this._prev = {}; this._tick = 0;
+    this._vendorUrl = null; this._video = null; this._onNew = null;
+    this._retryT = null;
+    this.stats = { cameraHz: 0, trackHz: 0, roundTripMs: 0, inferMs: 0,
+      lastResultAt: 0, frameWidth: 0, frameHeight: 0 };
+    this._lastCameraAt = 0;
+  }
+  static async create(video, vendorUrl = './vendor/mediapipe', opts = {}) {
     const h = new Hands();
-    const fileset = await FilesetResolver.forVisionTasks(`${vendorUrl}/wasm`);
-    const opts = (delegate) => ({
-      baseOptions: { modelAssetPath: `${vendorUrl}/hand_landmarker.task`, delegate },
-      runningMode: 'VIDEO', numHands: 2, minHandDetectionConfidence: .4,
-      minHandPresenceConfidence: .35, minTrackingConfidence: .3,
-    });
-    // GPU first; some machines/drivers fail silently there — CPU is the floor
-    try { h.landmarker = await HandLandmarker.createFromOptions(fileset, opts('GPU')); h.delegate = 'gpu'; }
-    catch {
-      try { h.landmarker = await HandLandmarker.createFromOptions(fileset, opts('CPU')); h.delegate = 'cpu'; }
-      catch (e) { throw e; }
-    }
-    h.video = video;
-    h.state = { ok: true, hands: [], pinch: null, orbit: null, zoom: null, spread: null };
-    h._prev = new Map();
-    h._loop = h._loop.bind(h);
-    h._running = true;
-    video.addEventListener('loadeddata', () => h._loop());
-    if (video.readyState >= 2) h._loop();
+    h._vendorUrl = new URL(vendorUrl, location.href).href.replace(/\/$/, '');
+    h._video = video;
+    h._preferCpu = !!opts.preferCpu;
+    const which = await Promise.race([h._spawn(), sleep(BOOT_MS).then(() => 'slow')]);
+    // 'ok' → worker owns it. 'fail' → inline now. 'slow' → inline covers the
+    // gap while the worker keeps booting; a late 'ready' still adopts.
+    if (which !== 'ok') await h._initLocal();
+    h._pump(video);
     return h;
   }
-
-  stop() { this._running = false; }
-
-  _loop() {
-    if (!this._running) return;
-    requestAnimationFrame(() => this._loop());
-    const v = this.video;
-    if (v.readyState < 2 || v.currentTime === this._lastT) return;
-    this._lastT = v.currentTime;
-    let res;
-    try { res = this.landmarker.detectForVideo(v, performance.now()); }
-    catch { return; }
-    this._ingest(res.landmarks || [], res.handedness || []);
-  }
-
-  _ingest(frames, handed = []) {
-    const S = this.state;
-    const prev = S.hands;
-    S.hands = frames.map((lm, i) => {
-      // selfie view: MediaPipe's 'Left' is the user's RIGHT hand — flip it
-      const label = handed[i]?.[0]?.categoryName;
-      const side = label ? (label === 'Left' ? 'right' : 'left') : null;
-      // mirror x so it matches the selfie-view the user sees
-      const px = (n) => 1 - lm[n].x, py = (n) => lm[n].y;
-      const thumb = { x: px(4), y: py(4) }, index = { x: px(8), y: py(8) };
-      const pinchD = Math.hypot(thumb.x - index.x, thumb.y - index.y);
-      const ext = [
-        EXTENDED(lm, 8, 6, 5),   // index
-        EXTENDED(lm, 12, 10, 9), // middle
-        EXTENDED(lm, 16, 14, 13),// ring
-        EXTENDED(lm, 20, 18, 17),// pinky
-      ];
-      const nExt = ext.filter(Boolean).length;
-      // thumb "extended" ≈ tip is farther from pinky mcp than the mcp is
-      const thumbExt = Math.hypot(lm[4].x - lm[17].x, lm[4].y - lm[17].y)
-                     > Math.hypot(lm[2].x - lm[17].x, lm[2].y - lm[17].y) * 1.08;
-      const nExtAll = nExt + (thumbExt ? 1 : 0);   // 0–5 incl. thumb — pose→tool count
-      const palm = { x: px(9), y: py(9) };             // middle mcp ~ palm center
-      const wrist = { x: px(0), y: py(0) };
-      // pinch hysteresis (borrowed from spatial demos like minority-report-
-      // gesture-graph): enter tight, exit loose — moving fingers mid-drag
-      // can't flick the gesture off and drop what you're holding
-      const wasP = prev[i]?.kind === 'pinch';
-      const pinching = wasP ? pinchD < .085 : (pinchD < .055 && nExt <= 2);
-      const kind =
-        pinching ? 'pinch' :
-        nExt >= 4 ? 'palm' :
-        nExt === 0 ? 'fist' :
-        ext[0] && nExt === 1 ? 'point' : 'other';
-      const cur = { i, kind, lm, side, palm, wrist, indexTip: index,
-                    pinchAt: { x: (thumb.x + index.x) / 2, y: (thumb.y + index.y) / 2 },
-                    pinchD, nExt, nExtAll };
-      // velocity of palm for orbit/spread gestures
-      const p = prev[i];
-      cur.vx = p ? cur.palm.x - p.palm.x : 0;
-      cur.vy = p ? cur.palm.y - p.palm.y : 0;
-      return cur;
+  /* Boot one worker. Resolves 'ok' once adopted, 'fail' on init error/death.
+     A late 'ready' (after BOOT_MS race is lost) still adopts the pump. */
+  _spawn() {
+    const h = this;
+    return new Promise(res => {
+      let w;
+      try { w = new Worker(new URL('./track-worker.js', import.meta.url)); }   // classic worker — ESM in via import()
+      catch { return res('fail'); }
+      w.onmessage = (e) => {
+        const d = e.data || {};
+        if (d.type === 'ready') {
+          if (d.error) { try { w.terminate(); } catch {} res('fail'); }
+          else { h._adopt(w, d.delegate); res('ok'); }
+        }
+        else if (d.type === 'result') {
+          const now = performance.now(), st = h.stats;
+          st.roundTripMs = h._sentAt ? now - h._sentAt : 0;
+          st.inferMs = d.inferMs || 0;
+          if (st.lastResultAt) st.trackHz = st.trackHz
+            ? st.trackHz * .7 + (1000 / Math.max(1, now - st.lastResultAt)) * .3
+            : 1000 / Math.max(1, now - st.lastResultAt);
+          st.lastResultAt = now;
+          h._inFlight = false; h._ingest(d.landmarks, d.handedness); h._onNew?.();
+        }
+        else if (d.type === 'fatal') {   // repeated detect errors — GPU ctx died
+          try { w.terminate(); } catch {}
+          if (h._worker === w) { h._worker = null; h.delegate = 'none'; }
+          h._inFlight = false; h._initLocal().catch(() => {});
+        }
+      };
+      w.onerror = () => {
+        if (h._worker === w) { h._worker = null; h._inFlight = false; h._initLocal().catch(() => {}); }
+        res('fail');
+      };
+      try { w.postMessage({ type: 'init', kind: 'hands', vendorUrl: h._vendorUrl,
+        preferCpu: h._preferCpu }); }
+      catch { res('fail'); }
     });
-
-    const pinches = S.hands.filter(h => h.kind === 'pinch');
-    const palms = S.hands.filter(h => h.kind === 'palm');
-
-    S.pinch = pinches.length === 1 ? { ...pinches[0].pinchAt } : null;
-    S.point = S.hands.find(h => h.kind === 'point')?.indexTip ?? null;
-
-    S.orbit = palms.length === 1
-      ? { x: palms[0].palm.x, y: palms[0].palm.y, dx: palms[0].vx, dy: palms[0].vy }
-      : null;
-
-    const spreadOf = (arr) => {
-      if (arr.length < 2) return null;
-      const a = arr[0].palm ?? arr[0].pinchAt, b = arr[1].palm ?? arr[1].pinchAt;
-      const d = Math.hypot(a.x - b.x, a.y - b.y);
-      const k = arr[0].kind === 'pinch' ? 'z' : 's';
-      const pd = this._prev[k];
-      this._prev[k] = d;
-      return { d, dd: pd == null ? 0 : d - pd, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
+  }
+  _adopt(w, delegate) {
+    this._worker = w;
+    this.delegate = `${delegate}-worker`;
+    this.landmarker?.close?.(); this.landmarker = null;   // worker won — free the inline copy
+    w.onerror = () => {                                  // mid-game death → inline + one respawn
+      if (this._worker === w) { this._worker = null; this.delegate = 'none'; }
+      this._inFlight = false;
+      this._initLocal().catch(() => {});
+      clearTimeout(this._retryT);
+      this._retryT = setTimeout(() => { if (!this._worker) this._spawn(); }, 3000);
     };
-    S.zoom = pinches.length === 2 ? spreadOf(pinches.map(p => ({ ...p, palm: p.pinchAt }))) : null;
-    S.spread = palms.length === 2 ? spreadOf(palms) : null;
-    if (pinches.length !== 2) this._prev.z = null;
-    if (palms.length !== 2) this._prev.s = null;
+  }
+  async _initLocal() {
+    if (this.landmarker) return;
+    const { FilesetResolver, HandLandmarker } = await import(`${this._vendorUrl}/vision_bundle.mjs`);
+    const fileset = await FilesetResolver.forVisionTasks(`${this._vendorUrl}/wasm`);
+    for (const delegate of ['GPU', 'CPU']) {
+      try {
+        const lm = await HandLandmarker.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: `${this._vendorUrl}/hand_landmarker.task`, delegate },
+          runningMode: 'VIDEO', numHands: 2,
+          minHandDetectionConfidence: .4, minHandPresenceConfidence: .35, minTrackingConfidence: .3 });
+        if (this._worker) { try { lm.close(); } catch {} return; }  // worker adopted meanwhile
+        this.landmarker = lm;
+        this.delegate = delegate.toLowerCase();
+        return;
+      } catch { /* try next delegate */ }
+    }
+    if (!this._worker) this.delegate = 'none';
+  }
+  /* One frame in flight. The camera itself supplies a 640×480 frame;
+     VideoFrameInit has no resizeWidth/resizeHeight fields, so setting them
+     here used to silently send the entire 1280×720 camera image. */
+  _send(v) {
+    this._inFlight = true;
+    this._sentAt = performance.now();
+    let f;
+    try { f = new VideoFrame(v); } catch { f = null; }
+    if (f) {
+      this.stats.frameWidth = f.displayWidth; this.stats.frameHeight = f.displayHeight;
+      try { this._worker.postMessage({ type: 'frame', frame: f }, [f]); }
+      catch { f.close(); this._inFlight = false; }
+      return;
+    }
+    // VideoFrame ctor unsupported → ImageBitmap is still zero-copy enough
+    createImageBitmap(v).then(bmp => {
+      try { this._worker.postMessage({ type: 'frame', frame: bmp }, [bmp]); }
+      catch { bmp.close(); this._inFlight = false; }
+    }).catch(() => { this._inFlight = false; });
+  }
+  _pump(v) {
+    const onNew = () => {   // only ever send a frame that's actually new
+      if (v.readyState >= 2 && v.currentTime !== this._t) {
+        const now = performance.now();
+        if (this._lastCameraAt) this.stats.cameraHz = this.stats.cameraHz
+          ? this.stats.cameraHz * .8 + 1000 / Math.max(1, now - this._lastCameraAt) * .2
+          : 1000 / Math.max(1, now - this._lastCameraAt);
+        this._lastCameraAt = now;
+        this._t = v.currentTime;
+        if (this._worker) { if (!this._inFlight) this._send(v); }
+        else if (this.landmarker) {
+          // inline detect blocks the render thread — cap it at ~10Hz so a
+          // slow delegate can never drag the whole game down with it
+          if (++this._tick % INLINE_EVERY) return true;
+          try {
+            const result = this.landmarker.detectForVideo(v, performance.now());
+            const st = this.stats;
+            st.inferMs = performance.now() - now;
+            if (st.lastResultAt) st.trackHz = st.trackHz
+              ? st.trackHz * .7 + 1000 / Math.max(1, performance.now() - st.lastResultAt) * .3
+              : 1000 / Math.max(1, performance.now() - st.lastResultAt);
+            st.lastResultAt = performance.now(); st.roundTripMs = st.inferMs;
+            this._ingest(result.landmarks, result.handedness);
+          } catch {}
+        }
+      }
+      return true;
+    };
+    this._onNew = onNew;   // worker results re-dispatch here — no rVFC bubble
+    if (v.requestVideoFrameCallback) {          // paced by the camera itself — rAF fires too often
+      const again = () => v.requestVideoFrameCallback(() => { if (this._worker || this.landmarker) onNew(); again(); });
+      again();
+    } else {
+      const again = () => { if (this._worker || this.landmarker) onNew(); requestAnimationFrame(again); };
+      again();
+    }
+  }
+  _ingest(lms, handedness = []) {
+    const prev = this._prev, seen = {};
+    const list = (lms || []).map((lm, i) => {
+      const side = this._sideOf(lm, handedness, i); seen[side] = true;
+      const p = prev[side], k = p ? LERP : 1;
+      const out = { side, kind: 'hand', i,
+        lm: lm.map((pt, j) => {
+          const last = p?.lm?.[j];
+          const x = 1 - pt.x;                       // mirror once for selfie view
+          return { x: last ? last.x + (x - last.x) * k : x,
+                   y: last ? last.y + (pt.y - last.y) * k : pt.y, z: pt.z };
+        }) };
+      out.palm = out.lm[9]; out.wrist = out.lm[0];
+      out.indexTip = out.lm[8]; out.pinchAt = out.lm[4];
+      const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      const span = d(out.lm[0], out.lm[9]) || 1e-6;
+      out.pinchD = d(out.lm[4], out.lm[8]) / span;
+      const extended = (tip, pip) => d(out.lm[tip], out.lm[0]) > d(out.lm[pip], out.lm[0]) * 1.12;
+      const fingers = [extended(8, 6), extended(12, 10),
+        extended(16, 14), extended(20, 18)];
+      out.nExt = fingers.filter(Boolean).length;
+      out.nExtAll = out.nExt + (d(out.lm[4], out.lm[17])
+        > d(out.lm[2], out.lm[17]) * 1.08 ? 1 : 0);
+      out.pinch = p?.pinch ? out.pinchD < .32 : out.pinchD < .26;
+      out.kind = out.pinch ? 'pinch' : out.nExt >= 4 ? 'palm'
+        : out.nExt === 0 ? 'fist' : fingers[0] && out.nExt === 1 ? 'point' : 'other';
+      prev[side] = out;
+      return out;
+    });
+    for (const s in prev) if (!seen[s]) delete prev[s];
+    const st = this.state; st.hands = list;
+    const get = s => list.find(h => h.side === s);
+    const L = get('left'), R = get('right');
+    const P = list.find(h => h.pinch) || null;
+    st.pinch = P ? { x: P.pinchAt.x, y: P.pinchAt.y, hand: P } : null;
+    st.point = list.find(h => h.nExt === 1) || null;
+    st.orbit = R && !R.pinch ? { x: R.palm.x, y: R.palm.y } : null;
+    st.zoom = (L?.pinch && R?.pinch) ? { x: (L.palm.x + R.palm.x) / 2, y: (L.palm.y + R.palm.y) / 2 } : null;
+    st.spread = (L && R) ? Math.hypot(L.palm.x - R.palm.x, L.palm.y - R.palm.y) : null;
+  }
+  _sideOf(lm, handedness, i) {
+    // detector labels the person's anatomical side; mirror it for self-view
+    const label = handedness?.[i]?.[0]?.categoryName || '';
+    if (label === 'Left') return 'right';
+    if (label === 'Right') return 'left';
+    return lm[0].x > .5 ? 'left' : 'right';
+  }
+  stop() {
+    clearTimeout(this._retryT);
+    try { this._worker?.postMessage({ type: 'close' }); } catch {}
+    this._worker?.terminate(); this._worker = null;
+    try { this.landmarker?.close?.(); } catch {} this.landmarker = null;
+    this.state.hands = [];
   }
 }
-
-window.Hands = Hands;
 export default Hands;

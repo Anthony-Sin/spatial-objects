@@ -1,13 +1,10 @@
-/* mitts/index.js — the mitt gallery registry.
-   Each design: shared/boxing/mitts/<id>.js exporting {ID, NAME, draw}.
+/* The single house glove used by the boxing overlay.
+   The renderer exports {ID, NAME, draw}.
    draw(ctx, pos, o): pos={x,y,size,ang} px; o={side,reach,squash,dim,kind}. */
-export const MITT_IDS = [
-  'classic', 'orb', 'puff', 'quilt', 'berry', 'stripe',
-  'knuckle', 'star', 'block', 'lace', 'mini', 'tiger',
-];
+export const MITT_IDS = ['classic'];
 
-export const pickId = () => localStorage['boxing:glove'] || 'classic';
-export const savePick = (id) => { localStorage['boxing:glove'] = id; };
+export const pickId = () => 'classic';
+export const savePick = () => {};
 
 export async function loadMitt(id = pickId()) {
   try {

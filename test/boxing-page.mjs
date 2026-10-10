@@ -51,9 +51,52 @@ try {
 check('boxing.html boots; __boxing handle exists', booted);
 
 if (booted) {
-  await new Promise(r => setTimeout(r, 1500));
-  const res = await pg.evaluate(async () => {
-    const B = window.__boxing, sleep = ms => new Promise(r => setTimeout(r, ms));
+  const intro = await pg.evaluate(() => ({
+    phase: window.__boxing.state.phase,
+    avatar: window.__boxing.game.playerAvatar.group.visible,
+    card: document.querySelector('[data-entrance]').classList.contains('on'),
+  }));
+  check('entrance shows the player boxer and ringside card',
+    intro.phase === 'intro' && intro.avatar && intro.card, JSON.stringify(intro));
+  const waitForHands = await pg.evaluate(() => {
+    const B = window.__boxing, before = B.fight._phaseT;
+    for (let i = 0; i < 90; i++) B.game.step(1 / 60, { hands: [] }, null, { waitForHands: true });
+    return { before, after: B.fight._phaseT, phase: B.state.phase };
+  });
+  check('entrance clock waits for hand tracking', waitForHands.phase === 'intro'
+    && Math.abs(waitForHands.after - waitForHands.before) < .01, JSON.stringify(waitForHands));
+  await pg.evaluate(() => { window.__forceHands = { hands: [{ kind: 'palm' }] }; });
+  await pg.evaluate(() => {
+    const B = window.__boxing;
+    for (let i = 0; i < 16; i++) window.__waveSign = B.game.step(1 / 60, window.__forceHands, null).entranceSign;
+  });
+  await new Promise(r => setTimeout(r, 150));
+  const wave = await pg.evaluate(() => ({
+    sign: window.__waveSign,
+    gloveY: window.__boxing.game.playerAvatar.parts.gloveR.position.y,
+  }));
+  check('an open palm makes the entrance boxer wave',
+    wave.sign === 'wave' && wave.gloveY > .9, JSON.stringify(wave));
+  const tracked = await pg.evaluate(() => {
+    const B = window.__boxing, before = B.game.playerAvatar.parts.gloveL.position.x;
+    const shape = [[0,1.15],[.55,.78],[.8,.5],[1,.32],[1.12,.18],
+      [.36,-.12],[.4,-.4],[.42,-.6],[.44,-.74],
+      [0,-.2],[0,-.48],[0,-.7],[0,-.86],
+      [-.34,-.12],[-.38,-.36],[-.4,-.55],[-.42,-.68],
+      [-.6,-.05],[-.66,-.26],[-.7,-.42],[-.72,-.52]];
+    const lm = shape.map(([x, y]) => ({ x: .2 + x * .08, y: .3 + y * .08, z: 0 }));
+    window.__forceHands = { hands: [{ side: 'left', kind: 'palm',
+      palm: { x: .2, y: .3 }, lm }] };
+    for (let i = 0; i < 12; i++) B.game.step(1 / 60, window.__forceHands, null);
+    return { before, after: B.game.playerAvatar.parts.gloveL.position.x };
+  });
+  check('tracked hand moves the entrance boxer’s glove', tracked.after < tracked.before - .08,
+    JSON.stringify(tracked));
+  await pg.screenshot({ path: '/tmp/boxing-entrance.png' });
+  await pg.evaluate(() => { window.__forceHands = null; window.__boxing.game.skipIntro(); });
+  await pg.waitForFunction(() => window.__boxing.state.phase === 'fighting', { timeout: 45000 });
+  const res = await pg.evaluate(() => {
+    const B = window.__boxing;
     // same mitten-ish synthetic fist the page's mouse fallback uses
     const lmFist = (cx, cy, s) => {
       const SH = [[0,1.15],[.55,.78],[.8,.5],[1.0,.32],[1.12,.18],
@@ -69,45 +112,35 @@ if (booted) {
           pinchAt: { x: cx, y: cy }, pinchD: .2, nExt: 0, nExtAll: 0 }],
           pinch: null, point: null, orbit: null, zoom: null, spread: null }
       : { hands: [], pinch: null, point: null, orbit: null, zoom: null, spread: null };
-    const punch = async (side) => {
-      // span swells (the throw), then the fist must STAY out ~350ms —
-      // FistTracker emits at thrust apex / MAX_THROW_T, and a hand that
-      // vanishes mid-throw cancels the punch instead of emitting it
-      for (const s of [.04, .055, .07, .09, .11]) { set(side, .35, .55, s); await sleep(90); }
-      set(side, .35, .55, .11); await sleep(400);
-      set(null); await sleep(120);
+    const frames = n => { for (let i = 0; i < n; i++) {
+      const out = B.game.step(1 / 60, window.__forceHands, null);
+      B.log.push(...out.events);
+    } };
+    const punch = side => {
+      // Drive input at fixed frame rate so the assertion tests punch logic,
+      // independent of software WebGL's frame rate in headless Chromium.
+      for (const s of [.04, .055, .07, .09, .11]) { set(side, .35, .55, s); frames(6); }
+      set(side, .35, .55, .11); frames(24);
+      set(null); frames(12);
     };
 
-    /* phase 1 — the page records sim.distance() every frame the NPC presses
-       (its first press often lands before this evaluate even starts) */
-    const press = { n: 0, d0: null, dMin: 99 };
-    const t0 = performance.now();
-    while (performance.now() - t0 < 14000) {
-      const pl = B.pressLog || [];
-      if (pl.length >= 5) {
-        press.n = pl.length; press.d0 = pl[0];
-        press.dMin = Math.min(...pl);
-        if (press.dMin < press.d0 - .15 || pl.length > 40) break;
-      }
-      await sleep(120);
-    }
-
-    /* phase 2 — time shots like a player: only swing when PIP is in reach
-       (blind spam at a circling fighter whiffs 'range' — that's the game
-       working, not a bug). Wait ≤2.5s per swing for the press to close. */
+    /* Hold the rival at a known range for the input-to-hit check. NPC movement
+       is tested separately by boxing-ring.mjs, and would make this probe
+       depend on an arbitrary AI attack schedule. */
+    B.fight._npc = () => {};
+    B.fight.state.npc.action = 'idle';
+    B.sim.npc.pos.x = B.sim.player.pos.x;
+    B.sim.npc.pos.z = B.sim.player.pos.z - 1.0;
+    B.sim.npc.vel.x = B.sim.npc.vel.z = 0;
     let swung = 0;
     const hp0 = B.fight.state.npc.hp;
-    const t1 = performance.now();
-    while (performance.now() - t1 < 30000 &&
-           B.fight.state.npc.hp >= hp0 &&
-           !B.log.some(e => e === 'npc-hit' || e === 'player-hit')) {
-      const tw = performance.now();
-      while (B.sim.distance() > 1.35 && performance.now() - tw < 2500) await sleep(60);
+    while (swung < 5 && B.fight.state.npc.hp >= hp0) {
       if (B.fight.state.phase !== 'fighting') break;
-      await punch(swung++ % 2 ? 'right' : 'left');
+      punch(swung++ % 2 ? 'right' : 'left');
+      B.fight.state.npc.action = 'idle';
     }
     return {
-      press, swung,
+      swung,
       sawPunch: B.log.includes('player-punch'),
       npcHit: B.log.some(e => e === 'npc-hit' || e === 'player-hit'),
       npcHp: B.fight.state.npc.hp, playerHp: B.fight.state.player.hp,
@@ -119,13 +152,78 @@ if (booted) {
   check('scripted growing-hand punch emits a punch event', res.sawPunch || res.npcHit,
     `swung ${res.swung}, log: ${res.log.join(',') || 'empty'}`);
   check('NPC takes a hit', res.npcHit || res.npcHp < 100, `npc.hp=${res.npcHp}`);
-  check('sim.distance() shrinks while npc presses',
-    res.press.n >= 5 && res.press.dMin < res.press.d0 - .1,
-    `samples=${res.press.n} d0=${res.press.d0?.toFixed(2)} dMin=${res.press.dMin.toFixed(2)} phase=${res.phase}`);
+}
+
+if (booted) {
+  const home = await pg.evaluate(() => window.__boxing.sim.player.pos.z);
+  await pg.evaluate(() => {
+    const B = window.__boxing, empty = { hands: [] };
+    window.__forceFace = { found: true, nose: { x: .5, y: .45 }, size: .3 };
+    for (let i = 0; i < 20; i++) B.game.step(1 / 60, empty, window.__forceFace);
+    window.__forceFace.size = .42;
+    for (let i = 0; i < 65; i++) B.game.step(1 / 60, empty, window.__forceFace);
+  });
+  const stepped = await pg.evaluate(() => window.__boxing.sim.player.pos.z);
+  check('leaning toward the camera steps into range', stepped < home - .25,
+    `home=${home.toFixed(2)} step=${stepped.toFixed(2)}`);
+  await pg.evaluate(() => {
+    const B = window.__boxing; window.__forceFace.size = .3;
+    for (let i = 0; i < 65; i++) B.game.step(1 / 60, { hands: [] }, window.__forceFace);
+  });
+  const returned = await pg.evaluate(() => window.__boxing.sim.player.pos.z);
+  check('returning to neutral restores the corner stance', Math.abs(returned - home) < .12,
+    `home=${home.toFixed(2)} returned=${returned.toFixed(2)}`);
+  await pg.evaluate(() => { window.__forceFace = null; });
+  await pg.keyboard.down('s');
+  const { back, keyHeld } = await pg.evaluate(() => {
+    const B = window.__boxing, keyHeld = B.moveKeys.back;
+    for (let i = 0; i < 65; i++) B.game.step(1 / 60, { hands: [] }, null, { step: -1 });
+    return { back: B.sim.player.pos.z, keyHeld };
+  });
+  await pg.keyboard.up('s');
+  check('S steps back in mouse mode', keyHeld && back > home + .1,
+    `held=${keyHeld} home=${home.toFixed(2)} back=${back.toFixed(2)}`);
 }
 
 check('zero page errors on load', errs.length === 0, errs.slice(0, 3).join(' | ') || 'clean');
+const gloveFollowsLandmarks = await pg.evaluate(async () => {
+  const { draw } = await import('./shared/boxing/mitts/classic.js');
+  const cv = document.createElement('canvas'); cv.width = cv.height = 280;
+  const ctx = cv.getContext('2d');
+  const shape = [[0,1.15],[.55,.78],[.8,.5],[1,.32],[1.12,.18],
+    [.36,-.12],[.4,-.4],[.42,-.6],[.44,-.74],
+    [0,-.2],[0,-.48],[0,-.7],[0,-.86],
+    [-.34,-.12],[-.38,-.36],[-.4,-.55],[-.42,-.68],
+    [-.6,-.05],[-.66,-.26],[-.7,-.42],[-.72,-.52]];
+  const a = shape.map(([x, y]) => ({ x: 140 + x * 55, y: 140 + y * 55 }));
+  const b = a.map(p => ({ ...p }));
+  for (const i of [5, 6, 7, 8]) b[i].x += 22;
+  const render = lm => {
+    ctx.clearRect(0, 0, 280, 280);
+    draw(ctx, { x: 140, y: 140, size: 65, ang: 0 },
+      { side: 'left', kind: 'fist', reach: 1, dim: 1, lm });
+    return ctx.getImageData(0, 0, 280, 280).data.slice();
+  };
+  const first = render(a), moved = render(b);
+  let changed = 0;
+  for (let i = 0; i < first.length; i += 4)
+    if (Math.abs(first[i + 3] - moved[i + 3]) > 50) changed++;
+  return changed;
+});
+check('the glove silhouette follows tracked knuckles', gloveFollowsLandmarks > 100,
+  `${gloveFollowsLandmarks} changed pixels`);
 await pg.screenshot({ path: '/tmp/boxing.png' });
+await pg.setViewport({ width: 390, height: 844 });
+await new Promise(r => setTimeout(r, 180));
+const mobile = await pg.evaluate(() => {
+  const card = document.querySelector('.card').getBoundingClientRect();
+  const score = document.querySelector('.score').getBoundingClientRect();
+  return { cardBottom: card.bottom, scoreTop: score.top, width: document.documentElement.scrollWidth };
+});
+check('mobile HUD keeps score clear of the bout card',
+  mobile.scoreTop >= mobile.cardBottom && mobile.width <= 390,
+  `cardBottom=${mobile.cardBottom.toFixed(0)} scoreTop=${mobile.scoreTop.toFixed(0)} width=${mobile.width}`);
+await pg.screenshot({ path: '/tmp/boxing-mobile.png' });
 await b.close();
 srv?.kill();
 

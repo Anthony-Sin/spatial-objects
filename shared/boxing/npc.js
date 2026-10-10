@@ -58,6 +58,7 @@ function makeRig(THREE, inner) {
     down:      { rx: -1.35,rz: 0,   sy: .62, y: .06,z: -.25 },
     celebrate: { rx: 0,    rz: 0,   sy: 1.05,y: 0,  z: 0 },
   };
+  const FIELDS = ['rx', 'rz', 'sy', 'y', 'z'];
   return {
     group: rig,
     parts: {},
@@ -65,7 +66,7 @@ function makeRig(THREE, inner) {
     tick(dt) {
       t += dt;
       const k = Math.min(1, dt * 8);
-      for (const f of ['rx', 'rz', 'sy', 'y', 'z']) cur[f] = lerp(cur[f], tgt[f], k);
+      for (const f of FIELDS) cur[f] = lerp(cur[f], tgt[f], k);
       const bounce = name === 'celebrate' ? Math.abs(Math.sin(t * 7)) * .16
         : name === 'down' ? 0 : Math.sin(t * 4.2) * .018;   // breathing
       rig.rotation.x = cur.rx; rig.rotation.z = cur.rz;
@@ -93,7 +94,11 @@ const CLIP_FOR = {
   block:     ['block', 'guard', 'idle'],
   idle:      ['idle', 'rest', 'breath', 'stand'],
 };
-const ONCE = new Set(['jab', 'cross', 'hook', 'down', 'hurt', 'celebrate']);
+// mirrored proto poses reuse the same clips — GLB can't mirror, base is close enough
+CLIP_FOR.windupL = CLIP_FOR.windup; CLIP_FOR.jabL = CLIP_FOR.jab;
+CLIP_FOR.hookL = CLIP_FOR.hook;     CLIP_FOR.crossL = CLIP_FOR.cross;
+const ONCE = new Set(['jab', 'cross', 'hook', 'down', 'hurt', 'celebrate',
+  'jabL', 'crossL', 'hookL']);
 const pickClip = (clips, pose) => {
   for (const kw of CLIP_FOR[pose] || CLIP_FOR.idle) {
     const c = clips.find(c => c.name.toLowerCase().includes(kw));
@@ -181,19 +186,32 @@ function emergency(THREE) {
   return makeRig(THREE, g);
 }
 
-/* fight.state.npc → pose name + progress */
+/* fight.state.npc → pose name + progress. Returns a shared object — single
+   consumer per frame, so no allocation ever enters the render path. */
+/* telegraph.side is the NPC's anatomical glove — the proto part names follow
+   the SCREEN side (rig faces +Z: anatomical left = parts.gloveR), so 'left'
+   telegraphs pose gloveR and 'right' telegraphs the mirrored *L poses. */
+const PUNCH_POSE = {
+  jab:   { left: 'jabL',  right: 'jab' },
+  hook:  { left: 'hookL', right: 'hook' },
+  upper: { left: 'cross', right: 'crossL' },
+};
+const ACT = { name: 'idle', t01: 0 };
 function mapAction(npc) {
-  if (!npc) return { name: 'idle', t01: 0 };
+  const A = ACT;
+  if (!npc) { A.name = 'idle'; A.t01 = 0; return A; }
   const t = Math.min(1, (npc.actionT || 0) / .45);
   switch (npc.action) {
-    case 'windup':    return { name: 'windup', t01: npc.telegraph?.t01 ?? t };
-    case 'punch':     return { name: { hook: 'hook', upper: 'cross' }[npc._seenKind] || 'jab', t01: t };
-    case 'block':     return { name: 'block', t01: t };
-    case 'hurt':      return { name: 'hurt', t01: t };
-    case 'down':      return { name: 'down', t01: Math.min(1, (npc.actionT || 0) / .6) };
-    case 'celebrate': return { name: 'celebrate', t01: t };
-    default:          return { name: 'idle', t01: 0 };
+    case 'windup':    A.name = npc.telegraph?.side === 'right' ? 'windupL' : 'windup';
+      A.t01 = npc.telegraph?.t01 ?? t; break;
+    case 'punch':     A.name = PUNCH_POSE[npc._seenKind]?.[npc._seenSide] || 'jab'; A.t01 = t; break;
+    case 'block':     A.name = 'block';     A.t01 = t; break;
+    case 'hurt':      A.name = 'hurt';      A.t01 = t; break;
+    case 'down':      A.name = 'down';      A.t01 = Math.min(1, (npc.actionT || 0) / .6); break;
+    case 'celebrate': A.name = 'celebrate'; A.t01 = t; break;
+    default:          A.name = 'idle';      A.t01 = 0;
   }
+  return A;
 }
 
 export async function createNpc(THREE, opts = {}) {
@@ -224,21 +242,56 @@ export async function createNpc(THREE, opts = {}) {
      toward bruise-red as the stage climbs (no floating decals). Head
      materials get hit hardest; bodies stay closer to base. */
   const BRUISE = new THREE.Color(0x8c1f28);
-  const mats = [];
+  const mats = [], seen = new Set();
   group.traverse(o => {
     if (o.isMesh && o.material) {
       const ms = Array.isArray(o.material) ? o.material : [o.material];
-      for (const m of ms) if (m.color) mats.push({ m, c: m.color.clone(), head: /head|face|skin|hair/i.test(o.name || '') });
+      for (const m of ms)
+        // one entry per material — inked hulls all share inkHullMat and
+        // would otherwise lerp ~20 duplicate entries every hit
+        if (m.color && !seen.has(m)) { seen.add(m);
+          mats.push({ m, c: m.color.clone(), head: /head|face|skin|hair/i.test(o.name || '') }); }
     }
   });
   let dmgCur = 0;
   function setDamage(frac) {                      // frac 0..1 = hp fraction lost
-    dmgCur = Math.max(dmgCur, Math.min(1, frac)); // wounds persist between rounds
+    frac = Math.min(1, frac);
+    if (frac <= dmgCur) return;                   // monotone — no-op when not worsening
+    dmgCur = frac;                                // wounds persist between rounds
     for (const { m, c, head } of mats) {
       const amt = head ? dmgCur * .6 : dmgCur * .38;
       m.color.copy(c).lerp(BRUISE, amt);
       if (m.emissive) m.emissive.copy(BRUISE).multiplyScalar(dmgCur * .12);
     }
+  }
+
+  /* telegraph marker — a '!' starburst that rides the cocked glove and
+     pulses faster as the swing charges (Punch-Out!! arm-flash, but it also
+     says WHICH glove). White texture tinted hot as t01 → 1. */
+  let tel = null;
+  const telV = new THREE.Vector3();
+  let telT = 0;
+  if (typeof document !== 'undefined') {
+    const telTexCv = document.createElement('canvas');
+    telTexCv.width = telTexCv.height = 96;
+    const x = telTexCv.getContext('2d');
+    x.translate(48, 48);
+    x.beginPath();                        // jagged 10-point burst
+    for (let i = 0; i < 20; i++) {
+      const a = i * Math.PI / 10, r = i % 2 ? 20 : 42;
+      x[i ? 'lineTo' : 'moveTo'](Math.cos(a) * r, Math.sin(a) * r);
+    }
+    x.closePath();
+    x.fillStyle = '#fff'; x.fill();
+    x.strokeStyle = 'rgba(43,33,24,.9)'; x.lineWidth = 5; x.stroke();
+    x.fillStyle = '#2b2118';
+    x.beginPath(); x.roundRect(-5.5, -22, 11, 30, 5); x.fill();
+    x.beginPath(); x.arc(0, 16, 7, 0, Math.PI * 2); x.fill();
+    tel = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: new THREE.CanvasTexture(telTexCv), transparent: true,
+      depthWrite: false }));
+    tel.visible = false; tel.renderOrder = 6;
+    group.add(tel);
   }
 
   const api = {
@@ -255,10 +308,28 @@ export async function createNpc(THREE, opts = {}) {
         group.position.set(pos.x + api.kick.x, api.kick.y, pos.z + api.kick.z);
       }
       if (pos && target) group.rotation.y = Math.atan2(target.x - pos.x, target.z - pos.z);
-      if (npc?.telegraph?.kind) npc._seenKind = npc.telegraph.kind;  // punch loses telegraph — stash it
+      if (npc?.telegraph?.kind) {                                    // punch loses telegraph — stash it
+        npc._seenKind = npc.telegraph.kind; npc._seenSide = npc.telegraph.side;
+      }
       const p = mapAction(npc);
       impl.pose(p.name, p.t01);
-      impl.tick(dt, npc || {});
+      impl.tick(dt, npc || {}, Math.hypot(ctx.vel?.x || 0, ctx.vel?.z || 0));
+      // telegraph marker over the cocked glove — 'left'/'right' name PIP's
+      // anatomical glove; the proto rig faces +Z so its left glove is gloveR
+      // (the part names follow the screen side). Faster flicker near release.
+      const tg = npc?.telegraph;
+      if (tel && tg) {
+        telT += dt;
+        const u = tg.t01 || 0;
+        const part = impl.parts?.[tg.side === 'left' ? 'gloveR' : 'gloveL'];
+        if (part) { part.getWorldPosition(telV); group.worldToLocal(telV); }
+        else telV.set(tg.side === 'left' ? .34 : -.34, api.headY + .18, .2);
+        tel.position.set(telV.x, telV.y + .16, telV.z);
+        tel.scale.setScalar(.3 + u * .14 + Math.sin(telT * (7 + u * 26)) * .045);
+        tel.material.color.setRGB(1, 1 - u * .5, 1 - u * .75);   // heats to orange
+        tel.material.opacity = .75 + .25 * Math.sin(telT * (7 + u * 26));
+        tel.visible = true;
+      } else if (tel) tel.visible = false;
     },
     pose(n, t01) { impl.pose(n, t01); },
     dispose() { impl.dispose?.(); group.parent?.remove(group); },

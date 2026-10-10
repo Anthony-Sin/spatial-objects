@@ -36,7 +36,8 @@
   .hp-row .track { flex: 1; height: 12px; border: 2px solid var(--ink); border-radius: 8px;
     background: rgba(43,33,24,.12); overflow: hidden; }
   .hp-row .track i { display: block; height: 100%; width: 100%;
-    border-radius: 5px; transition: width .18s cubic-bezier(.34,1.56,.64,1); }
+    border-radius: 5px; transform-origin: left;
+    transition: transform .18s cubic-bezier(.34,1.56,.64,1); }
   .hp-row.you .track i { background: var(--coral); }
   .hp-row.npc .track i { background: var(--sky); }
   .hp-row.stam .track { height: 7px; }
@@ -47,9 +48,19 @@
     text-shadow: 0 2px 0 var(--ink), 0 4px 14px rgba(0,0,0,.55); }
   .score .l { font-size: 9px; letter-spacing: .3em; text-transform: uppercase;
     color: rgba(255,248,236,.65); }
+  .score .combo { display: none; margin-top: 7px; padding: 4px 10px;
+    border: 2px solid var(--ink); border-radius: 10px; background: var(--coral);
+    color: var(--paper); font-size: 12px; font-weight: 800; letter-spacing: .12em;
+    box-shadow: 0 3px 0 var(--ink); }
+  .score .combo.on { display: inline-block; animation: feedin .2s ease-out; }
+  .score .counter { display: none; margin-top: 7px; padding: 5px 10px;
+    border: 2px solid var(--ink); border-radius: 10px; background: var(--sky);
+    color: var(--ink); font-size: 11px; font-weight: 800; letter-spacing: .1em;
+    box-shadow: 0 3px 0 var(--ink); }
+  .score .counter.on { display: block; }
 
   /* event feed — stacked paper pills under the score */
-  .feed { position: fixed; top: 152px; right: 30px; z-index: 20; display: flex;
+  .feed { position: fixed; top: 240px; right: 30px; z-index: 20; display: flex;
     flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none; }
   .feed div { background: var(--paper); color: var(--ink); border: 2px solid var(--ink);
     border-radius: 999px; padding: 3px 12px; font-size: 10.5px; font-weight: 700;
@@ -75,29 +86,52 @@
   .legend b { color: var(--sun); font-weight: 700;
     text-shadow: 0 1px 0 var(--ink); }
 
+  .entrance { display: none; position: fixed; right: 24px; bottom: 24px; z-index: 25;
+    width: min(360px, calc(100vw - 48px)); padding: 16px 18px;
+    color: var(--paper); background: linear-gradient(140deg, #243a5b, #171c2a);
+    border: 3px solid var(--paper); border-radius: 18px;
+    box-shadow: 0 6px 0 var(--ink), 0 16px 35px rgba(0,0,0,.55); }
+  .entrance.on { display: block; }
+  .entrance .eyebrow { color: var(--sun); font-size: 10px; font-weight: 800;
+    letter-spacing: .28em; text-transform: uppercase; }
+  .entrance .name { margin-top: 3px; font-size: 30px; font-weight: 900;
+    line-height: 1; letter-spacing: .06em; text-shadow: 0 3px 0 var(--ink); }
+  .entrance .sign { margin: 10px 0 8px; color: var(--sun); font-size: 14px;
+    font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  .entrance .hint { font-size: 11px; line-height: 1.35; opacity: .9; }
+  .entrance .actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 11px; }
+  .entrance button { border: 2px solid var(--ink); border-radius: 8px;
+    padding: 5px 8px; background: var(--paper); color: var(--ink);
+    font-family: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
+  .entrance button:hover, .entrance button:focus-visible { background: var(--sun); }
+  .entrance button.skip { margin-left: auto; background: var(--coral); color: var(--paper); }
+
   .peep[hidden] { display: none !important; }
   /* fight declutter: instructions hide once gloves are up (webcam stays) */
-  body.fighting .legend { display: none !important; }
+  body.fighting .legend, body.entrancing .legend { display: none !important; }
   /* contrast: dark outline behind all paper-light HUD text over bright scene */
   .legend, .score .l, .feed div, .tele, .flash {
     text-shadow: 0 1px 2px rgba(20,14,8,.95), 0 0 10px rgba(20,14,8,.6); }
 
-  /* telegraph "!" sticker */
-  .tele { position: fixed; top: 26%; left: 50%; z-index: 30;
-    transform: translate(-50%,-50%) scale(0); width: 74px; height: 74px;
-    border: 3px solid var(--ink); border-radius: 50%; background: var(--coral);
-    color: var(--paper); font-weight: 700; font-size: 44px; line-height: 68px;
-    text-align: center; text-shadow: 0 2px 0 var(--ink); pointer-events: none;
-    box-shadow: 0 5px 0 rgba(43,33,24,.5); }
-  .tele.on { transform: translate(-50%,-50%) scale(1) rotate(-6deg);
-    transition: transform .16s cubic-bezier(.34,1.56,.64,1);
-    animation: telepulse .3s infinite alternate; }
-  @keyframes telepulse { to { transform: translate(-50%,-50%) scale(1.12) rotate(5deg); } }
-
-  .flash { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); z-index: 30;
-    font-weight: 700; font-size: 42px; color: var(--sun); letter-spacing: .06em;
+  /* attack and hit callouts stay at the edge, leaving the opponent clear */
+  .tele { position: fixed; top: 55%; right: 24px; z-index: 30;
+    transform: translateX(30px) scale(.9); padding: 9px 15px;
+    border: 3px solid var(--ink); border-radius: 14px; background: var(--coral);
+    color: var(--paper); font-weight: 800; font-size: 14px;
+    text-align: right; pointer-events: none; opacity: 0;
+    box-shadow: 0 5px 0 rgba(43,33,24,.5); transition: transform .12s, opacity .12s; }
+  .tele.on { transform: translateX(0) scale(1); opacity: 1; }
+  .flash { position: fixed; top: 66%; right: 24px; z-index: 30;
+    font-weight: 800; font-size: 34px; color: var(--sun); letter-spacing: .06em;
     text-shadow: 0 3px 0 var(--ink), 0 6px 22px rgba(0,0,0,.7);
     opacity: 0; transition: opacity .35s; pointer-events: none; }
+  .count { position: fixed; top: 46%; right: 28px; z-index: 30;
+    display: none; color: var(--paper); text-align: right; pointer-events: none;
+    font-size: clamp(42px, 7vw, 88px); font-weight: 800; line-height: .85;
+    text-shadow: 0 5px 0 var(--ink), 0 10px 24px rgba(0,0,0,.6); }
+  .count.on { display: block; }
+  .count small { display: block; margin-top: 12px; color: var(--sun);
+    font-size: 12px; letter-spacing: .24em; text-transform: uppercase; }
 
   /* damage vignette — red rim pulse when the player eats a hit */
   .vin { position: fixed; inset: 0; z-index: 15; pointer-events: none; opacity: 0;
@@ -125,11 +159,14 @@
   @media (max-width: 700px) {
     .card { top: 12px; left: 14px; width: calc(100% - 28px); min-width: 0; padding: 10px 12px; }
     .card .job { font-size: 16px; }
-    .score { top: 18px; right: 14px; }
+    .score { top: 158px; right: 14px; }
     .score .n { font-size: 24px; }
-    .feed { top: 60px; right: 14px; }
+    .tele, .flash { right: 14px; font-size: 13px; }
+    .feed { top: 310px; right: 14px; }
     .peep { left: 14px; bottom: 14px; width: 116px; }
     .legend { right: 14px; bottom: 14px; font-size: 9px; line-height: 1.6; max-width: 55vw; }
+    .entrance { left: 14px; right: 14px; bottom: 138px; width: auto; padding: 12px; }
+    .entrance .name { font-size: 23px; }
   }
 </style>
 </head>
@@ -145,11 +182,12 @@
     <div class="hp-row npc"><div class="lbl" data-npclbl>PIP</div><div class="track"><i data-nhp></i></div></div>
   </div>
 
-  <div class="score"><div class="n" data-score>0</div><div class="l">ringside pts</div></div>
+  <div class="score"><div class="n" data-score>0</div><div class="l">ringside pts</div><div class="combo" data-combo></div><div class="counter" data-counter>COUNTER READY</div></div>
   <div class="feed" data-feed></div>
   <div class="vin" data-vin></div>
-  <div class="tele" data-tele>!</div>
+  <div class="tele" data-tele></div>
   <div class="flash" data-flash></div>
+  <div class="count" data-count><span>1</span><small>DOWN FOR THE COUNT</small></div>
 
   <div class="endcard" data-end>
     <div class="big" data-endtitle>YOU WIN!</div>
@@ -164,10 +202,25 @@
     <div class="tag" data-peep>face · —</div>
   </div>
 
+  <div class="entrance" data-entrance>
+    <div class="eyebrow">LIVE FROM STORYWOOD · RED CORNER</div>
+    <div class="name">THE ROOKIE</div>
+    <div class="sign" data-entrance-sign>SHOW THE CROWD A SIGN</div>
+    <div class="hint">Open palm to wave · two palms to hype · point to call them out · two fingers for victory · two fists to square up</div>
+    <div class="actions">
+      <button type="button" data-sign="wave">1 Wave</button>
+      <button type="button" data-sign="hype">2 Hype</button>
+      <button type="button" data-sign="point">3 Point</button>
+      <button type="button" data-sign="ready">4 Ready</button>
+      <button type="button" class="skip" data-skip-intro>Skip · Enter</button>
+    </div>
+  </div>
+
   <div class="legend">
     <div><b>punch</b> — thrust a fist at the camera · <b>guard</b> — gloves up by your face</div>
-    <div><b>lean</b> — sway / dodge a telegraph · <b>c</b> — recenter · <b>m</b> — mute</div>
-    <div><b>mouse</b> — left/right drag = each glove · <b>shift</b>-drag = sway</div>
+    <div><b>lean</b> — sway / dodge · <b>step</b> — move toward / away from camera</div>
+    <div><b>mouse</b> — left/right drag = gloves · <b>shift</b>-drag = sway · <b>w/s</b> = step</div>
+    <div><b>c</b> — recenter · <b>m</b> — mute</div>
   </div>
 
   <script type="module">
@@ -176,41 +229,62 @@
     import { Face } from './shared/face.js';
     import { buildScene } from './shared/boxing/scene.js';
     import { loadMitt } from './shared/boxing/mitts/index.js';
-    const mitt = await loadMitt();                    // glove pick from the mitt rack
+    /* every slow load fires at once — mitt sprite, module graphs, and the
+       two tracker workers all warm up concurrently instead of serially */
+    const mittP = loadMitt();                                    // glove pick from the mitt rack
+    const gameModP = import('./shared/boxing/game.js');
+    const audioModP = import('./shared/boxing/audio.js');
 
     const params = new URLSearchParams(location.search);
     const $ = (s) => document.querySelector(s);
     const status = $('[data-peep]');   // boot/face status lives on the webcam tag now
     const el = {
       round: $('[data-round]'), time: $('[data-time]'), php: $('[data-php]'),
-      nhp: $('[data-nhp]'), stam: $('[data-stam]'), score: $('[data-score]'), feed: $('[data-feed]'),
-      tele: $('[data-tele]'), flash: $('[data-flash]'), end: $('[data-end]'),
-      vin: $('[data-vin]'),
+      nhp: $('[data-nhp]'), stam: $('[data-stam]'), score: $('[data-score]'), combo: $('[data-combo]'), counter: $('[data-counter]'), feed: $('[data-feed]'),
+      tele: $('[data-tele]'), flash: $('[data-flash]'), count: $('[data-count]'), end: $('[data-end]'),
+      vin: $('[data-vin]'), entrance: $('[data-entrance]'), entranceSign: $('[data-entrance-sign]'),
       endTitle: $('[data-endtitle]'), endSub: $('[data-endsub]'),
       npcName: $('[data-npcname]'), npcLbl: $('[data-npclbl]'), peep: $('[data-peep]'),
     };
 
     /* ================= renderer / stage ================= */
     const cvs = $('#world');
-    const ren = new THREE.WebGLRenderer({ canvas: cvs, antialias: true });
-    ren.setPixelRatio(Math.min(devicePixelRatio, 2));
+    // Probe the GPU BEFORE creating the real renderer: an iGPU/tile rasterizer
+    // at 1600×900 pays ~4× fill for MSAA — the single biggest render cost.
+    let gpuName = '';
+    try {
+      const pg = document.createElement('canvas').getContext('webgl2');
+      const pe = pg?.getExtension('WEBGL_debug_renderer_info');
+      gpuName = pe ? pg.getParameter(pe.UNMASKED_RENDERER_WEBGL) : '';
+      pg?.getExtension('WEBGL_lose_context')?.loseContext();
+    } catch {}
+    const weakGpu = /intel|mesa|swiftshader|llvmpipe|software/i.test(gpuName);
+    const ren = new THREE.WebGLRenderer({ canvas: cvs, antialias: !weakGpu,
+      powerPreference: 'high-performance' });   // hybrid laptops: pick the dGPU, not the iGPU
+    // iGPU render-scale: the scene is fill-bound at desktop sizes, so weak GPUs
+    // draw .8× and let the compositor upscale — the 2D gloves/HUD stay 1:1 sharp.
+    ren.setPixelRatio(weakGpu ? Math.min(devicePixelRatio, 1) * .8
+                              : Math.min(devicePixelRatio, 1.5));
     ren.shadowMap.enabled = true;
+    ren.shadowMap.autoUpdate = false;            // refreshed every 2nd frame in loop()
     const cam = new THREE.PerspectiveCamera(68, 1, .05, 120);
     cam.position.set(0, 1.7, 4.6); cam.lookAt(0, 1, 0);
 
-    const world = buildScene(THREE, ren);
+    const world = buildScene(THREE, ren, { low: weakGpu });
     const scene = world.scene;
 
     /* ================= webcam + trackers =================
        ?notrack skips camera + landmarkers entirely (e2e drives __forceHands) */
     const video = $('[data-cam]');
     const noTrack = !!params.get('notrack');
+    let handStatus = 'loading';
     if (!noTrack) try {
       if (params.get('vid')) {
         video.src = params.get('vid'); video.loop = true; video.muted = true; await video.play();
       } else {
         video.srcObject = await navigator.mediaDevices.getUserMedia(
-          { video: { width: 960, height: 540 }, audio: false });
+          { video: { width: { ideal: 640 }, height: { ideal: 480 },
+            frameRate: { ideal: 30, max: 30 } }, audio: false });
         await video.play();
       }
       status.textContent = 'camera live';
@@ -218,24 +292,39 @@
     if (noTrack) { status.textContent = 'synthetic mode'; $('.peep').hidden = true; }
     let hands = null, face = null;
     if (!noTrack && (video.srcObject || video.src)) {
-      try { face = await Face.create(video, './vendor/mediapipe'); status.textContent = `face · ${face.delegate}`; } catch {}
-      try { hands = await Hands.create(video, './vendor/mediapipe'); } catch {}
+      // each landmarker boots inside its own worker — fire both, wire in when ready.
+      // Hands get the whole GPU budget: a tracked hand roughly doubles infer
+      // cost, and two fists up is the exact moment tracking must keep 30Hz.
+      // BlazeFace is ~4ms — it lives on spare CPU cores instead of competing.
+      Face.create(video, './vendor/mediapipe', { preferCpu: true })
+        .then(f => { face = f; status.textContent = `face · ${f.delegate}`; }).catch(() => {});
+      Hands.create(video, './vendor/mediapipe', { preferCpu: false }).then(h => {
+        hands = h; handStatus = h.delegate === 'none' ? 'unavailable' : 'ready';
+      }).catch(() => { handStatus = 'unavailable'; });
     }
+    // camera keeps streaming while the tab hides — pause the device, not the app
+    addEventListener('visibilitychange', () => {
+      const t = video.srcObject?.getVideoTracks?.()[0];
+      if (t) t.enabled = !document.hidden;
+    });
 
     /* ================= game glue =================
        Sibling contract modules may still be in flight — if game.js can't
        load, the page degrades to an idle ring instead of a black screen. */
+    const mitt = await mittP;
     let game = null;
     window.__boxing = { THREE, scene, cam, log: [] };
     try {
-      const { createGame } = await import('./shared/boxing/game.js');
+      const { createGame } = await gameModP;
       game = await createGame({ THREE, renderer: ren, cam, world, hands, face });
       const nm = (game.fight.state.npc.name || game.npc.name || 'PIP').toUpperCase();
       el.npcName.textContent = nm;
       el.npcLbl.textContent = nm.split(' ')[0];   // tiny row label gets the short name
-      window.__boxing = { THREE, scene, cam, game, npc: game.npc, log: [],
+      window.__boxing = { THREE, scene, cam, game, npc: game.npc, log: [], ren,
+        weakGpu, gpuName,
         get fight() { return game.fight; }, get sim() { return game.sim; },
-        get tracker() { return game.tracker; }, get state() { return game.fight.state; } };
+        get tracker() { return game.tracker; }, get state() { return game.fight.state; },
+        get hands() { return hands; }, get face() { return face; } };
     } catch (e) {
       console.warn('boxing: game glue unavailable — idle ring only', e);
       status.textContent = 'ring ready — modules pending';
@@ -244,7 +333,7 @@
     /* procedural SFX — lazily imported; unlocks on first gesture (autoplay) */
     let audio = null;
     try {
-      const { BoxingAudio } = await import('./shared/boxing/audio.js');
+      const { BoxingAudio } = await audioModP;
       audio = new BoxingAudio();
       const un = () => audio.unlock();
       addEventListener('pointerdown', un, { once: true });
@@ -254,15 +343,14 @@
     /* ================= HUD ================= */
     const FEED = {
       'round-start': (s) => `ROUND ${s.round} — GLOVES UP`,
-      'player-punch': () => 'YOU SWING',
       'player-hit': (s, lb) => lb?.dmg ? `${String(lb.kind).toUpperCase()} −${Math.round(lb.dmg)}` : 'CONNECTED',
-      'npc-hit': () => 'LANDED IT',
       'player-miss': (s, lb) => `WHIFF${lb?.reason ? ' · ' + String(lb.reason).toUpperCase() : '…'}`,
       'npc-blocked': () => 'BLOCKED',
       'npc-punch': () => 'INCOMING',
       'player-hit-taken': (s, lb) => lb?.dmg ? `OUCH −${Math.round(lb.dmg)}` : 'OUCH',
       'player-blocked': () => 'BLOCKED IT',
       'player-dodged': () => 'DODGED',
+      'counter': () => 'COUNTER! +35% POWER',
       'ko': () => 'K.O.!',
       'win': () => 'YOU WIN!',
       'lose': () => 'DOWN FOR THE COUNT',
@@ -270,13 +358,14 @@
     const FLASH = {
       'player-hit': 'POW!', 'npc-hit': 'POW!', 'player-hit-taken': 'TAGGED!',
       'ko': 'K.O.!', 'player-blocked': 'BLOCKED', 'player-dodged': 'SLIPPED',
+      'counter': 'COUNTER!',
     };
-    let flashT = 0, vinT = 0, blockT = 0;
+    let flashT = 0, vinT = 0;
     const flash = (t) => { el.flash.textContent = t; el.flash.style.opacity = 1; flashT = performance.now(); };
     const feed = (t) => {
       const d = document.createElement('div'); d.textContent = t;
       el.feed.prepend(d);
-      while (el.feed.children.length > 5) el.feed.lastChild.remove();
+      while (el.feed.children.length > 3) el.feed.lastChild.remove();
     };
     let ended = false;
     const showEnd = (win, st) => {
@@ -288,22 +377,60 @@
     $('[data-replay]').onclick = () => location.reload();
 
     const clock = (t) => `${Math.floor(t / 60)}:${String(Math.max(0, Math.ceil(t % 60))).padStart(2, '0')}`;
+    /* HUD DOM writes are expensive — dirty-check everything: textContent only
+       on change, bars via GPU-cheap scaleX (width = layout), class toggles
+       behind a compare. ~15 avoided writes/frame at 60fps. */
+    const hLast = {};
+    const txt = (k, elm, v) => { if (hLast[k] !== v) { hLast[k] = v; elm.textContent = v; } };
+    const bar = (k, elm, v) => { v = Math.max(0, Math.min(1, +v || 0));
+      if (hLast[k] !== v) { hLast[k] = v; elm.style.transform = `scaleX(${v})`; } };
+    const tog = (k, elm, on) => { on = !!on;
+      if (hLast[k] !== on) { hLast[k] = on; elm.classList.toggle('on', on); } };
+    const togN = (k, on) => { on = !!on;
+      if (hLast[k] !== on) { hLast[k] = on; document.body.classList.toggle(k, on); } };
+    const signText = { wave: 'WAVING TO THE CROWD', hype: 'HYPE THE CROWD!',
+      point: 'CALLING THEM OUT', ready: 'GLOVES UP!', victory: 'VICTORY SIGN!' };
     const hud = (out) => {
       const st = out.state;
-      document.body.classList.toggle('fighting', st.phase === 'fighting');
-      el.php.style.width = `${Math.max(0, st.player.hp / (st.player.maxHp || 100) * 100)}%`;
-      el.nhp.style.width = `${Math.max(0, st.npc.hp / (st.npc.maxHp || 100) * 100)}%`;
-      el.stam.style.width = `${Math.min(1, Math.max(0, st.player.stamina)) * 100}%`;
-      el.round.textContent = `ROUND ${st.round}`;
-      el.time.textContent = clock(st.timeLeft);
-      el.score.textContent = st.player.score;
-      el.tele.classList.toggle('on', st.npc.action === 'windup');
+      const intro = st.phase === 'intro';
+      togN('fighting', !intro);
+      togN('entrancing', intro);
+      tog('entranceOn', el.entrance, intro);
+      if (intro) txt('entranceSign', el.entranceSign, out.entranceWaiting
+        ? 'GETTING YOUR HANDS READY…'
+        : signText[out.entranceSign] || 'SHOW THE CROWD A SIGN');
+      bar('php', el.php, st.player.hp / (st.player.maxHp || 100));
+      bar('nhp', el.nhp, st.npc.hp / (st.npc.maxHp || 100));
+      bar('stam', el.stam, st.player.stamina);
+      const rd = intro ? 'RINGSIDE' : st.round;   // compare the number — the string only builds on change
+      if (hLast.rd !== rd) { hLast.rd = rd; el.round.textContent = intro ? 'RINGSIDE' : `ROUND ${rd}`; }
+      const clk = Math.ceil(st.timeLeft);           // seconds change ~1/s, not per frame
+      if (hLast.clk !== clk) { hLast.clk = clk; el.time.textContent = clock(st.timeLeft); }
+      txt('score', el.score, st.player.score);
+      if (hLast.combo !== st.player.combo) { hLast.combo = st.player.combo;
+        el.combo.textContent = `${st.player.combo} HIT COMBO`; }
+      tog('comboOn', el.combo, st.player.combo >= 2);
+      tog('counterOn', el.counter, st.player.counterT > 0 && st.phase === 'fighting');
+      const down = st.phase === 'npcdown' || st.phase === 'playerdown';
+      tog('countOn', el.count, down);
+      if (down) {
+        const n = Math.min(3, Math.floor(game.fight._phaseT / .8) + 1);
+        if (hLast.cntN !== n) { hLast.cntN = n; el.count.firstElementChild.textContent = n; }
+        txt('cntLbl', el.count.lastElementChild, st.phase === 'npcdown' ? `${st.npc.name} IS DOWN` : 'YOU ARE DOWN');
+      }
+      tog('teleOn', el.tele, st.npc.action === 'windup');
+      if (st.npc.telegraph) {
+        const attack = st.npc.telegraph.kind === 'upper' ? 'UPPERCUT' : st.npc.telegraph.kind.toUpperCase();
+        // telegraph.side is the NPC's glove — it lands on the player's
+        // opposite side, so the cue names the guard to raise
+        const guardSide = st.npc.telegraph.side === 'left' ? 'RIGHT' : 'LEFT';
+        txt('teleTxt', el.tele, `${attack} · GUARD ${guardSide}`);
+      }
       for (const e of out.events) {
         window.__boxing.log.push(e);
         const f = FEED[e]; if (f) feed(f(st, st.lastBlow));
         if (FLASH[e]) flash(FLASH[e]);
         if (e === 'player-hit-taken' || (e === 'ko' && st.phase === 'playerdown')) vinT = performance.now();
-        if (e === 'player-blocked') blockT = performance.now();
         if (e === 'win') showEnd(true, st);
         if (e === 'lose') showEnd(false, st);
       }
@@ -311,7 +438,8 @@
       // blood edge: persistent base scales with hp lost + a hot pulse on hits
       const blood = 1 - st.player.hp / (st.player.maxHp || 100);
       const vinPulse = vinT ? Math.max(0, 1 - (performance.now() - vinT) / 500) : 0;
-      el.vin.style.opacity = Math.min(.92, blood * .55 + vinPulse * .75);
+      const vin = Math.min(.92, blood * .55 + vinPulse * .75);
+      if (Math.abs(vin - (hLast.vin ?? -1)) > .004) { hLast.vin = vin; el.vin.style.opacity = vin; }
     };
 
     /* ================= mouse fallback =================
@@ -320,34 +448,42 @@
        press — the same "hand grows bigger = punch" signal the tracker eats. */
     const mouse = { l: false, r: false, lx: .3, ly: .55, rx: .7, ry: .55, tL: 9, tR: 9,
       swaying: false, sway: 0 };
-    const lmFist = (cx, cy, s) => {   // mitten-ish 21-pt cloud; span(lm0→lm9) = 1.35·s
-      const SH = [[0,1.15],[.55,.78],[.8,.5],[1.0,.32],[1.12,.18],
-        [.36,-.12],[.4,-.4],[.42,-.6],[.44,-.74],
-        [0,-.2],[0,-.48],[0,-.7],[0,-.86],
-        [-.34,-.12],[-.38,-.36],[-.4,-.55],[-.42,-.68],
-        [-.6,-.05],[-.66,-.26],[-.7,-.42],[-.72,-.52]];
-      return SH.map(([x, y]) => ({ x: cx + x * s, y: cy + y * s, z: 0 }));
+    const SH = [[0,1.15],[.55,.78],[.8,.5],[1.0,.32],[1.12,.18],   // mitten-ish 21-pt
+      [.36,-.12],[.4,-.4],[.42,-.6],[.44,-.74],                     // cloud; span(lm0→lm9)=1.35·s
+      [0,-.2],[0,-.48],[0,-.7],[0,-.86],
+      [-.34,-.12],[-.38,-.36],[-.4,-.55],[-.42,-.68],
+      [-.6,-.05],[-.66,-.26],[-.7,-.42],[-.72,-.52]];
+    // two persistent synth hands — tracker reads them fresh each frame, so
+    // rebuilding the 21-pt cloud + wrapper objects per frame was pure churn
+    const mkHand = (side) => ({ side, kind: 'fist',
+      lm: SH.map(() => ({ x: 0, y: 0, z: 0 })),
+      palm: { x: 0, y: 0 }, wrist: { x: 0, y: 0 },
+      indexTip: { x: 0, y: 0 }, pinchAt: { x: 0, y: 0 },
+      pinchD: .2, nExt: 0, nExtAll: 0 });
+    const synthL = mkHand('left'), synthR = mkHand('right');
+    const mouseArr = [];
+    const MOUSE_HS = { hands: mouseArr, pinch: null, point: null, orbit: null, zoom: null, spread: null };
+    const synth = (h, cx, cy, s) => {
+      const lm = h.lm;
+      for (let i = 0; i < 21; i++) { lm[i].x = cx + SH[i][0] * s; lm[i].y = cy + SH[i][1] * s; }
+      h.palm.x = cx; h.palm.y = cy; h.wrist.x = cx; h.wrist.y = cy + s * 1.15;
+      h.indexTip.x = cx + s * .4; h.indexTip.y = cy - s * .7;
+      h.pinchAt.x = cx + s * .6; h.pinchAt.y = cy - s * .4;
+      return h;
     };
-    const synth = (side, cx, cy, s) => ({
-      side, kind: 'fist', lm: lmFist(cx, cy, s),
-      palm: { x: cx, y: cy }, wrist: { x: cx, y: cy + s * 1.15 },
-      indexTip: { x: cx + s * .4, y: cy - s * .7 },
-      pinchAt: { x: cx + s * .6, y: cy - s * .4 }, pinchD: .2, nExt: 0, nExtAll: 0 });
-    // swell on press → the throw fires; keep holding and the glove pumps,
-    // re-arming for another punch each cycle (thrust-thrust-thrust)
+    // A press makes one deliberate throw. Dragging steers that glove, while
+    // release ends the reach; holding the button cannot auto-punch forever.
     const spanFor = (t) => {
-      const base = .04 + .055 * Math.min(1, t / .2);
-      return t > .55 ? base + Math.sin((t - .55) * 9) * .018 : base;
+      return .04 + .055 * Math.min(1, t / .2);
     };
     const mouseHands = () => {
-      const arr = [];
-      if (mouse.l) arr.push(synth('left', mouse.lx, mouse.ly, spanFor(mouse.tL)));
-      if (mouse.r) arr.push(synth('right', mouse.rx, mouse.ry, spanFor(mouse.tR)));
-      return { hands: arr, pinch: null, point: null, orbit: null, zoom: null, spread: null };
+      mouseArr.length = 0;
+      if (mouse.l) mouseArr.push(synth(synthL, mouse.lx, mouse.ly, spanFor(mouse.tL)));
+      if (mouse.r) mouseArr.push(synth(synthR, mouse.rx, mouse.ry, spanFor(mouse.tR)));
+      return MOUSE_HS;
     };
-    const mouseFace = () => ({ found: true,
-      nose: { x: .5 + mouse.sway * .38, y: .45 }, size: .3,
-      center: { x: .5 + mouse.sway * .38, y: .45 } });
+    const mFace = { found: true, nose: { x: .5, y: .45 }, size: .3, center: { x: .5, y: .45 } };
+    const mouseFace = () => { mFace.nose.x = mFace.center.x = .5 + mouse.sway * .38; return mFace; };
     const mouseLive = () => mouse.l || mouse.r || mouse.swaying;
 
     cvs.addEventListener('contextmenu', e => e.preventDefault());
@@ -371,10 +507,29 @@
     };
     cvs.addEventListener('pointerup', releaseMouse);
     cvs.addEventListener('pointercancel', releaseMouse);
+    const moveKeys = { forward: false, back: false };
+    Object.defineProperty(window.__boxing, 'moveKeys', { get: () => moveKeys });
+    const entranceInput = { sign: null, until: 0 };
+    const entrancePose = sign => { entranceInput.sign = sign; entranceInput.until = performance.now() + 1000; };
+    document.querySelectorAll('[data-sign]').forEach(button =>
+      button.addEventListener('click', () => entrancePose(button.dataset.sign)));
+    $('[data-skip-intro]').addEventListener('click', () => game?.skipIntro());
     addEventListener('keydown', e => {
+      if (game?.fight.state.phase === 'intro') {
+        const signs = { '1': 'wave', '2': 'hype', '3': 'point', '4': 'ready', '5': 'victory' };
+        if (signs[e.key]) { entrancePose(signs[e.key]); e.preventDefault(); }
+        if (e.key === 'Enter') { game.skipIntro(); e.preventDefault(); }
+      }
+      if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { moveKeys.forward = true; e.preventDefault(); }
+      if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { moveKeys.back = true; e.preventDefault(); }
       if (e.key === 'c' || e.key === 'C') { game?.calibrate(); mouse.sway = 0; }
       if (e.key === 'm' || e.key === 'M') { if (audio) { audio.unlock(); audio.muted = !audio.muted; } }
     });
+    addEventListener('keyup', e => {
+      if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') moveKeys.forward = false;
+      if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') moveKeys.back = false;
+    });
+    addEventListener('blur', () => { moveKeys.forward = false; moveKeys.back = false; });
 
     /* ================= glove overlay =================
        Gloves are the PLAYER'S HANDS — drawn only while a hand is actually
@@ -383,95 +538,269 @@
        on screen. Reach grows the mitt (bigger = closer) but clamps at the
        NPC contact plane so gloves can't punch through the world. */
     const hc = $('#hands'), hx = hc.getContext('2d');
-    const gloves = {
-      left:  { x: .3, y: .68, size: 60, ang: 0, dim: 0, reach: 1, seenT: 9, lastP: null },
-      right: { x: .7, y: .68, size: 60, ang: 0, dim: 0, reach: 1, seenT: 9, lastP: null },
-    };
+    const mkGlove = (x, y) => ({ x, y, size: 60, ang: 0, dim: 0, reach: 1,
+      seenT: 9, lastP: null,
+      /* tracking results land at camera rate (~30Hz) while we render 40-60fps —
+         tx/ty/tsize/tang is the newest measured pose, tT when it arrived,
+         vx/vy/vsize/vang its EMA velocity for ≤80ms of extrapolation */
+      tx: x, ty: y, tsize: 60, tang: 0, tT: -9,
+      vx: 0, vy: 0, vsize: 0, vang: 0, hasT: false });
+    const gloves = { left: mkGlove(.3, .68), right: mkGlove(.7, .68) };
     const HOLD = .45;                        // seconds a glove survives a dropout
-    let overlayT = 0;
-    const drawOverlay = (hs, dt) => {
-      overlayT += dt;
+    const GLOVE_SIDES = ['left', 'right'];
+    const MCP = [0, 5, 9, 13, 17];
+    // persistent landmark pixel buffers + mitt args — nothing allocates per frame
+    const gloveLM = {   // raw target shape (latest result)
+      left:  Array.from({ length: 21 }, () => ({ x: 0, y: 0 })),
+      right: Array.from({ length: 21 }, () => ({ x: 0, y: 0 })),
+    };
+    const dispLM = {    // eased displayed shape — chases gloveLM at the follow rate
+      left:  Array.from({ length: 21 }, () => ({ x: 0, y: 0 })),
+      right: Array.from({ length: 21 }, () => ({ x: 0, y: 0 })),
+    };
+    const found = { left: null, right: null };
+    const mittPos = { x: 0, y: 0, size: 0, ang: 0 };
+    const mittOpts = { side: 'left', kind: 'fist', reach: 1, squash: 0, dim: 1, lm: null };
+    const meter = (v, x) => {
+      hx.beginPath(); hx.roundRect(x - 40, hc.height - 26, 80, 10, 5);
+      hx.fillStyle = 'rgba(43,33,24,.55)'; hx.fill();
+      hx.beginPath(); hx.roundRect(x - 40, hc.height - 26, 80 * Math.min(1, v), 10, 5);
+      hx.fillStyle = v >= .6 ? '#ffc53d' : 'rgba(255,248,236,.5)'; hx.fill();
+    };
+    const wrapAng = (a) => ((a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    const blockFx = { t: -9, side: 'right' };        // white shield burst on a caught block
+    const drawOverlay = (hs, dt, out) => {
+      const nowS = performance.now() / 1000;
+      const k = 1;  // direct hand-to-glove mapping; tracker cadence sets the update rate
       hx.clearRect(0, 0, hc.width, hc.height);
-      const dbg = game?.tracker?.debug?.() || {};
-      const found = {};
+      const reach = game?.tracker?.reach;                 // live view — debug() allocates
+      found.left = found.right = null;
       for (const hnd of (hs.hands || []))
         if (hnd?.lm?.length >= 21 && hnd.side && found[hnd.side] == null) found[hnd.side] = hnd;
-      for (const side of ['left', 'right']) {
+      for (const side of GLOVE_SIDES) {
         const g = gloves[side], hnd = found[side];
         if (hnd) {
-          const P = hnd.lm.map(p => ({ x: (1 - p.x) * hc.width, y: p.y * hc.height }));
-          const mcp = [0, 5, 9, 13, 17];
-          g.lastP = P; g.seenT = 0;
-          g.x += (mcp.reduce((s, i) => s + P[i].x, 0) / 5 - g.x) * .4;
-          g.y += (mcp.reduce((s, i) => s + P[i].y, 0) / 5 - g.y) * .4;
-          g.size += (Math.max(26, Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y)) - g.size) * .4;
-          g.ang += (Math.atan2(P[9].y - P[0].y, P[9].x - P[0].x) - g.ang) * .3;
-          g.dim += (1 - g.dim) * .2;
+          const P = gloveLM[side], lm = hnd.lm;
+          for (let i = 0; i < 21; i++) { P[i].x = lm[i].x * hc.width; P[i].y = lm[i].y * hc.height; }
+          let mx = 0, my = 0;
+          for (const i of MCP) { mx += P[i].x; my += P[i].y; }
+          if (!g.lastP) {   // first sight — snap the eased shape too
+            const D = dispLM[side];
+            for (let i = 0; i < 21; i++) { D[i].x = P[i].x; D[i].y = P[i].y; }
+          }
+          g.lastP = dispLM[side]; g.seenT = 0;
+          // newest measured pose + arrival interval → EMA velocity. Tracking
+          // drops in at ~30Hz; we render at 40-60, so the glove extrapolates
+          // up to 80ms past the latest result instead of stair-stepping.
+          const nx = mx / 5, ny = my / 5;
+          const nsize = Math.max(26, Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y));
+          const nang = Math.atan2(P[9].y - P[0].y, P[9].x - P[0].x);
+          // only a NEW result moves the target — identical numbers mean the
+          // last landmark set is still current (hnd object is per-result too)
+          if (nx !== g.tx || ny !== g.ty || nsize !== g.tsize || nang !== g.tang) {
+            const dtIn = Math.min(.2, Math.max(.005, nowS - g.tT));
+            if (g.hasT) {
+              const k2 = 1 - Math.exp(-dtIn * 8);           // heavy vel smoothing
+              let vx = (nx - g.tx) / dtIn, vy = (ny - g.ty) / dtIn;
+              const vs = Math.hypot(vx, vy), VMAX = 3200;   // px/s sanity cap
+              if (vs > VMAX) { vx *= VMAX / vs; vy *= VMAX / vs; }
+              g.vx += (vx - g.vx) * k2; g.vy += (vy - g.vy) * k2;
+              g.vsize += ((nsize - g.tsize) / dtIn - g.vsize) * k2;
+              g.vang += (wrapAng(nang - g.tang) / dtIn - g.vang) * k2;
+            } else {   // first sight — snap, don't glide in from the corner
+              g.hasT = true; g.vx = g.vy = g.vsize = g.vang = 0;
+              g.x = nx; g.y = ny; g.size = nsize; g.ang = nang;
+            }
+            g.tx = nx; g.ty = ny; g.tsize = nsize; g.tang = nang; g.tT = nowS;
+          }
+          // ease the drawn landmark cloud toward the freshest result —
+          // knuckle/finger shape glides instead of snapping each ~30Hz update
+          {
+            const D = dispLM[side];
+            for (let i = 0; i < 21; i++) {
+              D[i].x += (P[i].x - D[i].x) * k;
+              D[i].y += (P[i].y - D[i].y) * k;
+            }
+          }
+          g.dim += (1 - g.dim) * .35;
         } else {
           g.seenT += dt;
           g.dim = Math.max(0, 1 - g.seenT / HOLD);        // fade out over the holdover
+          if (!g.dim) { g.lastP = null; g.hasT = false; continue; }   // fully faded — stop drawing, re-snap on return
+          const dk = Math.exp(-dt * 5);                   // bleed velocity on dropout
+          g.vx *= dk; g.vy *= dk; g.vsize *= dk; g.vang *= dk;
         }
         if (!g.lastP) continue;                            // never seen — don't draw
+        // Draw the latest measured pose. Extrapolation made the glove move at
+        // a different speed from the camera hand during stops and reversals.
+        g.x = g.tx;
+        g.y = g.ty;
+        g.size = g.tsize;
+        g.ang = g.tang;
         // contact clamp — display reach capped by ring distance
-        let dispReach = dbg.reach?.[side] ?? 1;
+        let dispReach = reach?.[side] ?? 1;
         const d = game?.sim?.distance?.() ?? 9;
-        dispReach = Math.min(dispReach, d <= 1.25 ? 1.3 : 1.05);
-        g.reach += (dispReach - g.reach) * .3;
+        dispReach = Math.min(dispReach, d <= 1.5 ? 1.3 : 1.05);
+        g.reach = dispReach;
         const squash = Math.max(0, Math.min(1, (g.reach - 1.04) * 2.4));
-        mitt?.draw(hx, { x: g.x, y: g.y, size: g.size, ang: g.ang },
-          { side, kind: hnd?.kind || 'fist', reach: g.reach, squash,
-            dim: g.dim, lm: g.lastP });
-      }
-      // block cue — expanding shield ring at center when a guard eats a hit
-      const bt = blockT && (performance.now() - blockT) / 1000;
-      if (bt >= 0 && bt < .45) {
-        const p = bt / .45, r = 30 + p * 110;
-        hx.beginPath(); hx.arc(hc.width / 2, hc.height * .52, r, 0, 7);
-        hx.lineWidth = 8 * (1 - p) + 2; hx.strokeStyle = `rgba(255,197,61,${.9 * (1 - p)})`;
-        hx.stroke();
-        hx.beginPath(); hx.arc(hc.width / 2, hc.height * .52, r * .7, 0, 7);
-        hx.lineWidth = 3; hx.strokeStyle = `rgba(43,33,24,${.5 * (1 - p)})`; hx.stroke();
+        // "this side is covered" — a soft shield glow behind the mitt while
+        // its guard is up; the threatened-side chevron reads against this
+        const guardNow = game?.tracker?.guard || {};
+        if ((guardNow[side] || 0) >= .55) {
+          hx.beginPath(); hx.arc(g.x, g.y, g.size * .72, 0, Math.PI * 2);
+          hx.fillStyle = `rgba(255,248,236,${.12 + (guardNow[side] - .55) * .35})`; hx.fill();
+        }
+        // afterimage on fast mitts — the trail is what makes a punch LOOK
+        // fast; the glove itself stays sharp on top
+        const spd = Math.hypot(g.vx, g.vy);
+        if (spd > 700) {
+          const t = Math.min(.05, 900 / spd * .04);
+          mittPos.x = g.x - g.vx * t; mittPos.y = g.y - g.vy * t;
+          mittPos.size = g.size; mittPos.ang = g.ang;
+          mittOpts.side = side; mittOpts.kind = hnd?.kind || 'fist';
+          mittOpts.reach = g.reach; mittOpts.squash = squash;
+          mittOpts.dim = g.dim * .22; mittOpts.lm = g.lastP;
+          mitt?.draw(hx, mittPos, mittOpts);
+        }
+        mittPos.x = g.x; mittPos.y = g.y; mittPos.size = g.size; mittPos.ang = g.ang;
+        mittOpts.side = side; mittOpts.kind = hnd?.kind || 'fist';
+        mittOpts.reach = g.reach; mittOpts.squash = squash;
+        mittOpts.dim = g.dim; mittOpts.lm = g.lastP;
+        mitt?.draw(hx, mittPos, mittOpts);
       }
       // guard meters — two little shields at the bottom corners
       const g = game?.tracker.guard;
-      if (g) for (const [v, x] of [[g.left, hc.width * .18], [g.right, hc.width * .82]]) {
-        hx.beginPath(); hx.roundRect(x - 40, hc.height - 26, 80, 10, 5);
-        hx.fillStyle = 'rgba(43,33,24,.55)'; hx.fill();
-        hx.beginPath(); hx.roundRect(x - 40, hc.height - 26, 80 * Math.min(1, v), 10, 5);
-        hx.fillStyle = v >= .6 ? '#ffc53d' : 'rgba(255,248,236,.5)'; hx.fill();
+      if (g) { meter(g.left, hc.width * .18); meter(g.right, hc.width * .82); }
+
+      /* ---- fight-read cues ------------------------------------------------
+         telegraph: which side to cover. telegraph.side names the NPC's glove;
+         it lands on the player's OPPOSITE side. The chevron pulses faster as
+         the swing charges and flips green the moment that side is guarded. */
+      if (out?.events) for (const e of out.events)
+        if (e === 'player-blocked') { blockFx.t = nowS;
+          blockFx.side = out.state?.lastBlow?.side === 'left' ? 'right'
+            : out.state?.lastBlow?.side === 'right' ? 'left' : blockFx.side; }
+      const tel = out?.telegraph;
+      const g2 = game?.tracker?.guard || {};
+      if (tel && out?.state?.phase === 'fighting') {
+        const side = tel.side === 'left' ? 'right' : 'left';
+        const u = Math.min(1, tel.t01 || 0);
+        const covered = (g2[side] || 0) >= .55;
+        const cx = side === 'left' ? hc.width * .12 : hc.width * .88;
+        const cy = hc.height * .40;
+        const pulse = .5 + .5 * Math.sin(nowS * (9 + u * 26));
+        const R = (30 + u * 22 + pulse * 9) * OVSC;
+        const dir = side === 'left' ? 1 : -1;
+        hx.globalAlpha = .55 + .45 * pulse;
+        hx.fillStyle = covered ? '#4fb06d'
+          : `rgb(255,${Math.round(140 - 80 * u)},${Math.round(70 - 50 * u)})`;
+        hx.beginPath();                                   // inward chevron
+        hx.moveTo(cx - dir * R * .75, cy - R);
+        hx.lineTo(cx + dir * R * .45, cy);
+        hx.lineTo(cx - dir * R * .75, cy + R);
+        hx.quadraticCurveTo(cx - dir * R * .3, cy, cx - dir * R * .75, cy - R);
+        hx.fill();
+        hx.globalAlpha = .92;
+        hx.fillStyle = covered ? '#fff8ec' : '#2b2118';     // kind glyph
+        const gy = cy - R * .18, gsz = R * .5;
+        if (tel.kind === 'upper') {                        // ▲ comes up
+          hx.beginPath(); hx.moveTo(cx, gy - gsz * .5);
+          hx.lineTo(cx + gsz * .55, gy + gsz * .5);
+          hx.lineTo(cx - gsz * .55, gy + gsz * .5); hx.closePath(); hx.fill();
+        } else if (tel.kind === 'hook') {                  // ~ whips sideways
+          hx.lineWidth = gsz * .3; hx.lineCap = 'round'; hx.strokeStyle = hx.fillStyle;
+          hx.beginPath(); hx.arc(cx, gy + gsz * .15, gsz * .55,
+            side === 'left' ? -1.4 : Math.PI - 1.4, side === 'left' ? 1.4 : Math.PI + 1.4,
+            side !== 'left'); hx.stroke();
+        } else {                                           // ! straight at you
+          hx.beginPath(); hx.roundRect(cx - gsz * .12, gy - gsz * .55, gsz * .24, gsz * .7, gsz * .12); hx.fill();
+          hx.beginPath(); hx.arc(cx, gy + gsz * .42, gsz * .16, 0, Math.PI * 2); hx.fill();
+        }
+        hx.globalAlpha = 1;
+      }
+      // caught it on the gloves — white shield burst at the blocking mitt
+      const bt = (nowS - blockFx.t) / .35;
+      if (bt >= 0 && bt < 1) {
+        const g = gloves[blockFx.side];
+        const R = g.size * (.5 + bt * 1.3);
+        hx.globalAlpha = (1 - bt) * .8;
+        hx.lineWidth = 5 * (1 - bt) + 1; hx.strokeStyle = '#fff8ec';
+        hx.beginPath(); hx.arc(g.x, g.y, R, 0, Math.PI * 2); hx.stroke();
+        hx.globalAlpha = 1;
+      }
+    };
+
+    // The entrance boxer uses the exact same landmark-shaped mitt renderer
+    // as the fight. Its 3D hand anchors follow the camera hands; the mitts
+    // are projected onto those anchors so they stay attached during the pan.
+    const entrancePoint = new THREE.Vector3();
+    const drawEntranceGloves = hs => {
+      hx.clearRect(0, 0, hc.width, hc.height);
+      const avatar = game?.playerAvatar;
+      if (!avatar?.group.visible || !mitt) return;
+      avatar.group.updateMatrixWorld(true);
+      cam.updateMatrixWorld();
+      for (const side of GLOVE_SIDES) {
+        const node = avatar.parts[side === 'left' ? 'gloveL' : 'gloveR'];
+        node.getWorldPosition(entrancePoint).project(cam);
+        if (entrancePoint.z < -1 || entrancePoint.z > 1) continue;
+        const hnd = (hs.hands || []).find(h => h?.side === side && h.lm?.length >= 21);
+        mittPos.x = (entrancePoint.x + 1) * hc.width * .5;
+        mittPos.y = (1 - entrancePoint.y) * hc.height * .5;
+        mittPos.size = 48;
+        mittPos.ang = 0;
+        mittOpts.side = side; mittOpts.kind = hnd?.kind || 'fist';
+        mittOpts.reach = 1; mittOpts.squash = 0; mittOpts.dim = 1;
+        if (hnd) {
+          const P = gloveLM[side];
+          for (let i = 0; i < 21; i++) {
+            P[i].x = hnd.lm[i].x * hc.width;
+            P[i].y = hnd.lm[i].y * hc.height;
+          }
+          mittOpts.lm = P;
+        } else mittOpts.lm = null;
+        mitt.draw(hx, mittPos, mittOpts);
       }
     };
 
     /* nose dot on the peephole */
     const nc = $('[data-nose]'), nx = nc.getContext('2d');
+    let ncW = 0, ncH = 0;                       // clientWidth is a layout read — cache it
     const noseDot = () => {
-      const w = nc.width = nc.clientWidth, h = nc.height = nc.clientHeight;
-      nx.clearRect(0, 0, w, h);
-      if (face?.state.found) {
-        nx.beginPath(); nx.arc(face.state.nose.x * w, face.state.nose.y * h, 4, 0, 7);
-        nx.fillStyle = '#ff6b57'; nx.fill();
-      }
+      if (!face?.state.found) { if (nc.width) { nc.width = 0; } return; }  // nothing to draw — zero layout reads
+      if (!ncW) { ncW = nc.clientWidth || 0; ncH = nc.clientHeight || 0; }
+      if (!ncW) return;
+      if (nc.width !== ncW || nc.height !== ncH) { nc.width = ncW; nc.height = ncH; }  // resize clears — only when needed
+      nx.clearRect(0, 0, ncW, ncH);
+      nx.beginPath(); nx.arc(face.state.nose.x * ncW, face.state.nose.y * ncH, 4, 0, 7);
+      nx.fillStyle = '#ff6b57'; nx.fill();
     };
 
     /* ================= loop ================= */
-    function resize() {
+    const OVSC = weakGpu ? .85 : 1;             // overlay backing scale — gloves are
+    function resize() {                          // big soft blobs; 15% less blend is invisible
       ren.setSize(innerWidth, innerHeight);
       cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix();
-      hc.width = innerWidth; hc.height = innerHeight;
+      hc.width = Math.round(innerWidth * OVSC); hc.height = Math.round(innerHeight * OVSC);
     }
     addEventListener('resize', resize); resize();
 
     const EMPTY_HS = { hands: [], pinch: null, point: null, orbit: null, zoom: null, spread: null };
-    let last = performance.now(), fpsN = 0, fpsT = last, orbitT = 0;
+    const controls = { step: 0, sign: null, waitForHands: false };    // persistent input
+    let last = performance.now(), fpsN = 0, fpsT = last, orbitT = 0, frameI = 0;
     function loop() {
       requestAnimationFrame(loop);
-      const now = performance.now(), dt = Math.min(.05, (now - last) / 1000); last = now;
+      const now = performance.now(), dt = Math.min(.1, (now - last) / 1000); last = now;
       mouse.tL += dt; mouse.tR += dt;
       noseDot();
       const hs = window.__forceHands || (mouseLive() ? mouseHands() : hands?.state || EMPTY_HS);
       const fs = window.__forceFace || (mouse.swaying ? mouseFace() : face?.state || null);
+      let out = null;
       if (game) {
-        const out = game.step(dt, hs, fs);
+        controls.step = Number(moveKeys.forward) - Number(moveKeys.back);
+        controls.sign = performance.now() < entranceInput.until ? entranceInput.sign : null;
+        controls.waitForHands = !noTrack && !!(video.srcObject || video.src) && handStatus === 'loading';
+        out = game.step(dt, hs, fs, controls);
         // distance trace while the NPC presses — __boxing.pressLog for tests
         if (out.state.phase === 'fighting' && game.fight.npcDir() === 'press') {
           const pl = window.__boxing.pressLog || (window.__boxing.pressLog = []);
@@ -488,10 +817,21 @@
         cam.position.set(Math.sin(orbitT * .2) * 5, 2.2, Math.cos(orbitT * .2) * 5);
         cam.lookAt(0, .9, 0);
       }
-      drawOverlay(hs, dt);
+      if (game?.fight.state.phase === 'intro') drawEntranceGloves(hs);
+      else drawOverlay(hs, dt, out);
+      // NPC animates every frame, but a blob-soft shadow at 30Hz reads the
+      // same — the 1024² pass runs every other frame instead
+      if (frameI++ & 1) ren.shadowMap.needsUpdate = true;
       ren.render(scene, cam);
       if (++fpsN === 60) { const f = Math.round(60000 / (now - fpsT)); fpsN = 0; fpsT = now;
-        if (face) status.textContent = `face · ${face.delegate} · ${f} fps`; }
+        if (!noTrack && (video.srcObject || video.src)) {
+          const count = hands?.state?.hands?.length ?? 0;
+          const tr = hands?.stats;
+          status.textContent = handStatus === 'ready'
+            ? `hands ${count}/2 · cam ${Math.round(tr?.cameraHz || 0)}/s · track ${Math.round(tr?.trackHz || 0)}/s · ${Math.round(tr?.roundTripMs || 0)}ms · render ${f} fps`
+            : `hands ${handStatus} · ${f} fps`;
+        }
+      }
     }
     loop();
   </script>

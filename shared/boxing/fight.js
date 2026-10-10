@@ -30,12 +30,12 @@
    off to breathe. All feel knobs live in TUNING.
 */
 export const TUNING = {
-  introT: 1.5,          // announce beat before round 1
+  introT: 11.0,         // give the player time to find the camera and perform signs
   downT: 2.4,           // a KO'd fighter stays down this long → win/lose
   rounds: 3,            // judges' decision after this many rounds
   roundHeal: .12,       // fraction of maxHp restored between rounds
 
-  reach: 1.1,           // player punch lands at distance ≤ reach (×power bonus)
+  reach: 1.35,          // forgiving contact plane for a planted first-person boxer
   reachPow: .2,         // power 0..1 stretches reach by up to this fraction
   attackAt: 1.0,        // npc only starts a windup inside this gap
   npcReach: 1.35,       // a committed npc swing still connects out to here
@@ -46,7 +46,10 @@ export const TUNING = {
   dmg:      { jab: 7, cross: 11, hook: 13, uppercut: 16 },  // player base damage
   powFloor: .55,        // dmg scale = powFloor + (1-powFloor)*power
   npcDmg:   { jab: 6, hook: 12, upper: 17 },                // npc damage by kind
-  windup:   { jab: .38, hook: .5, upper: .62 },             // telegraph seconds
+  windup:   { jab: .44, hook: .56, upper: .68 },             // telegraph seconds —
+                                                          // readable anticipation;
+                                                          // the SWING stays .22 so
+                                                          // releases still feel fast
   punchDur: .22,        // npc swing length
   hitAt: .45,           // impact lands this far (t01) through the swing
 
@@ -71,8 +74,8 @@ export const TUNING = {
   recoverT: .3,         // npc idle after a landed swing
   whiffT: .62,          // a dodged/whiffed swing leaves PIP open — counter window
   blockT: .7,
-  idleMin: .15, idleVar: .3,
-  circleMin: .45, circleVar: .6,
+  idleMin: .1, idleVar: .18,
+  circleMin: .3, circleVar: .4,
   retreatMin: .45, retreatVar: .35,
   pressMax: 1.7,        // give up pressing if it can't close the gap
   celebrateT: .9,       // taunt length — PIP is punishable while showboating
@@ -81,7 +84,10 @@ export const TUNING = {
   rageSpeed: .35,       // windup/decision haste as npc hp → 0
   slipBase: .04,        // npc slip chance vs punches while circling/retreating
   slipRage: .3,         // extra slip chance at full rage
-  retreatOnHurt: .3,    // base chance to retreat after a stagger
+  retreatOnHurt: .12,   // stay in trading range more often
+  comboWindow: 1.8,    // consecutive clean hits build a score chain
+  counterWindow: 1.0,  // a block or slip opens a short reply window
+  counterDamage: 1.35,
   tiltDecay: .7,        // tilt (recent player hits) fades per second
   score: { hitMul: 5, block: 15, dodge: 30, ko: 500, decision: 300 },
 };
@@ -103,7 +109,8 @@ export class Fight {
     this.opts = { playerHp: 100, npcHp: 100, npcName: 'PIP', roundLen: 90, seed: 1, ...opts };
     this.state = {
       phase: 'intro', round: 0, timeLeft: this.opts.roundLen,
-      player: { hp: 0, maxHp: 0, stamina: 1, score: 0, status: 'idle', hurtT: 0, gassed: false },
+      player: { hp: 0, maxHp: 0, stamina: 1, score: 0, combo: 0, bestCombo: 0,
+        counterT: 0, status: 'idle', hurtT: 0, gassed: false },
       npc: { hp: 0, maxHp: 0, stamina: 1, name: '', action: 'idle', actionT: 0, telegraph: null, gassed: false },
       events: [],       // strings, cleared at the top of every step
       lastBlow: null,   // resolution details for the most recent punch
@@ -126,7 +133,9 @@ export class Fight {
     this._celebrateCd = 0;
     s.phase = 'intro'; s.round = 0; s.timeLeft = o.roundLen;
     s.events.length = 0; s.lastBlow = null;
-    Object.assign(s.player, { hp: o.playerHp, maxHp: o.playerHp, stamina: 1, score: 0, status: 'idle', hurtT: 0, gassed: false });
+    this._comboT = 0;
+    Object.assign(s.player, { hp: o.playerHp, maxHp: o.playerHp, stamina: 1, score: 0,
+      combo: 0, bestCombo: 0, counterT: 0, status: 'idle', hurtT: 0, gassed: false });
     Object.assign(s.npc, { hp: o.npcHp, maxHp: o.npcHp, stamina: 1, name: o.npcName, action: 'idle', actionT: 0, telegraph: null, gassed: false });
   }
 
@@ -134,12 +143,14 @@ export class Fight {
     const s = this.state, p = s.player, T = TUNING;
     dt = Math.min(Math.max(+dt || 0, 0), .1);
     s.events.length = 0; s.lastBlow = null;
-    const inp = {   // sanitized — NaN/undefined can never bypass a check
-      punches: Array.isArray(inputs.punches) ? inputs.punches : [],
-      guard: { left: clamp(num(inputs.guard?.left, 0), 0, 1), right: clamp(num(inputs.guard?.right, 0), 0, 1) },
-      sway: clamp(num(inputs.sway, 0), -1, 1),
-      distance: Number.isFinite(+inputs.distance) ? Math.max(0, +inputs.distance) : Infinity,
-    };
+    const inp = this._inp || (this._inp = {   // persistent — same fields re-set each step
+      punches: [], guard: { left: 0, right: 0 }, sway: 0, distance: Infinity });
+    if (Array.isArray(inputs.punches)) inp.punches = inputs.punches;
+    else inp.punches.length = 0;
+    inp.guard.left = clamp(num(inputs.guard?.left, 0), 0, 1);
+    inp.guard.right = clamp(num(inputs.guard?.right, 0), 0, 1);
+    inp.sway = clamp(num(inputs.sway, 0), -1, 1);
+    inp.distance = Number.isFinite(+inputs.distance) ? Math.max(0, +inputs.distance) : Infinity;
 
     // meters and flinch timers tick in every phase. Regen is REAL: it crawls
     // while you're punching/recovering and for hurtRegenT after taking a hit,
@@ -147,12 +158,16 @@ export class Fight {
     const regenMul = Math.min(this._punchT > 0 ? T.regenBusy : 1,
       this._regenSlowT > 0 ? T.regenHurt : 1);
     p.stamina = Math.min(1, p.stamina + T.stamRegen * regenMul * dt);
-    const nBusy = ['windup', 'punch', 'hurt'].includes(s.npc.action);
+    const a = s.npc.action;
+    const nBusy = a === 'windup' || a === 'punch' || a === 'hurt';
     s.npc.stamina = Math.min(1, s.npc.stamina + T.npcRegen * (nBusy ? T.regenBusy : 1) * dt);
     if (this._regenSlowT > 0) this._regenSlowT = Math.max(0, this._regenSlowT - dt);
     if (p.hurtT > 0) p.hurtT = Math.max(0, p.hurtT - dt);
     if (this._punchT > 0) this._punchT = Math.max(0, this._punchT - dt);
     if (this._celebrateCd > 0) this._celebrateCd -= dt;
+    if (p.counterT > 0) p.counterT = Math.max(0, p.counterT - dt);
+    if (this._comboT > 0) this._comboT = Math.max(0, this._comboT - dt);
+    if (this._comboT === 0) p.combo = 0;
     this._tilt = Math.max(0, this._tilt - T.tiltDecay * dt);
 
     switch (s.phase) {
@@ -194,6 +209,10 @@ export class Fight {
   npcDir() {  // drives RingSim — feet planted while swinging, blocking, taunting
     const a = this.state.npc.action;
     return a === 'press' ? 'press' : a === 'circle' ? 'circle' : a === 'retreat' ? 'retreat' : 'hold';
+  }
+
+  startNow() {
+    if (this.state.phase === 'intro') this._startRound();
   }
 
   /* ---------- internals ---------- */
@@ -283,11 +302,18 @@ export class Fight {
     if (evasive && this._rng() < T.slipBase + T.slipRage * this._rage())
       return this._whiff(pn, 'slipped');
     // clean hit — interrupts whatever PIP was doing, windups included
-    const dmg = T.dmg[kind] * (T.powFloor + (1 - T.powFloor) * power);
+    const counter = p.counterT > 0;
+    const dmg = T.dmg[kind] * (T.powFloor + (1 - T.powFloor) * power)
+      * (counter ? T.counterDamage : 1);
+    p.counterT = 0;
+    p.combo = this._comboT > 0 ? p.combo + 1 : 1;
+    p.bestCombo = Math.max(p.bestCombo, p.combo);
+    this._comboT = T.comboWindow;
     n.hp = Math.max(0, n.hp - dmg);
-    p.score += Math.round(dmg * T.score.hitMul);
+    p.score += Math.round(dmg * T.score.hitMul * (1 + Math.min(5, p.combo - 1) * .15));
     this._tilt += 1;
-    s.lastBlow = { who: 'player', kind, dmg, result: 'hit' };
+    s.lastBlow = { who: 'player', kind, dmg, result: 'hit', counter, combo: p.combo };
+    if (counter) this._emit('counter');
     this._emit('player-hit'); this._emit('npc-hit');
     if (n.hp <= 0) return this._ko('npc');
     n.action = 'hurt'; n.actionT = 0; n.telegraph = null;
@@ -380,6 +406,7 @@ export class Fight {
     if (inp.distance > T.npcReach) return;                    // swung at air
     if (Math.abs(inp.sway) >= T.dodgeT) {                     // clean dodge
       p.score += T.score.dodge;
+      p.counterT = T.counterWindow;
       s.lastBlow.result = 'dodged';
       this._emit('player-dodged');
       this._taunt(.35);                                       // hates looking silly
@@ -396,9 +423,11 @@ export class Fight {
       p.hp = Math.max(0, p.hp - dmg * T.blockMul);
       p.hurtT = T.hurtT * .5;
       p.score += T.score.block;
+      p.counterT = T.counterWindow;
       s.lastBlow.result = 'blocked'; s.lastBlow.dmg = dmg * T.blockMul;
       this._emit('player-blocked');
     } else {
+      p.combo = 0; this._comboT = 0; p.counterT = 0;
       p.hp = Math.max(0, p.hp - dmg);
       p.hurtT = T.hurtT;
       s.lastBlow.result = 'hit'; s.lastBlow.dmg = dmg;
@@ -423,9 +452,9 @@ export class Fight {
     const gassed = n.gassed;   // tired PIP stops swinging, fades to recover
     const cocky = n.hp > p.hp * 1.15;
     const W = {
-      windup: inRange && !gassed ? .42 + .3 * rage : 0,
-      press: inRange || gassed ? 0 : .5 + .2 * rage,
-      circle: gassed ? .55 : .24,
+      windup: inRange && !gassed ? .55 + .3 * rage : 0,
+      press: inRange || gassed ? 0 : .75 + .2 * rage,
+      circle: gassed ? .55 : .12,
       retreat: gassed ? .3 : .04 + this._tilt * .07,
       block: inRange ? .08 + .16 * rage : .04,
       celebrate: cocky && this._celebrateCd <= 0 ? .1 : 0,    // the showboat tax
