@@ -2,3 +2,7 @@ site-build.tar.gz
 node_modules/
 tools/
 live-qr.png
+.env
+.env.*
+*.log
+
