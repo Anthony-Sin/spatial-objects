@@ -21,24 +21,10 @@
   #world { position: fixed; inset: 0; display: block; }
   #hands { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
 
-  .mast { position: fixed; top: 22px; left: 30px; right: 30px; z-index: 20;
-    display: flex; align-items: baseline; gap: 20px; pointer-events: none; }
-  .wm { font-weight: 700; font-size: 22px; letter-spacing: .1em; color: var(--sun);
-    text-shadow: 0 2px 0 var(--ink), 0 4px 14px rgba(0,0,0,.5); }
-  .wm span { display:block; font-weight: 500; font-size: 9px; letter-spacing: .3em;
-    color: rgba(255,248,236,.65); text-transform: uppercase; margin-top: 3px; text-shadow: none; }
-  .status { font-size: 10px; letter-spacing: .2em; text-transform: uppercase;
-    color: #9fd8b7; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
-  .back { margin-left: auto; font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
-    color: rgba(255,248,236,.85); text-decoration: none; border-bottom: 2px solid rgba(255,248,236,.4);
-    padding-bottom: 2px; pointer-events: auto; }
-  .back + .back { margin-left: 14px; }
-  .back:hover { color: var(--sun); border-color: var(--sun); }
-
-  /* bout card — chunky rounded paper sticker */
-  .card { position: fixed; top: 84px; left: 50%; transform: translateX(-50%) rotate(-1deg); z-index: 20;
-    min-width: 380px; border: 2.5px solid var(--ink); background: var(--paper);
-    border-radius: 20px; padding: 12px 20px 14px; color: var(--ink);
+  /* bout card — chunky rounded paper sticker, parked top-left */
+  .card { position: fixed; top: 20px; left: 24px; transform: rotate(-1deg); z-index: 20;
+    min-width: 330px; border: 2.5px solid var(--ink); background: var(--paper);
+    border-radius: 20px; padding: 10px 18px 12px; color: var(--ink);
     box-shadow: 0 6px 0 rgba(43,33,24,.45), 0 14px 34px rgba(0,0,0,.45); }
   .card .who { font-size: 10px; letter-spacing: .3em; text-transform: uppercase;
     color: var(--coral); font-weight: 700; }
@@ -81,17 +67,20 @@
   .peep canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 
   .legend { position: fixed; right: 30px; bottom: 30px; z-index: 20; text-align: right;
-    font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase;
-    color: rgba(255,248,236,.85); text-shadow: 0 1px 6px rgba(0,0,0,.85); line-height: 2; }
-  .legend b { color: var(--sun); }
+    font-size: 13px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--paper); line-height: 2;
+    background: rgba(43,33,24,.78); border: 2.5px solid var(--ink); border-radius: 16px;
+    padding: 10px 16px; box-shadow: 0 5px 0 rgba(43,33,24,.5), 0 12px 28px rgba(0,0,0,.5);
+    backdrop-filter: blur(3px); }
+  .legend b { color: var(--sun); font-weight: 700;
+    text-shadow: 0 1px 0 var(--ink); }
 
   .peep[hidden] { display: none !important; }
-  /* fight declutter: instructions + cam preview hide once gloves are up */
-  body.fighting .legend, body.fighting .peep { display: none !important; }
+  /* fight declutter: instructions hide once gloves are up (webcam stays) */
+  body.fighting .legend { display: none !important; }
   /* contrast: dark outline behind all paper-light HUD text over bright scene */
-  .legend, .status, .wm, .back, .score .l, .feed div, .tele, .flash {
+  .legend, .score .l, .feed div, .tele, .flash {
     text-shadow: 0 1px 2px rgba(20,14,8,.95), 0 0 10px rgba(20,14,8,.6); }
-  .mast .back { pointer-events: auto; }
 
   /* telegraph "!" sticker */
   .tele { position: fixed; top: 26%; left: 50%; z-index: 30;
@@ -112,8 +101,8 @@
 
   /* damage vignette — red rim pulse when the player eats a hit */
   .vin { position: fixed; inset: 0; z-index: 15; pointer-events: none; opacity: 0;
-    background: radial-gradient(ellipse at center, transparent 46%,
-      rgba(200,26,14,.38) 78%, rgba(160,10,8,.62) 100%); }
+    background: radial-gradient(ellipse at center, transparent 42%,
+      rgba(200,26,14,.45) 74%, rgba(150,8,6,.75) 100%); }
 
   /* end-of-fight card */
   .endcard { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(0);
@@ -128,35 +117,25 @@
   .replay { padding: 10px 22px; color: var(--paper); background: var(--leaf);
     border: 2.5px solid var(--ink); border-radius: 14px; font: 700 13px inherit;
     letter-spacing: .1em; text-transform: uppercase; cursor: pointer;
-    box-shadow: 0 4px 0 var(--ink); }
+    box-shadow: 0 4px 0 var(--ink); text-decoration: none; display: inline-block; }
+  .replay.menu { background: var(--sky); margin-left: 10px; }
   .replay:hover { background: var(--coral); }
   .replay:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--ink); }
 
   @media (max-width: 700px) {
-    .mast { top: 12px; left: 14px; right: 14px; flex-wrap: wrap; gap: 6px 12px; }
-    .wm { width: 100%; font-size: 18px; }
-    .status { font-size: 8px; }
-    .back { margin-left: 0; font-size: 9px; }
-    .card { top: 94px; width: calc(100% - 28px); min-width: 0; padding: 10px 12px; }
+    .card { top: 12px; left: 14px; width: calc(100% - 28px); min-width: 0; padding: 10px 12px; }
     .card .job { font-size: 16px; }
     .score { top: 18px; right: 14px; }
     .score .n { font-size: 24px; }
     .feed { top: 60px; right: 14px; }
     .peep { left: 14px; bottom: 14px; width: 116px; }
-    .legend { right: 14px; bottom: 14px; font-size: 8px; line-height: 1.6; max-width: 55vw; }
+    .legend { right: 14px; bottom: 14px; font-size: 9px; line-height: 1.6; max-width: 55vw; }
   }
 </style>
 </head>
 <body>
   <canvas id="world"></canvas>
   <canvas id="hands"></canvas>
-
-  <header class="mast">
-    <div class="wm">STORYWOOD SCRAP<span>pip's punch-out · exhibition bout</span></div>
-    <div class="status" data-status>booting…</div>
-    <a class="back" href="./lineup.html">lineup →</a>
-    <a class="back" href="./">app</a>
-  </header>
 
   <div class="card">
     <div class="who">BOUT CARD · <span data-npcname>PIP</span> VS YOU</div>
@@ -176,6 +155,7 @@
     <div class="big" data-endtitle>YOU WIN!</div>
     <div class="sub" data-endsub></div>
     <button class="replay" data-replay>Run it back</button>
+    <a class="replay menu" href="./">Return to menu</a>
   </div>
 
   <div class="peep">
@@ -195,11 +175,12 @@
     import Hands from './shared/hands.js';
     import { Face } from './shared/face.js';
     import { buildScene } from './shared/boxing/scene.js';
-    import { drawBoxGlove } from './shared/boxing/boxglove.js';
+    import { loadMitt } from './shared/boxing/mitts/index.js';
+    const mitt = await loadMitt();                    // glove pick from the mitt rack
 
     const params = new URLSearchParams(location.search);
     const $ = (s) => document.querySelector(s);
-    const status = $('[data-status]');
+    const status = $('[data-peep]');   // boot/face status lives on the webcam tag now
     const el = {
       round: $('[data-round]'), time: $('[data-time]'), php: $('[data-php]'),
       nhp: $('[data-nhp]'), stam: $('[data-stam]'), score: $('[data-score]'), feed: $('[data-feed]'),
@@ -327,7 +308,10 @@
         if (e === 'lose') showEnd(false, st);
       }
       if (flashT && performance.now() - flashT > 1100) { el.flash.style.opacity = 0; flashT = 0; }
-      el.vin.style.opacity = vinT ? Math.max(0, 1 - (performance.now() - vinT) / 500) : 0;
+      // blood edge: persistent base scales with hp lost + a hot pulse on hits
+      const blood = 1 - st.player.hp / (st.player.maxHp || 100);
+      const vinPulse = vinT ? Math.max(0, 1 - (performance.now() - vinT) / 500) : 0;
+      el.vin.style.opacity = Math.min(.92, blood * .55 + vinPulse * .75);
     };
 
     /* ================= mouse fallback =================
@@ -393,17 +377,17 @@
     });
 
     /* ================= glove overlay =================
-       Gloves are the PLAYER — always on screen. A real hand drives its
-       mitt when tracked; when tracking drops the mitt drifts back to a
-       neutral guard slot, dimmed — it never vanishes. Reach grows the
-       mitt (bigger = closer) but clamps at the NPC contact plane so
-       gloves can't punch through the world. */
+       Gloves are the PLAYER'S HANDS — drawn only while a hand is actually
+       tracked. A ~0.45s holdover rides out tracking flicker (hands vanish
+       mid-punch all the time); after that the glove is gone, not parked
+       on screen. Reach grows the mitt (bigger = closer) but clamps at the
+       NPC contact plane so gloves can't punch through the world. */
     const hc = $('#hands'), hx = hc.getContext('2d');
-    const GUARD = { left: { x: .30, y: .68 }, right: { x: .70, y: .68 } };
     const gloves = {
-      left:  { x: .3, y: .68, size: 60, ang: 0, dim: .7, reach: 1 },
-      right: { x: .7, y: .68, size: 60, ang: 0, dim: .7, reach: 1 },
+      left:  { x: .3, y: .68, size: 60, ang: 0, dim: 0, reach: 1, seenT: 9, lastP: null },
+      right: { x: .7, y: .68, size: 60, ang: 0, dim: 0, reach: 1, seenT: 9, lastP: null },
     };
+    const HOLD = .45;                        // seconds a glove survives a dropout
     let overlayT = 0;
     const drawOverlay = (hs, dt) => {
       overlayT += dt;
@@ -414,34 +398,29 @@
         if (hnd?.lm?.length >= 21 && hnd.side && found[hnd.side] == null) found[hnd.side] = hnd;
       for (const side of ['left', 'right']) {
         const g = gloves[side], hnd = found[side];
-        let tx, ty, tsize, tang = 0;
         if (hnd) {
           const P = hnd.lm.map(p => ({ x: (1 - p.x) * hc.width, y: p.y * hc.height }));
           const mcp = [0, 5, 9, 13, 17];
-          tx = mcp.reduce((s, i) => s + P[i].x, 0) / 5;
-          ty = mcp.reduce((s, i) => s + P[i].y, 0) / 5;
-          tsize = Math.max(26, Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y));
-          tang = Math.atan2(P[9].y - P[0].y, P[9].x - P[0].x);
-          g.dim += (1 - g.dim) * .18;
+          g.lastP = P; g.seenT = 0;
+          g.x += (mcp.reduce((s, i) => s + P[i].x, 0) / 5 - g.x) * .4;
+          g.y += (mcp.reduce((s, i) => s + P[i].y, 0) / 5 - g.y) * .4;
+          g.size += (Math.max(26, Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y)) - g.size) * .4;
+          g.ang += (Math.atan2(P[9].y - P[0].y, P[9].x - P[0].x) - g.ang) * .3;
+          g.dim += (1 - g.dim) * .2;
         } else {
-          tx = GUARD[side].x * hc.width; ty = GUARD[side].y * hc.height;
-          tsize = hc.width * .052;
-          g.dim += (.72 - g.dim) * .08;
+          g.seenT += dt;
+          g.dim = Math.max(0, 1 - g.seenT / HOLD);        // fade out over the holdover
         }
-        ty += Math.sin(overlayT * 2.1 + (side === 'left' ? 0 : 2.4)) * hc.height * .009;  // guard bob
-        const k = hnd ? .4 : .07;
-        g.x += (tx - g.x) * k; g.y += (ty - g.y) * k;
-        g.size += (tsize - g.size) * k;
-        g.ang += ((tang || 0) - g.ang) * (hnd ? .3 : .1);
+        if (!g.lastP) continue;                            // never seen — don't draw
         // contact clamp — display reach capped by ring distance
         let dispReach = dbg.reach?.[side] ?? 1;
         const d = game?.sim?.distance?.() ?? 9;
         dispReach = Math.min(dispReach, d <= 1.25 ? 1.3 : 1.05);
         g.reach += (dispReach - g.reach) * .3;
         const squash = Math.max(0, Math.min(1, (g.reach - 1.04) * 2.4));
-        drawBoxGlove(hx, null, { side, kind: hnd?.kind || 'fist',
-          manual: { x: g.x, y: g.y, size: g.size, ang: g.ang },
-          reach: g.reach, squash, dim: g.dim });
+        mitt?.draw(hx, { x: g.x, y: g.y, size: g.size, ang: g.ang },
+          { side, kind: hnd?.kind || 'fist', reach: g.reach, squash,
+            dim: g.dim, lm: g.lastP });
       }
       // block cue — expanding shield ring at center when a guard eats a hit
       const bt = blockT && (performance.now() - blockT) / 1000;

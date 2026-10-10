@@ -71,8 +71,9 @@
 <body>
   <header class="mast">
     <div class="wm">PICK YOUR RIVAL<span>storywood scrap · character lineup</span></div>
+    <a class="back" href="./gloves.html">mitts →</a>
     <a class="back" href="./boxing.html">ring →</a>
-    <a class="back" href="./">app</a>
+    <a class="back" href="./">menu</a>
   </header>
   <div class="note" data-note>loading the lineup…</div>
   <div class="grid" data-grid></div>
@@ -102,9 +103,13 @@
     const fighters = (manifest.candidates || [])
       .filter(c => !/^PROP/i.test(c.notes || '') && (c.type || 'glb') === 'glb');
     const nProps = (manifest.candidates || []).length - fighters.length;
-    // GLB fighters only — procedural variants benched per player direction
-    const entries = fighters.map(c => ({ id: c.id, name: c.name || c.id,
-      type: c.type || 'glb', lic: c.license || 'unknown', cand: c }));
+    // full roster: house-made proto variants FIRST (they're the favorites),
+    // then the downloaded GLB contenders
+    const protos = VARIANTS.map(v => ({ id: `proto:${v}`, name: VINFO[v]?.name || v,
+      type: 'proto', lic: 'procedural · house-made', variant: v }));
+    const entries = [...protos,
+      ...fighters.map(c => ({ id: c.id, name: c.name || c.id,
+        type: c.type || 'glb', lic: c.license || 'unknown', cand: c }))];
     if (!entries.length)
       note.textContent = 'no rivals found yet — check assetManifest.json + protoBoxer.js';
     else note.textContent =

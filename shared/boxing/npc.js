@@ -20,9 +20,9 @@
 */
 
 const pickId = () => {
-  // no stored pick → the house favorite (Kenney blocky), not a proto
-  try { return localStorage.getItem('boxing:npc') || 'kenney-blocky-red'; }
-  catch { return 'kenney-blocky-red'; }
+  // no stored pick → the house-made favorite
+  try { return localStorage.getItem('boxing:npc') || 'proto:bubble'; }
+  catch { return 'proto:bubble'; }
 };
 
 const fetchManifest = async (opts) => {
@@ -219,56 +219,41 @@ export async function createNpc(THREE, opts = {}) {
   const bb = new THREE.Box3().setFromObject(group);
   const H = Math.max(.3, bb.max.y - bb.min.y);
   const eyeY = bb.min.y + H * .86;                    // eye line ≈ top of head
-  const headC = { x: (bb.min.x + bb.max.x) / 2, y: bb.min.y + H * .82,
-                  z: (bb.min.z + bb.max.z) / 2, r: H * .28 };   // head ~ half-height wide
-                                                  // (bbox x spans outstretched arms — don't trust it)
 
-  /* damage decals — cartoon bruises stacked on the head/face as hp falls.
-     Canvas-drawn blobs on sprites so they ride any rig (GLB or proto). */
-  const bruiseTex = (() => {
-    const c = document.createElement('canvas'); c.width = c.height = 64;
-    const x = c.getContext('2d');
-    const g = x.createRadialGradient(32, 32, 3, 32, 32, 29);
-    g.addColorStop(0, 'rgba(74,20,52,.95)'); g.addColorStop(.55, 'rgba(130,30,48,.85)');
-    g.addColorStop(1, 'rgba(130,30,48,0)');
-    x.fillStyle = g; x.fillRect(0, 0, 64, 64);
-    // jagged edge nicks
-    x.fillStyle = 'rgba(60,18,40,.85)';
-    for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2;
-      x.beginPath(); x.arc(32 + Math.cos(a) * 22, 32 + Math.sin(a) * 22, 3.5, 0, 7); x.fill(); }
-    return new THREE.CanvasTexture(c);
-  })();
-  const decals = [];
-  const dmgSpots = [
-    { dx: -headC.r * .45, dy: .04, s: .3 },   // over left eye
-    { dx: headC.r * .5, dy: -.02, s: .32 },   // right cheek
-    { dx: -headC.r * .1, dy: .16, s: .38 },   // forehead
-    { dx: headC.r * .15, dy: -.06, s: .48 },  // full face mess
-  ];
-  function setDamage(stage) {
-    while (decals.length < Math.min(stage, dmgSpots.length)) {
-      const d = dmgSpots[decals.length];
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: bruiseTex, transparent: true, depthWrite: false, opacity: 0 }));
-      sp.position.set(headC.x + d.dx, headC.y + d.dy * H, headC.z + headC.r * 1.05);
-      sp.scale.setScalar(d.s * H * .55);
-      group.add(sp); decals.push({ sp, in: 0 });
+  /* damage painted straight onto the fighter — every material lerps
+     toward bruise-red as the stage climbs (no floating decals). Head
+     materials get hit hardest; bodies stay closer to base. */
+  const BRUISE = new THREE.Color(0x8c1f28);
+  const mats = [];
+  group.traverse(o => {
+    if (o.isMesh && o.material) {
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of ms) if (m.color) mats.push({ m, c: m.color.clone(), head: /head|face|skin|hair/i.test(o.name || '') });
+    }
+  });
+  let dmgCur = 0;
+  function setDamage(frac) {                      // frac 0..1 = hp fraction lost
+    dmgCur = Math.max(dmgCur, Math.min(1, frac)); // wounds persist between rounds
+    for (const { m, c, head } of mats) {
+      const amt = head ? dmgCur * .6 : dmgCur * .38;
+      m.color.copy(c).lerp(BRUISE, amt);
+      if (m.emissive) m.emissive.copy(BRUISE).multiplyScalar(dmgCur * .12);
     }
   }
 
   const api = {
     group, id, name, kind,
     eyeY, headY: bb.min.y + H * .8, height: H, bbox: bb,
-    kick: { x: 0, z: 0 },                 // visual knock flinch — decays, never sim state
+    kick: { x: 0, y: 0, z: 0 },           // visual knock flinch — decays, never sim state
     setDamage,
     get variant() { return impl.variant || id; },
     update(dt, ctx = {}) {
       const { pos, target, npc } = ctx;
       if (pos) {
         api.kick.x *= Math.exp(-dt * 7); api.kick.z *= Math.exp(-dt * 7);
-        group.position.set(pos.x + api.kick.x, 0, pos.z + api.kick.z);
+        api.kick.y *= Math.exp(-dt * 9);                               // uppercut launch lands fast
+        group.position.set(pos.x + api.kick.x, api.kick.y, pos.z + api.kick.z);
       }
-      for (const d of decals) { d.in = Math.min(1, d.in + dt * 3); d.sp.material.opacity = d.in * .9; }
       if (pos && target) group.rotation.y = Math.atan2(target.x - pos.x, target.z - pos.z);
       if (npc?.telegraph?.kind) npc._seenKind = npc.telegraph.kind;  // punch loses telegraph — stash it
       const p = mapAction(npc);

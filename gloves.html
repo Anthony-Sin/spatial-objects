@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>storywood scrap — mitt rack</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --paper:#FFF8EC; --paper2:#FDF3E3; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  * { box-sizing: border-box; margin: 0; }
+  body { min-height: 100vh; background: #241c12; color: var(--paper);
+    font-family: "Fredoka","Baloo 2","Avenir Next","Trebuchet MS",system-ui,sans-serif;
+    padding: 34px 28px 60px;
+    background-image: radial-gradient(rgba(255,248,236,.04) 2px, transparent 2px);
+    background-size: 26px 26px; }
+  .mast { max-width: 1060px; margin: 0 auto 26px; display: flex; align-items: baseline; gap: 18px; }
+  h1 { font-size: 34px; letter-spacing: .04em; color: var(--sun);
+    text-shadow: 0 3px 0 var(--ink), 0 6px 18px rgba(0,0,0,.5); }
+  .sub { font-size: 11px; letter-spacing: .22em; text-transform: uppercase;
+    color: rgba(255,248,236,.6); }
+  .links { margin-left: auto; display: flex; gap: 16px; }
+  .links a { font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--paper); text-decoration: none; border-bottom: 2px solid rgba(255,248,236,.35);
+    padding-bottom: 2px; }
+  .links a:hover { color: var(--sun); border-color: var(--sun); }
+  .links a.go { color: var(--leaf); border-color: var(--leaf); }
+
+  .grid { max-width: 1060px; margin: 0 auto; display: grid; gap: 20px;
+    grid-template-columns: repeat(auto-fill, minmax(225px, 1fr)); }
+  .cell { background: var(--paper); border: 3px solid var(--ink); border-radius: 22px;
+    overflow: hidden; cursor: pointer; text-align: center;
+    box-shadow: 0 7px 0 rgba(43,33,24,.5), 0 16px 34px rgba(0,0,0,.45);
+    transition: transform .18s cubic-bezier(.34,1.56,.64,1); position: relative; }
+  .cell:hover { transform: translateY(-4px) rotate(-.5deg); }
+  .cell canvas { display: block; width: 100%; aspect-ratio: 1;
+    background:
+      radial-gradient(circle at 50% 62%, var(--paper2) 30%, #f3e4c8 100%); }
+  .cell .nm { font-weight: 700; font-size: 15px; color: var(--ink); padding: 10px 6px 12px;
+    letter-spacing: .05em; }
+  .cell .badge { position: absolute; top: 10px; right: 10px; background: var(--leaf);
+    color: var(--paper); font-size: 9px; font-weight: 700; letter-spacing: .14em;
+    text-transform: uppercase; border: 2px solid var(--ink); border-radius: 999px;
+    padding: 3px 10px; opacity: 0; transform: scale(.5);
+    transition: all .18s cubic-bezier(.34,1.56,.64,1); }
+  .cell.on .badge { opacity: 1; transform: scale(1); }
+  .cell.on { outline: 4px solid var(--sun); outline-offset: 2px; }
+  .cell.miss canvas { opacity: .35; filter: grayscale(.6); }
+  .cell.miss .nm::after { content: " · soon"; color: #a08a68; font-weight: 500; }
+</style>
+</head>
+<body>
+  <div class="mast">
+    <div>
+      <h1>MITT RACK</h1>
+      <div class="sub">pick your leather · live preview · punches on the beat</div>
+    </div>
+    <nav class="links">
+      <a href="./lineup.html">fighters →</a>
+      <a class="go" href="./boxing.html">to the ring →</a>
+    </nav>
+  </div>
+  <div class="grid" id="grid"></div>
+
+  <script type="module">
+    import { MITT_IDS, loadMitt, pickId, savePick } from './shared/boxing/mitts/index.js';
+    const grid = document.getElementById('grid');
+    const cells = new Map();   // id → {el, cv, mod}
+    let picked = pickId();
+
+    for (const id of MITT_IDS) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.innerHTML = `<div class="badge">picked</div><canvas width="260" height="260"></canvas><div class="nm">…</div>`;
+      grid.appendChild(cell);
+      const cv = cell.querySelector('canvas'), nm = cell.querySelector('.nm');
+      const mod = await loadMitt(id);
+      if (!mod || mod.ID !== id) { cell.classList.add('miss'); nm.textContent = id; continue; }
+      nm.textContent = mod.NAME || id;
+      cells.set(id, { cell, cv, mod });
+      if (id === picked) cell.classList.add('on');
+      cell.onclick = () => {
+        picked = id; savePick(id);
+        for (const { cell: c } of cells.values()) c.classList.remove('on');
+        cell.classList.add('on');
+      };
+    }
+
+    /* every mitt jabs on a shared beat — rest → squash-thrust → settle */
+    let last = performance.now(), t = 0;
+    (function loop() {
+      requestAnimationFrame(loop);
+      const now = performance.now(), dt = Math.min(.05, (now - last) / 1000); last = now;
+      t += dt;
+      for (const { cv, mod } of cells.values()) {
+        const x = cv.getContext('2d');
+        x.clearRect(0, 0, cv.width, cv.height);
+        const beat = (t % 1.6);                       // punch every 1.6s
+        const jab = beat < .18 ? beat / .18
+          : beat < .42 ? 1 - (beat - .18) / .24 : 0;  // out fast, settle soft
+        const reach = 1 + jab * .55, squash = Math.min(1, jab * 1.6);
+        mod.draw(x, { x: 130, y: 118 + Math.sin(t * 3) * 3 - jab * 14, size: 44, ang: Math.sin(t * 1.4) * .06 },
+          { side: 'left', reach, squash, dim: 1, kind: 'fist' });
+      }
+    })();
+  </script>
+</body>
+</html>

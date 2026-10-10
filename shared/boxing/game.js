@@ -53,7 +53,7 @@ export async function createGame(opts = {}) {
 
   const fx = makeFx(THREE, world.scene);
   let camSway = 0, shakeT = 0, dodged = false, tNow = 0;
-  let push = 0, lastDmgStage = 0;                 // push = camera shove-back state
+  let push = 0, pushUp = 0;                       // camera shove-back + uppercut launch
   const hitPos = new THREE.Vector3();
 
   function step(dt, hs, fs) {
@@ -90,10 +90,18 @@ export async function createGame(opts = {}) {
         const heavy = /hook|upper/.test(lb.kind || '');
         fx.burst(hitPos, { color: 'sweat', n: 14, dir: toPlayer, speed: 1.3 });
         if (heavy || (lb.dmg || 0) >= 15) fx.burst(hitPos, { color: 'blood', n: 24, dir: toPlayer, speed: 1.8 });
-        npc.kick.x -= toPlayer.x * (.1 + (lb.dmg || 0) * .008);
-        npc.kick.z -= toPlayer.z * (.1 + (lb.dmg || 0) * .008);            // npc knocked back
+        const kb = .1 + (lb.dmg || 0) * .008;
+        npc.kick.x -= toPlayer.x * kb; npc.kick.z -= toPlayer.z * kb;    // npc knocked back
+        // punch-specific physics: uppercut launches it, hooks fling it sideways
+        if (lb.kind === 'uppercut') npc.kick.y += .2 + (lb.dmg || 0) * .006;
+        if (lb.kind === 'hook') {
+          const px = -toPlayer.z, pz = toPlayer.x;                       // lateral, screen-side
+          const sgn = lb.side === 'left' ? 1 : -1;
+          npc.kick.x += px * sgn * .16; npc.kick.z += pz * sgn * .16;
+        }
       } else if (e === 'player-hit-taken') {
         push += .14 + Math.min(.3, (lb.dmg || 10) * .012);              // view shoved back
+        if (lb.kind === 'upper') pushUp += .22;                          // uppercut rocks the head UP
         fx.burst({ x: sim.player.pos.x, y: EYE * .85, z: sim.player.pos.z - .2 },
                  { color: (lb.dmg || 0) >= 14 ? 'blood' : 'star', n: 18, speed: .8, up: .6, spread: .5 });
       } else if (e === 'player-blocked') {
@@ -104,9 +112,8 @@ export async function createGame(opts = {}) {
         fx.burst(hitPos, { color: 'star', n: 18, speed: 1.6, up: 2.2 });
       }
     }
-    const dmgStage = st.npc.hp <= 0 ? 4 : st.npc.hp < st.npc.maxHp * .33 ? 3
-      : st.npc.hp < st.npc.maxHp * .66 ? 2 : st.npc.hp < st.npc.maxHp * .9 ? 1 : 0;
-    if (dmgStage > lastDmgStage) { npc.setDamage(dmgStage); lastDmgStage = dmgStage; }
+    // bruise deepens continuously — painted onto the fighter's materials
+    npc.setDamage?.(1 - st.npc.hp / (st.npc.maxHp || 1));
 
     world.update(dt, { fight: st, sim, events });
     npc.update(dt, { pos: sim.npc.pos, target: sim.player.pos, npc: st.npc });
@@ -123,15 +130,17 @@ export async function createGame(opts = {}) {
       camSway += (sw - camSway) * Math.min(1, dt * 8);
       shakeT = Math.max(0, shakeT - dt);
       push *= Math.exp(-dt * 5.5);                          // spring back
+      pushUp *= Math.exp(-dt * 6);
       const shk = shakeT > 0 ? Math.sin(tNow * 90) * shakeT * .06 : 0;
-      const bob = Math.sin(tNow * 2.3) * .012 + Math.sin(tNow * 3.7) * .006;  // idle bob
-      const weave = Math.sin(tNow * .9) * .02;
+      const bob = Math.sin(tNow * 2.3) * .016 + Math.sin(tNow * 3.7) * .007;  // idle bob
+      const weave = Math.sin(tNow * .9) * .035;
       cam.position.set(
-        p.x + lx * (camSway * .38 + weave) - fwdX * (push + shk),
-        EYE - Math.abs(camSway) * .05 + bob + push * .05,   // head dips then rocks up
-        p.z + lz * (camSway * .38 + weave) - fwdZ * (push + shk));
+        p.x + lx * (camSway * .55 + weave) - fwdX * (push + shk),
+        EYE - Math.abs(camSway) * .09 + bob + push * .05 + pushUp,   // dips into leans, uppercuts launch it
+        p.z + lz * (camSway * .55 + weave) - fwdZ * (push + shk));
       cam.lookAt(n.x, HEAD, n.z);
-      cam.rotateZ(-camSway * .12 - push * .08);             // head-lean roll + hit tilt
+      cam.rotateZ(-camSway * .14 - push * .08);             // head-lean roll + hit tilt
+      cam.rotateX(push * .4 + pushUp * .6);                 // hits pitch the view upward
     }
     return { events, state: st, sim, tracker };
   }
