@@ -1,54 +1,76 @@
-# Spatial Objects
+# spatial objects — webcam → hand-tracked training sims
 
-Live phone camera scanning with object detection on your computer and aligned AI depth estimates. The phone loads a public GitHub Pages site; frames and results travel through an AES-GCM-encrypted MQTT relay, so it works on any network without a USB cable or tunnel ports.
+Hold an object up to your webcam. The scanner (YOLOv8, local) finds it, an AR
+ghost of its primitive forms over the live feed, and it drops into a 3D CAD
+bench you drive with your hands. On top of that sit three job-training rooms —
+real 3D environments where a foreman, surgeon, or dispatcher calls out tasks
+and scores your hands. Everything runs locally; no cloud, no keys.
 
-- Site: https://anthony-sin.github.io/spatial-objects/
-- Repo: https://github.com/Anthony-Sin/spatial-objects
-
-## Run on this computer
-
-```bash
-cd /home/ANT/unclockable-knighthacks-2026/spatial-objects
-npm run setup:linux
-npm run remote
-```
-
-The second command prints a **LIVE PHONE LINK** and creates `live-qr.png`. Open that link or scan the QR on the Motorola, then tap **Start camera**. Keep the terminal running. Each run creates a fresh relay channel and encryption key embedded in the link; they are not committed to the repository.
-
-The app also works without the computer server when served from HTTPS: MediaPipe detects objects live on the phone and **Scan frame** estimates depth on a captured frame. Remote mode is recommended for continuous object and depth updates.
-
-For local development, `npm start` serves `dist/` at `http://127.0.0.1:8791/?token=...` with a direct WebSocket instead of the relay (browser on the same computer only — the server binds to localhost).
-
-## Use
-
-- **RGB** shows computer-processed object boxes as results arrive.
-- **Depth** and **Mesh** display the latest complete depth frame. Their boxes and tap targets come from that exact frame, so the overlays remain aligned even while the camera moves.
-- Tap a highlighted object or just outside its box to hold that frame and open its actions. Tap **Continue live scan** to resume.
-- If no object is detected, change the angle or lighting. The detector recognizes the 80 classes in its model metadata, not arbitrary items.
-
-## How it works
-
-The computer server runs a [YOLOv8 Nano ONNX model](https://huggingface.co/webml/yolov8n) for object detection and a quantized [Depth Anything V2 Small model](https://huggingface.co/onnx-community/depth-anything-v2-small) for relative depth. `model-labels.json` was generated from the YOLO model metadata. Object results return as soon as they are ready; depth runs separately on sampled frames. Frames are processed in memory and are not stored by this app.
-
-The phone page is hosted on GitHub Pages from `dist/` on the `gh-pages` branch. The phone publishes resized JPEG frames to `spatial/<session>/frames` and reads results from `spatial/<session>/results` on a public MQTT-over-WebSocket broker (`demo.tbmq.io`, port 443 — usable where outbound tunnel ports are blocked). Every message is AES-GCM encrypted with a key that exists only in the phone link and the server process, so the relay never sees plaintext frames. The broker drops packets over 64 KB, so larger messages are split into ~48 KB chunks and reassembled on the other side. Results reference the frame by id rather than re-sending the image, which keeps relay traffic near the upload size.
-
-The depth map is an estimate from one RGB image. It is not metric distance, physical surface reconstruction, ARCore tracking, or a persistent 3D anchor. The triangular mesh is a depth-colored 2D visualization.
-
-## Update the public site
+## Run
 
 ```bash
-npm run deploy:site
+cd spatial-objects
+PORT=8890 node server.mjs          # static server (default port 8791)
+# open http://127.0.0.1:8890/      → the CAD bench (index.html)
+# allow camera access when prompted
 ```
 
-Syncs `dist/` from the root UI files, commits, pushes `main`, publishes `dist/` to the `gh-pages` branch, and enables GitHub Pages on the repo.
+## The training rooms
 
-## Files
+| page | scenario | scoring |
+|---|---|---|
+| `index.html` | the bench — scan real objects, pinch to move/drill/explode parts | freeform CAD |
+| `job.html` | **the bay** — foreman's shift: PPE, fit pipe, tack weld, drill, gears, lever, rivet, stow | shop points |
+| `theatre.html` | **the theatre** — surgeon's view over the patient: scalpel corridor, bone set, sharps, O₂ | theatre points |
+| `dock.html` | **the dock** — freight manifest: stack pallet, scan crates, hazmat drum, park forklift | dock points |
+| `gallery.html` | landing page linking all four | — |
 
-- `app.js`, `index.html`, `style.css`: phone UI; `dist/` is the served copy and also carries `mqtt.min.js` and `.nojekyll`.
-- `server.mjs`: local HTTP/WebSocket/MQTT inference server.
-- `relay-crypto.mjs`: AES-GCM helpers shared with the phone-side code.
-- `scripts/setup-linux.sh`: downloads dependencies and the 12.8 MB detector.
-- `scripts/start-remote.mjs`: starts the server, creates the relay session, prints the live link and QR.
-- `scripts/deploy-site.sh`: syncs `dist/` and publishes it to GitHub Pages.
+## Gestures (same everywhere)
 
-The YOLO model's metadata reports an [AGPL-3.0 license](https://github.com/ultralytics/ultralytics/blob/main/LICENSE). Check that license before distributing a modified service.
+| hand pose | action |
+|---|---|
+| pinch | precision grab — hold tools, place parts |
+| point | aim — reticle locks onto a distant prop |
+| fist | **force-pull** — aimed prop flies to your hand; hold to keep gripped |
+| open palm | orbit / hover |
+| head move | look around — nose-tracked, `C` re-centers |
+| `1`–`9` | scene keys where applicable |
+
+You can complete every room with a mouse if a webcam is unavailable: **left
+drag** acts as the left hand, **right drag** as the right hand, and **Shift
+drag** looks around. Press **C** to return to the current job's camera view.
+The current object and destination are highlighted in the scene. The view
+zooms toward small parts for precision jobs and widens for freight and other
+large placements. Each shift ends with a score and a replay button.
+
+Job props **spawn on demand** — a tool materializes only when its card calls
+for it, and it is fully grabbable/pullable the moment it appears.
+
+## Layout
+
+```
+index.html         the CAD bench (scan → materialize → manipulate)
+job.html           industrial bay — 8-job shift, weld/fit/drill/stow
+theatre.html       surgery — corridor carry, bone set, sharps, gas, clear field
+dock.html          loading dock — pallet stack, manifest scan, hazmat, stow
+gallery.html       links page
+shared/hands.js    MediaPipe HandLandmarker → gesture state (2-hand)
+shared/face.js     MediaPipe FaceLandmarker → nose-tracked view
+shared/glove.js    cartoon-glove overlay renderer (size-capped)
+shared/detect.js   YOLOv8n via onnxruntime-web, local model + labels
+shared/cad.js      bench scene: parts, explode/levitate, CSG drill
+shared/ui.js       boot(): webcam → trackers → AR overlay → cad.feed()
+vendor/            three.js, mediapipe tasks-vision, onnxruntime-web, GLBs
+tools/             yolov8n.onnx, model-labels.json
+server.mjs         static file server (correct wasm/onnx MIME types)
+test/              layout audit, force-pull, job-progression (headless)
+```
+
+Tests: `npm test` — layout floats/overlaps audit + force-pull + job
+progression, all headless Chromium with a fake cam. `npm run perf` — FPS
+floor + gesture latency guard.
+
+Pinch uses hysteresis (tight enter, loose exit) so drags can't flick off.
+Hand roles: LEFT = fit/place, RIGHT = wield tools, via MediaPipe handedness
+(selfie-flipped). Brief nose-tracking loss holds the pose. Each new task frames
+its work area; `C` recalibrates the current task view.

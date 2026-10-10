@@ -1,59 +1,235 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0a1013">
-  <meta name="description" content="Scan real objects, view aligned AI depth, and attach digital actions.">
-  <title>Spatial Objects · Camera Lab</title>
-  <link rel="stylesheet" href="./style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spatial objects</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{ "imports": {
+    "three": "./vendor/three/three.module.js",
+    "three-mesh-bvh": "./vendor/three/three-mesh-bvh.module.js",
+    "three-bvh-csg": "./vendor/three/three-bvh-csg.module.js"
+} }
+</script>
+<style>
+  :root {
+    --paper: #f3ede1; --paper2: #ece4d4; --ink: #33291d;
+    --hair: #b9ac93; --accent: #d85c3a; --accent2: #4f8f6b;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body { background: var(--paper); color: var(--ink);
+    font-family: "Avenir Next", "Futura", "Trebuchet MS", system-ui, sans-serif; }
+
+  /* viewport frame */
+  .frame { position: fixed; inset: 12px; pointer-events: none; z-index: 60; }
+  .frame .e { position: absolute; background: var(--hair); opacity: .8; }
+  .frame .top{top:0;left:0;right:0;height:1px} .frame .bottom{bottom:0;left:0;right:0;height:1px}
+  .frame .left{left:0;top:0;bottom:0;width:1px} .frame .right{right:0;top:0;bottom:0;width:1px}
+  .frame .c { position:absolute; width:18px; height:18px; border:1.5px solid var(--ink); }
+  .frame .tl{top:-1px;left:-1px;border-right:0;border-bottom:0}
+  .frame .tr{top:-1px;right:-1px;border-left:0;border-bottom:0}
+  .frame .bl{bottom:-1px;left:-1px;border-right:0;border-top:0}
+  .frame .br{bottom:-1px;right:-1px;border-left:0;border-top:0}
+
+  /* masthead */
+  .mast { position: fixed; top: 30px; left: 40px; right: 40px; z-index: 50;
+    display: flex; align-items: baseline; gap: 24px; transition: opacity .3s; }
+  .wordmark { font-family: Georgia, "Times New Roman", serif; font-size: 26px; letter-spacing: .12em; }
+  .wordmark span { display:block; font-style: italic; font-size: 10px; letter-spacing: .28em;
+    color: var(--hair); text-transform: uppercase; margin-top: 2px; }
+  .status { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--accent2); }
+  .mode { margin-left: auto; display: flex; border: 1px solid var(--hair); border-radius: 99px;
+    overflow: hidden; background: var(--paper); }
+  .mode button { border: 0; background: none; padding: 7px 16px; font: inherit; font-size: 10.5px;
+    letter-spacing: .18em; text-transform: uppercase; color: #6e6250; cursor: pointer; }
+  .mode button.on { background: var(--ink); color: var(--paper); }
+  .gallery { font-size:10.5px; letter-spacing:.18em; text-transform:uppercase; color:#6e6250;
+    text-decoration:none; border-bottom: 1px solid var(--hair); padding-bottom:2px; }
+  .micbtn { margin-left: auto; border: 1px solid var(--hair); background: var(--paper);
+    border-radius: 99px; padding: 7px 14px; font: inherit; font-size: 10.5px;
+    letter-spacing: .18em; color: #6e6250; cursor: pointer; }
+  .micbtn.on { background: var(--accent2); border-color: var(--accent2); color: var(--paper); }
+  .micbtn ~ .mode { margin-left: 0; }
+
+  /* ===== SUBJECT (the mirrored webcam) — compact frame, top right ===== */
+  .subject { position: fixed; right: 40px; top: 110px; width: min(340px, 27vw); z-index: 35;
+    display: flex; flex-direction: column; gap: 8px; transition: all .45s cubic-bezier(.6,0,.25,1); }
+  .subject-head { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .subject-head > span { font-size: 10px; letter-spacing: .3em; color: var(--hair); }
+  .feed { position: relative; aspect-ratio: 4/3; border: 1px solid var(--ink); overflow: hidden;
+    background: var(--paper2); box-shadow: 8px 8px 0 rgba(51,41,29,.13); }
+  .feed video { position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; transform: scaleX(-1); display: block; }
+  .subject-note { font-family: Georgia, serif; font-style: italic; font-size: 11px;
+    color: #6e6250; flex-shrink: 0; }
+
+  .chip { border: 1px solid var(--hair); background: var(--paper); font-size: 11px;
+    letter-spacing: .14em; text-transform: uppercase; padding: 6px 12px; display: flex;
+    gap: 10px; min-width: 160px; justify-content: space-between; }
+  .chip b { color: var(--accent); font-weight: 700; }
+  .chip[data-hot="true"] b { color: var(--accent2); }
+
+  /* ===== BENCH (the CAD canvas) ===== */
+  .bench { position: fixed; left: 40px; right: 40px; top: 110px; bottom: 56px; z-index: 20;
+    transition: all .45s cubic-bezier(.6,0,.25,1); }
+  .bench > canvas { width: 100%; height: 100%; display: block;
+    border: 1px solid var(--hair); border-radius: 4px; }
+
+  .dock { position: absolute; left: 12px; top: 50%; translate: 0 -50%; z-index: 5; }
+  .dock [data-tools] { display: flex; flex-direction: column; gap: 7px; }
+  .dock button { width: 42px; height: 42px; border: 1px solid var(--hair);
+    background: rgba(243,237,225,.94); color: var(--ink); cursor: pointer; border-radius: 4px;
+    position: relative; font-size: 16px; display: grid; place-items: center; transition: all .15s; }
+  .dock button span { position: absolute; left: 52px; top: 50%; translate: 0 -50%; white-space: nowrap;
+    font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink);
+    background: var(--paper); padding: 4px 9px; border: 1px solid var(--hair);
+    opacity: 0; pointer-events: none; transition: opacity .15s; }
+  .dock button:hover span, .dock button.on span { opacity: 1; }
+  .dock button.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+  /* ===== HUD (gesture + speed + held) ===== */
+  .hud { position: fixed; left: 40px; bottom: 26px; z-index: 50; display: flex;
+    align-items: center; gap: 14px; font-size: 10.5px; letter-spacing: .16em;
+    text-transform: uppercase; color: #6e6250; transition: all .45s cubic-bezier(.6,0,.25,1); }
+  .hud .g { color: var(--ink); border: 1px solid var(--hair); padding: 5px 12px;
+    background: var(--paper); min-width: 86px; text-align: center; }
+  .hud .speedw { display: flex; align-items: center; gap: 8px; }
+  .hud .speedbar { width: 90px; height: 3px; background: var(--paper2); position: relative; }
+  .hud .speedbar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); width: 0%; transition: width .15s; }
+  .hud .held { color: var(--accent2); }
+  .hud .toolchip { color: var(--ink); border: 1px solid var(--ink); padding: 5px 12px;
+    background: var(--paper); }
+  .hud .vkey { color: var(--hair); }
+
+  /* tool-switch toast */
+  .toast { position: fixed; left: 50%; top: 22%; translate: -50% 0; z-index: 70;
+    font-size: 12px; letter-spacing: .3em; text-transform: uppercase; color: var(--ink);
+    border: 1px solid var(--ink); background: var(--paper); padding: 10px 22px;
+    opacity: 0; transition: opacity .25s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+
+  /* ===== IMMERSIVE mode — camera becomes the stage ===== */
+  body.immersive .mast .legend, body.immersive .subject-note { opacity: 0; pointer-events: none; }
+  body.immersive .subject { inset: 0; width: 100%; z-index: 10; gap: 0; }
+  body.immersive .subject-head { position: absolute; top: 76px; left: 40px; right: 40px; z-index: 2;
+    pointer-events: none; }
+  body.immersive .subject-head > span { color: rgba(51,41,29,.55); }
+  body.immersive .feed { border: 0; aspect-ratio: auto; flex: 1; box-shadow: none; }
+  body.immersive .bench { left: auto; top: auto; right: 40px; bottom: 84px;
+    width: min(430px, 34vw); height: min(46vh, 480px); z-index: 30;
+    filter: drop-shadow(10px 10px 0 rgba(51,41,29,.16)); }
+  body.immersive .hud { left: 40px; bottom: 30px; }
+  body.immersive .hud, body.immersive .chip { backdrop-filter: none; }
+
+  /* foot rail */
+  .rail { position: fixed; right: 40px; bottom: 30px; z-index: 50;
+    font-size: 10px; letter-spacing: .24em; color: var(--hair); text-transform: uppercase; }
+  body.immersive .rail { opacity: 0; }
+
+  /* AR lens: the full-window overlay canvas */
+  .arlens { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 40; pointer-events: none; }
+</style>
 </head>
 <body>
-  <main class="app">
-    <header class="topbar">
-      <div class="brand"><span class="brand-mark">◈</span><span>SPATIAL <b>OBJECTS</b><small>CAMERA LAB / 001</small></span></div>
-      <span id="modeBadge" class="mode-badge">READY</span>
-    </header>
+  <div class="frame" aria-hidden="true">
+    <i class="e top"></i><i class="e right"></i><i class="e bottom"></i><i class="e left"></i>
+    <i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i>
+  </div>
 
-    <section class="stage" aria-label="Camera and scan results">
-      <video id="video" autoplay muted playsinline hidden></video>
-      <canvas id="view" aria-label="Camera view with detected objects"></canvas>
-      <div id="empty" class="empty">
-        <div class="target-icon"><i></i><i></i><i></i><i></i><span>◉</span></div>
-        <h1>Make your surroundings interactive.</h1>
-        <p>Point your camera at everyday objects. Tap a detected object to inspect it. Live depth runs when connected to your computer.</p>
-        <button id="startBtn" class="primary">Start camera <span>↗</span></button>
-        <button id="uploadBtn" class="text-button">Or try a photo</button>
-        <input id="fileInput" type="file" accept="image/*" hidden>
-      </div>
-      <div class="stage-top"><span class="live-dot"></span><span id="stageState">CAMERA OFF</span><span id="resolution"></span></div>
-      <div id="hint" class="scan-hint">Tap a highlighted object for actions</div>
-      <div class="reticle" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-      <div class="stage-bottom"><span id="objectCount">0 OBJECTS</span><span id="depthState">DEPTH IDLE</span></div>
-    </section>
+  <header class="mast">
+    <div class="wordmark">SPATIAL OBJECTS</div>
+    <nav class="legend" style="display:flex;gap:16px;font-size:11px;color:#6e6250">
+      <span><b>L pinch</b> on cam — import</span><span><b>R pinch</b> move</span>
+      <span><b>palm</b> orbit</span><span><b>two palms</b> explode</span>
+      <span><b>hold fingers</b> tool</span>
+    </nav>
+    <div class="status" data-status>warming up</div>
+    <button class="micbtn" data-mic title="voice commands — say a tool name">MIC</button>
+    <div class="mode">
+      <button data-mode="studio" class="on">Studio</button>
+      <button data-mode="immersive">Immersive</button>
+    </div>
+    <a class="gallery" href="./gallery.html">mockups</a>
+  </header>
 
-    <section class="controls" aria-label="Scanner controls">
-      <div class="view-switch" role="group" aria-label="View mode">
-        <button id="rgbBtn" class="selected" aria-pressed="true">◉ &nbsp; RGB</button>
-        <button id="depthBtn" aria-pressed="false">▧ &nbsp; DEPTH</button>
-        <button id="blendBtn" aria-pressed="false">◈ &nbsp; MESH</button>
-      </div>
-      <button id="captureBtn" class="capture" disabled><span>◎</span> Scan frame</button>
-      <button id="resumeBtn" class="secondary" hidden>↺ &nbsp; Live camera</button>
-    </section>
+  <section class="subject">
+    <div class="subject-head"><span>SUBJECT</span><div class="chip" data-detect><span>detector idle</span></div></div>
+    <div class="feed"><video data-cam muted playsinline></video></div>
+    <p class="subject-note">Hold an object in frame — or pinch-drag a box around it. What you draw lands in the tray, sized to fit.</p>
+  </section>
 
-    <aside id="objectPanel" class="object-panel" hidden>
-      <div class="panel-head"><span>SELECTED OBJECT</span><button id="closePanel" aria-label="Close object details">×</button></div>
-      <h2 id="objectName">Object</h2>
-      <div class="readouts"><div><small>CONFIDENCE</small><strong id="confidence">—</strong></div><div><small>RELATIVE DEPTH</small><strong id="objectDepth">—</strong></div></div>
-      <p id="objectNote">AI labels are estimates. Depth is relative, not a distance measurement.</p>
-      <div class="actions"><button id="anchorBtn">⌖ &nbsp; Pin</button><button id="shareBtn">↗ &nbsp; Share</button><button id="copyBtn">⧉ &nbsp; Copy label</button></div>
-    </aside>
-
-    <section class="info-strip"><span class="spark">✳</span><p id="processingNote"><b>On-device scan.</b> Frames stay in your browser. The object and depth models download on first use. Depth is AI estimated from one image, so it cannot give real-world distance or reliable occlusion.</p></section>
-    <footer><span>EXPERIMENTAL XR INTERFACE</span><span id="status" role="status">Ready to explore</span></footer>
+  <main class="bench">
+    <canvas data-cad></canvas>
+    <div class="dock"><div data-tools></div></div>
   </main>
-  <script src="./mqtt.min.js"></script>
-  <script type="module" src="./app.js"></script>
+
+  <div class="hud">
+    <span class="g" data-gesture>idle</span>
+    <span class="speedw"><i>vel</i><span class="speedbar"><i data-speedbar></i></span><b data-speed>0</b></span>
+    <span class="held" data-held></span>
+    <span class="toolchip" data-toolchip>select</span>
+    <span class="vkey"><b data-fps>—</b> fps · V — view · 1-6 — tool</span>
+  </div>
+  <div class="toast" data-toast></div>
+
+  <div class="rail"><span>HAND-DRIVEN CAD · LOCAL MODELS</span></div>
+
+  <canvas class="arlens" data-hands></canvas>
+
+  <script type="module">
+    import { boot } from './shared/ui.js';
+    const app = await boot(document.body, {
+      video: '[data-cam]', overlay: '[data-hands]', cad: '[data-cad]',
+      chip: '[data-detect]', status: '[data-status]', tools: '[data-tools]',
+      cadOpts: { bg: 0xefe8da },
+    }).catch(e => { document.querySelector('[data-status]').textContent = 'boot failed — ' + e.message; });
+
+    /* mode toggle — studio ⇄ immersive (V key too) */
+    const setMode = (m) => {
+      document.body.classList.toggle('immersive', m === 'immersive');
+      document.querySelectorAll('.mode button').forEach(b =>
+        b.classList.toggle('on', b.dataset.mode === m));
+    };
+    document.querySelectorAll('.mode button').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+    addEventListener('keydown', e => {
+      if (e.key === 'v' || e.key === 'V')
+        setMode(document.body.classList.contains('immersive') ? 'studio' : 'immersive');
+    });
+
+    /* HUD — gesture, velocity, held part */
+    const gEl = document.querySelector('[data-gesture]'),
+          sBar = document.querySelector('[data-speedbar]'),
+          sNum = document.querySelector('[data-speed]'),
+          fNum = document.querySelector('[data-fps]'),
+          hEl = document.querySelector('[data-held]');
+    addEventListener('x:hud', e => {
+      const d = e.detail;
+      gEl.textContent = d.gesture;
+      sBar.style.width = Math.min(100, d.speed / 18) + '%';
+      sNum.textContent = d.speed;
+      fNum.textContent = d.fps;
+      hEl.textContent = d.held ? 'holding · ' + d.held : (d.clutch ? 'in hand — hold steady' : '');
+    });
+
+    /* tool chip + switch toast */
+    const chipT = document.querySelector('[data-toolchip]'), toast = document.querySelector('[data-toast]');
+    let toastT;
+    const flash = (t) => { toast.textContent = t; toast.classList.add('show');
+      clearTimeout(toastT); toastT = setTimeout(() => toast.classList.remove('show'), 1100); };
+    addEventListener('x:tool', e => {
+      chipT.textContent = e.detail.label;
+      flash('tool · ' + e.detail.label);
+    });
+
+    /* mic toggle + heard-word flash */
+    const mic = document.querySelector('[data-mic]');
+    mic.onclick = () => { const on = app?.voice?.(); mic.classList.toggle('on', !!on); };
+    addEventListener('x:voice', e => {
+      mic.classList.toggle('on', !!e.detail.on);
+      if (e.detail.word) flash('“' + e.detail.word + '”');
+    });
+  </script>
 </body>
 </html>

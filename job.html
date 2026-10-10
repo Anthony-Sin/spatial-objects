@@ -1,0 +1,914 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>the bay — weld & fit jobs</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/three.module.js",
+  "three/addons/loaders/GLTFLoader.js": "./vendor/three/GLTFLoader.js"
+} }
+</script>
+<style>
+  :root { --paper:#f3ede1; --ink:#33291d; --hair:#b9ac93; --accent:#d85c3a; --accent2:#4f8f6b; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: #191510; }
+  body { font-family: "Avenir Next","Futura","Trebuchet MS",system-ui,sans-serif; color: var(--paper); }
+  #world { position: fixed; inset: 0; display: block; }
+  #hands { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+
+  .mast { position: fixed; top: 22px; left: 30px; right: 30px; z-index: 20;
+    display: flex; align-items: baseline; gap: 20px; pointer-events: none; }
+  .wm { font-family: Georgia,serif; font-size: 20px; letter-spacing: .14em; text-shadow: 0 1px 8px rgba(0,0,0,.6); }
+  .wm span { display:block; font-style: italic; font-size: 9px; letter-spacing: .26em;
+    color: rgba(243,237,225,.55); text-transform: uppercase; margin-top: 2px; }
+  .status { font-size: 10px; letter-spacing: .2em; text-transform: uppercase;
+    color: #9fd8b7; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
+  .back { margin-left: auto; font-size: 10px; letter-spacing: .2em; text-transform: uppercase;
+    color: rgba(243,237,225,.7); text-decoration: none; border-bottom: 1px solid rgba(243,237,225,.35);
+    padding-bottom: 2px; pointer-events: auto; }
+  .back + .back { margin-left: 14px; }
+
+  /* foreman job card */
+  .card { position: fixed; top: 84px; left: 50%; transform: translateX(-50%); z-index: 20;
+    min-width: 340px; border: 1px solid rgba(243,237,225,.35); background: rgba(25,21,16,.72);
+    backdrop-filter: blur(8px); border-radius: 4px; padding: 12px 18px 14px; }
+  .card .who { font-size: 10px; letter-spacing: .3em; text-transform: uppercase; color: #d8b06a; }
+  .card .job { font-family: Georgia,serif; font-style: italic; font-size: 19px; margin: 4px 0 6px; }
+  .card .how { font-size: 12.5px; font-weight: 500; letter-spacing: .05em;
+    color: rgba(255,250,238,.92); line-height: 1.5; text-shadow: 0 1px 4px rgba(0,0,0,.7); }
+  .card .prog { margin-top: 9px; height: 4px; background: rgba(243,237,225,.15); border-radius: 2px; overflow: hidden; }
+  .card .prog i { display: block; height: 100%; width: 0%; background: var(--accent2); transition: width .2s; }
+
+  .score { position: fixed; top: 84px; right: 30px; z-index: 20; text-align: right; }
+  .score .n { font-family: Georgia,serif; font-size: 34px; }
+  .score .l { font-size: 9px; letter-spacing: .3em; text-transform: uppercase; color: rgba(243,237,225,.55); }
+
+  .peep { position: fixed; left: 30px; bottom: 30px; z-index: 20; width: 238px;
+    border: 1px solid rgba(243,237,225,.4); border-radius: 4px; overflow: hidden;
+    box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+  .peep video { width: 100%; display: block; transform: scaleX(-1); }
+  .peep .tag { position: absolute; left: 0; right: 0; bottom: 0; font-size: 8.5px;
+    letter-spacing: .18em; text-transform: uppercase; color: var(--paper);
+    background: rgba(0,0,0,.55); padding: 4px 8px; }
+  .peep canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  .legend { position: fixed; right: 30px; bottom: 30px; z-index: 20; text-align: right;
+    font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase;
+    color: rgba(255,250,238,.8); text-shadow: 0 1px 6px rgba(0,0,0,.85); line-height: 2; }
+  .legend b { color: #fff; }
+
+  .peep[hidden] { display: none !important; }
+  .replay { margin-top: 12px; padding: 8px 14px; color: #17201b;
+    background: #a5eac3; border: 0; border-radius: 3px; font: 700 11px system-ui;
+    letter-spacing: .1em; text-transform: uppercase; cursor: pointer; }
+  .replay:hover { background: #d7f5e5; }
+  @media (max-width: 700px) {
+    .mast { top: 12px; left: 14px; right: 14px; flex-wrap: wrap; gap: 6px 12px; }
+    .wm { width: 100%; font-size: 17px; }
+    .status { font-size: 8px; }
+    .back { margin-left: 0; font-size: 9px; }
+    .card { top: 94px; width: calc(100% - 28px); min-width: 0; padding: 10px 12px; }
+    .card .job { font-size: 17px; }
+    .card .how { font-size: 11px; }
+    .score { top: 18px; right: 14px; }
+    .score .n { font-size: 23px; }
+    .peep { left: 14px; bottom: 14px; width: 116px; }
+    .legend { right: 14px; bottom: 14px; font-size: 8px; line-height: 1.6; max-width: 55vw; }
+  }
+
+  .flash { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); z-index: 30;
+    font-family: Georgia,serif; font-style: italic; font-size: 34px; color: #9fd8b7;
+    text-shadow: 0 2px 18px rgba(0,0,0,.8); opacity: 0; transition: opacity .4s; pointer-events: none; }
+</style>
+</head>
+<body>
+  <canvas id="world"></canvas>
+  <canvas id="hands"></canvas>
+
+  <header class="mast">
+    <div class="wm">THE BAY<span>foreman's shift · weld & fit</span></div>
+    <div class="status" data-status>booting…</div>
+    <a class="back" href="./theatre.html">theatre →</a>
+    <a class="back" href="./dock.html">dock →</a>
+    <a class="back" href="./">app</a>
+  </header>
+
+  <div class="card">
+    <div class="who">FOREMAN · JOB CARD</div>
+    <div class="job" data-job>…</div>
+    <div class="how" data-how></div>
+    <div class="prog"><i data-prog></i></div>
+  </div>
+
+  <div class="score"><div class="n" data-score>0</div><div class="l">shop points</div></div>
+  <div class="flash" data-flash></div>
+
+  <div class="peep">
+    <video data-cam muted playsinline></video>
+    <canvas data-nose></canvas>
+    <div class="tag" data-peep>face · —</div>
+  </div>
+
+  <div class="legend">
+    <div><b>head</b> — look · <b>lean</b> — zoom · <b>c</b> — recenter</div>
+    <div><b>right pinch</b> — hold tool / work</div>
+    <div><b>left pinch</b> — fit & place parts</div>
+    <div><b>point</b> — aim · <b>fist</b> — pull it to you</div>
+    <div><b>mouse</b> — left/right drag · <b>shift</b> drag to look</div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import Hands from './shared/hands.js';
+    import { Face } from './shared/face.js';
+    import { drawGlove } from './shared/glove.js';
+
+    const params = new URLSearchParams(location.search);
+    const $ = (s) => document.querySelector(s);
+    const status = $('[data-status]');
+
+    /* ================= renderer / stage ================= */
+    const cvs = $('#world');
+    const ren = new THREE.WebGLRenderer({ canvas: cvs, antialias: true });
+    ren.setPixelRatio(Math.min(devicePixelRatio, 2));
+    ren.shadowMap.enabled = true;
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x191510, 8, 60);
+    const cam = new THREE.PerspectiveCamera(70, 1, .05, 200);
+    cam.position.set(0, 0, 0);
+
+    // warm backdrop — the room geometry fills the view; fog eats the rest
+    scene.background = new THREE.Color(0x241e16);
+
+    scene.add(new THREE.HemisphereLight(0xf3ede1, 0x33291d, 1.1));
+    const key = new THREE.DirectionalLight(0xfff2dd, 1.6);
+    key.position.set(4, 8, 3); key.castShadow = true; scene.add(key);
+    const arcLight = new THREE.PointLight(0x9fd4ff, 0, 6); scene.add(arcLight);
+
+    /* ================= assets ================= */
+    const GL = new GLTFLoader();
+    const load = (n) => new Promise((res, rej) =>
+      GL.load(`./vendor/models/glb/${n}.glb`, g => res(g.scene), undefined, rej));
+    const fit = (obj, size) => {   // normalize a model to a target largest-dimension
+      const b = new THREE.Box3().setFromObject(obj);
+      const s = size / Math.max(...b.getSize(new THREE.Vector3()).toArray());
+      obj.scale.setScalar(s);
+      return obj;
+    };
+    const dropOn = (obj, y) => {   // rest model's bottom on y
+      const b = new THREE.Box3().setFromObject(obj);
+      obj.position.y += y - b.min.y;
+      return obj;
+    };
+
+    const M = {};
+    for (const n of ['workbench','pipe','vice','drill','toolbox','hardhat',
+      'kfactory/lever-single','kfactory/pipe-large-valve',
+      'kfactory/cog-a','kfactory/cog-b',
+      'kfactory/screen-hanging-wide',
+      'ksurvival/tool-hammer','ksurvival/metal-panel-screws',
+      'kfactory/structure-wall','kfactory/structure-window-wide','kfactory/structure-doorway',
+      'kfactory/floor-large','kfactory/door-wide-closed'])
+      M[n.split('/').pop()] = await load(n).catch(() => null);
+
+    const grabbables = [], set = new THREE.Group(); scene.add(set);
+    // put() places a prop so its BOTTOM rests on the given surface height —
+    // nothing floats, nothing sinks, regardless of where the model's origin is.
+    const put = (obj, x, surfY, z, grab = false, tag = '') => {
+      obj.position.set(x, 0, z);
+      const b = new THREE.Box3().setFromObject(obj);
+      obj.position.y = surfY - b.min.y;
+      set.add(obj);
+      obj.traverse(o => { o.castShadow = o.receiveShadow = true; });
+      if (grab) { obj.userData.grab = true; obj.userData.tag = tag; grabbables.push(obj); }
+      obj.userData.full = obj.scale.x;
+      return obj;
+    };
+
+    /* spawn-on-demand — props materialize when their job card calls for them.
+       parked props are invisible AND ungrabbable (hit() skips them). */
+    const poppers = [];
+    const park = (o) => { if (o) { o.visible = false; o.userData.parked = true; } };
+    const live = (o) => {
+      if (!o) return;
+      o.visible = true; o.userData.parked = false;
+      if (!o.userData.full) o.userData.full = o.scale.x;
+      o.scale.setScalar(.02); poppers.push(o);
+    };
+    const popTick = () => {
+      for (let i = poppers.length - 1; i >= 0; i--) {
+        const o = poppers[i];
+        const s = THREE.MathUtils.lerp(o.scale.x, o.userData.full, .18);
+        o.scale.setScalar(s);
+        if (s > o.userData.full * .97) { o.scale.setScalar(o.userData.full); poppers.splice(i, 1); }
+      }
+    };
+
+    // clean grid — tools in reach rows on the bench, heavy kit on the floor
+    const BENCH_Y = -1.15, FLOOR = -2.35;
+
+    /* the room — real kenney modular structure, not a photo.
+       walls run around the set, floor tiles under everything. */
+    const ROOM_H = 3.9, WALL_Z = -6.4, WALL_X = 5.6;
+    const normH = (o, h) => {                 // scale so bbox height = h
+      const b = new THREE.Box3().setFromObject(o);
+      o.scale.setScalar(h / (b.max.y - b.min.y));
+      return o;
+    };
+    let doorX = null;
+    const wallRun = (names, x0, x1, z) => {      // run along X — back wall
+      let cx = x0, i = 0;
+      while (cx < x1 - .01) {
+        const n = names[i % names.length], proto = M[n]; if (!proto) break;
+        const m = normH(proto.clone(), ROOM_H);
+        const b = new THREE.Box3().setFromObject(m);
+        m.position.set(cx - b.min.x, FLOOR - b.min.y, z - (b.min.z + b.max.z) / 2);
+        m.userData.room = true; set.add(m);
+        if (n === 'structure-doorway') doorX = cx + (b.max.x - b.min.x) / 2;
+        cx += b.max.x - b.min.x; i++;
+      }
+    };
+    const wallRunZ = (names, z0, z1, x, rotY) => {  // run along Z — side walls
+      let cz = z0, i = 0;
+      while (cz < z1 - .01) {
+        const proto = M[names[i % names.length]]; if (!proto) break;
+        const m = normH(proto.clone(), ROOM_H); m.rotation.y = rotY;
+        const b = new THREE.Box3().setFromObject(m);
+        m.position.set(x - (b.min.x + b.max.x) / 2, FLOOR - b.min.y, cz - b.min.z);
+        m.userData.room = true; set.add(m); cz += b.max.z - b.min.z; i++;
+      }
+    };
+    // back wall — solid / glazed / doorway rhythm
+    wallRun(['structure-wall','structure-window-wide','structure-doorway',
+             'structure-window-wide','structure-wall','structure-window-wide',
+             'structure-wall','structure-window-wide'], -WALL_X, WALL_X, WALL_Z);
+    // a closed door filling the doorway module
+    if (M['door-wide-closed'] && doorX !== null) {
+      const d = normH(M['door-wide-closed'].clone(), 2.3);   // door height, not wall height
+      const b = new THREE.Box3().setFromObject(d);
+      d.position.set(doorX - (b.min.x + b.max.x) / 2, FLOOR - b.min.y, WALL_Z - .05);
+      d.userData.room = true; set.add(d);
+    }
+    // side walls — glazed run toward the camera
+    wallRunZ(['structure-window-wide','structure-wall','structure-window-wide','structure-wall'],
+             -6.4, -0.4, -WALL_X, Math.PI / 2);
+    wallRunZ(['structure-wall','structure-window-wide','structure-wall','structure-window-wide'],
+             -6.4, -0.4, WALL_X, -Math.PI / 2);
+    // floor — real tiles under everything
+    if (M['floor-large']) {
+      const proto = M['floor-large'];
+      const fb = new THREE.Box3().setFromObject(proto);
+      const fw = fb.max.x - fb.min.x, fd = fb.max.z - fb.min.z;
+      for (let x = -7; x < 7; x += fw)
+        for (let z = -8.5; z < 1.5; z += fd) {
+          const f = proto.clone();
+          const b = new THREE.Box3().setFromObject(f);
+          f.position.set(x - b.min.x, FLOOR - b.max.y, z - b.min.z);   // top face = floor level
+          f.traverse(o => { o.receiveShadow = true; });
+          f.userData.room = true; f.userData.floorTile = true; set.add(f);
+        }
+    }
+
+    // Refinish the shared modular kit for this room's purpose. Keep the model
+    // geometry and window detail, but give each training space its own palette.
+    const roomColors = { panel: 0x727b80, frame: 0x414b55, accent: 0xb68851, floor: 0x626c71 };
+    for (const part of set.children) {
+      if (!part.userData.floorTile) continue;
+      part.traverse(mesh => {
+        if (!mesh.isMesh) return;
+        const c = mesh.material?.color;
+        const color = part.userData.floorTile ? roomColors.floor :
+          (c && c.r > c.g * 1.3 && c.g > c.b * 1.15) ? roomColors.accent :
+          (c && (c.r + c.g + c.b) / 3 > .28) ? roomColors.panel : roomColors.frame;
+        mesh.material = part.userData.floorTile
+          ? new THREE.MeshStandardMaterial({ color, roughness: .88 })
+          : new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
+        mesh.receiveShadow = true;
+      });
+    }
+
+    // A low, open work surface keeps the pipe and tools visible from the
+    // player's eye line. The kit workbench had a tall rear frame that hid them.
+    const bench = new THREE.Group();
+    const wood = new THREE.MeshStandardMaterial({ color: 0x846044, roughness: .82 });
+    const steel = new THREE.MeshStandardMaterial({ color: 0x393f49, metalness: .48, roughness: .5 });
+    const benchPart = (w, h, d, x, y, z, mat) => {
+      const part = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      part.position.set(x, y, z); part.castShadow = part.receiveShadow = true; bench.add(part);
+    };
+    benchPart(4.65, .12, 1.55, 0, BENCH_Y - .06, -3.1, wood);
+    for (const x of [-2.15, 2.15]) for (const z of [-3.7, -2.5])
+      benchPart(.1, BENCH_Y - FLOOR - .12, .1, x, (BENCH_Y + FLOOR) / 2 - .06, z, steel);
+    benchPart(4.35, .08, .1, 0, FLOOR + .38, -3.68, steel);
+    bench.userData.tag = 'workbench'; set.add(bench);
+
+    // front row (z -2.8): the grab-and-use tools
+    let hammerObj = null, leverObj = null;
+    if (M.drill)          put(fit(M.drill, .5),      -.5,  BENCH_Y, -2.8, true, 'drill');
+    if (M['tool-hammer']) hammerObj = put(fit(M['tool-hammer'], .5), .05, BENCH_Y, -2.8, true, 'hammer');
+    if (M['lever-single']) leverObj = put(fit(M['lever-single'], .4), -1.05, BENCH_Y, -2.8, true, 'lever');
+
+    // back row (z -3.4): fittings + parts
+    let cogAObj = null, cogBObj = null, panelObj = null, hatObj = null;
+    if (M['pipe-large-valve']) put(fit(M['pipe-large-valve'], .55), -1.6, BENCH_Y, -3.45, true, 'valve');
+    if (M['cog-a'])      cogAObj = put(fit(M['cog-a'], .3), -.3, BENCH_Y, -3.45, true, 'cog-a');
+    if (M['cog-b'])      cogBObj = put(fit(M['cog-b'], .28), .18, BENCH_Y, -3.45, true, 'cog-b');
+    if (M['metal-panel-screws']) panelObj = put(fit(M['metal-panel-screws'], .8), .75, BENCH_Y, -3.45);
+    if (M.hardhat)       hatObj = put(fit(M.hardhat, .45), 1.75, BENCH_Y, -2.8, true, 'hardhat');
+
+    // flanking the bench
+    if (M.vice)          put(fit(M.vice, .45), -2.02, BENCH_Y, -2.7);
+    if (M.toolbox)       put(fit(M.toolbox, .55), 1.85, FLOOR, -2.75, true, 'toolbox');
+    if (M['screen-hanging-wide']) {
+      const s = put(fit(M['screen-hanging-wide'], 1.4), 0, -1.6, -5.2);
+      s.userData.hang = true;   // wall-mounted line indicator — lever job fires it
+    }
+
+    // the bench starts lean — job tools materialize when the card calls for them
+    const SPAWNS = {
+      drill: ['drill'],
+      cogs:  ['cog-a', 'cog-b'],
+      lever: ['lever-single'],
+      rivet: ['tool-hammer', 'metal-panel-screws'],
+      stow:  ['toolbox'],
+    };
+    for (const n of ['drill','cog-a','cog-b','lever-single','tool-hammer','metal-panel-screws','toolbox'])
+      park(M[n]);
+    const spawnFor = (id) => (SPAWNS[id] || []).forEach(n => live(M[n]));
+
+    // the pipe job — two halves, a gap to close, seam on top
+    const pipes = new THREE.Group(); set.add(pipes);
+    let pipeL = null, pipeR = null, pipeGap = .34;
+    if (M.pipe) {
+      pipeL = fit(M.pipe.clone(), 1.0); pipeR = fit(M.pipe.clone(), 1.0);
+      // This GLB's long axis is already X; rotating it made both halves stand up.
+      pipes.add(pipeL, pipeR);
+      const layPipe = () => {
+        pipeL.position.set(0, 0, 0); pipeR.position.set(0, 0, 0);
+        const bb = new THREE.Box3().setFromObject(pipeL);
+        const len = bb.max.x - bb.min.x;
+        const center = bb.getCenter(new THREE.Vector3());
+        const surface = BENCH_Y + .025 - bb.min.y;
+        pipeL.position.set(-len / 2 - pipeGap / 2 - center.x, surface, -3.1 - center.z);
+        pipeR.position.set( len / 2 + pipeGap / 2 - center.x, surface, -3.1 - center.z);
+      };
+      layPipe();
+      pipeR.userData.grab = true; pipeR.userData.tag = 'pipe'; grabbables.push(pipeR);
+    }
+    // seam ghost (target for the fit task) + seam hit ring
+    const seam = new THREE.Mesh(
+      new THREE.TorusGeometry(.13, .014, 8, 32).rotateY(Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xd8b06a, transparent: true, opacity: .7 }));
+    seam.position.set(0, -0.98, -3.1); set.add(seam);
+    const hole = new THREE.Mesh(
+      new THREE.RingGeometry(.045, .085, 24).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xd85c3a, side: THREE.DoubleSide, transparent: true, opacity: .85 }));
+    hole.position.set(.45, -1.13, -3.1); set.add(hole);
+    const rivetRing = new THREE.Mesh(
+      new THREE.RingGeometry(.04, .075, 24).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xd8b06a, side: THREE.DoubleSide, transparent: true, opacity: .8 }));
+    rivetRing.position.set(.55, BENCH_Y + .06, -3.1); set.add(rivetRing);
+
+    /* ================= sparks ================= */
+    const SPN = 90;
+    const sparkGeo = new THREE.BufferGeometry();
+    sparkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SPN * 3), 3));
+    const sparkVel = new Float32Array(SPN * 3), sparkLife = new Float32Array(SPN);
+    const sparks = new THREE.Points(sparkGeo,
+      new THREE.PointsMaterial({ color: 0xffc86e, size: .025, transparent: true, opacity: 0 }));
+    scene.add(sparks);
+    let sparkAt = new THREE.Vector3();
+    const burst = () => {
+      const p = sparkGeo.attributes.position.array;
+      for (let i = 0; i < SPN; i++) {
+        p[i*3] = sparkAt.x; p[i*3+1] = sparkAt.y; p[i*3+2] = sparkAt.z;
+        sparkVel[i*3] = (Math.random()-.5)*.03; sparkVel[i*3+1] = Math.random()*.045+.01;
+        sparkVel[i*3+2] = (Math.random()-.5)*.03;
+        sparkLife[i] = .5 + Math.random()*.6;
+      }
+      sparkGeo.attributes.position.needsUpdate = true;
+      sparks.material.opacity = 1;
+    };
+    const sparkTick = (dt) => {
+      if (sparks.material.opacity <= 0) return;
+      const p = sparkGeo.attributes.position.array;
+      let alive = 0;
+      for (let i = 0; i < SPN; i++) {
+        if (sparkLife[i] <= 0) continue;
+        alive++;
+        sparkLife[i] -= dt; sparkVel[i*3+1] -= .12 * dt;
+        p[i*3] += sparkVel[i*3]; p[i*3+1] += sparkVel[i*3+1]; p[i*3+2] += sparkVel[i*3+2];
+      }
+      sparkGeo.attributes.position.needsUpdate = true;
+      sparks.material.opacity = Math.min(1, alive / SPN + .15);
+    };
+
+    /* ================= the foreman ================= */
+    const JOBS = [
+      { id:'don',  name:'Job 00 — gear up',
+        how:'LEFT pinch the hard hat — carry it up to your head. PPE first, always.' },
+      { id:'fit',  name:'Job 01 — fit the pipe',
+        how:'LEFT hand pinch the loose pipe half — slide it against the seam ring until it seats.' },
+      { id:'weld', name:'Job 02 — tack the seam',
+        how:'RIGHT hand pinch-hold at the gold ring. Hold steady — the arc does the work.' },
+      { id:'drill',name:'Job 03 — drill the plate',
+        how:'RIGHT pinch grabs the drill; touch the red ring and hold to punch the hole.' },
+      { id:'cogs', name:'Job 04 — mesh the gears',
+        how:'LEFT pinch the small cog — slide it against the big one until the teeth seat.' },
+      { id:'lever',name:'Job 05 — power the line',
+        how:'Pinch the lever and pull it DOWN — bring the machine online.' },
+      { id:'rivet',name:'Job 06 — set the rivet',
+        how:'RIGHT pinch grabs the hammer; hold on the screw plate to drive it home.' },
+      { id:'stow', name:'Job 07 — stow the toolbox',
+        how:'LEFT pinch the toolbox — slide it into the green floor ring beside the bench.' },
+    ];
+    let ji = 0, score = 0, jobDone = false;
+    const elJob = $('[data-job]'), elHow = $('[data-how]'), elProg = $('[data-prog]');
+    const flash = (t) => { const f = $('[data-flash]'); f.textContent = t;
+      f.style.opacity = 1; setTimeout(() => f.style.opacity = 0, 1400); };
+    const setJob = (i) => {
+      ji = i % JOBS.length; jobDone = false;
+      elJob.textContent = JOBS[ji].name; elHow.textContent = JOBS[ji].how;
+      elProg.style.width = '0%';
+      spawnFor(JOBS[ji].id);
+      pipes.visible = ['fit', 'weld'].includes(JOBS[ji].id);
+      if (pipeR) pipeR.userData.parked = !pipes.visible;
+    };
+    const award = (n, msg) => { score += n; $('[data-score]').textContent = score; flash(msg || `+${n}`); };
+    const complete = (msg) => {
+      if (jobDone) return; jobDone = true;
+      award(100, msg || 'JOB DONE — clean work');
+      if (ji < JOBS.length - 1) setTimeout(() => setJob(ji + 1), 1600);
+      else setTimeout(() => {
+        elJob.textContent = 'Shift complete';
+        elHow.textContent = `${JOBS.length} tasks complete · ${score} points. Ready for another run?`;
+        elProg.style.width = '100%';
+        const replay = document.createElement('button');
+        replay.className = 'replay'; replay.textContent = 'Replay shift';
+        replay.onclick = () => location.reload();
+        document.querySelector('.card').append(replay);
+      }, 1600);
+    };
+    setJob(0);
+
+    /* ================= webcam + trackers ================= */
+    const video = $('[data-cam]');
+    try {
+      if (params.get('vid')) {
+        video.src = params.get('vid'); video.loop = true; video.muted = true; await video.play();
+      } else {
+        video.srcObject = await navigator.mediaDevices.getUserMedia(
+          { video: { width: 960, height: 540 }, audio: false });
+        await video.play();
+      }
+      status.textContent = 'camera live';
+    } catch { status.textContent = 'mouse mode'; $('.peep').hidden = true; }
+    let hands = null, face = null;
+    if (video.srcObject || video.src) {
+      try { face = await Face.create(video, './vendor/mediapipe'); status.textContent = `face · ${face.delegate}`; } catch {}
+      try { hands = await Hands.create(video, './vendor/mediapipe'); } catch {}
+    }
+
+    /* ================= view control (nose-look + drag) ================= */
+    const BASE_PITCH = -20;
+    const view = { yaw: 0, pitch: BASE_PITCH, fov: 72 }, tgt = { yaw: 0, pitch: BASE_PITCH, fov: 72 };
+    const taskView = { don:{yaw:11,fov:68}, fit:{yaw:0,fov:70}, weld:{yaw:0,fov:64}, drill:{yaw:2,fov:60}, cogs:{yaw:0,fov:56}, lever:{yaw:-12,fov:62}, rivet:{yaw:7,fov:60}, stow:{yaw:18,fov:70} };
+    let framedJob = -1;
+    let noseRef = null, savedRef = null, lostAt = 0, hadRef = false;
+    const noseTick = () => {
+      if (!face?.state.found) {
+        if (!lostAt) lostAt = performance.now();
+        if (performance.now() - lostAt > 2500) { savedRef = noseRef; noseRef = null; }
+        return;                                               // brief dropout → hold the view
+      }
+      lostAt = 0;
+      const n = face.state.nose;
+      if (!noseRef) {
+        // re-acquire: resume the view AND the old reference — wherever your
+        // head was when the track dropped does NOT become the new middle
+        if (hadRef && savedRef) {
+          noseRef = savedRef;
+          tgt.yaw = view.yaw; tgt.pitch = view.pitch;
+        } else {
+          noseRef = { x: n.x, y: n.y, size: face.state.size };
+        }
+        hadRef = true;
+      }
+      // deadband — sub-twitch head noise doesn't move the view
+      const dx = n.x - noseRef.x, dy = n.y - noseRef.y, DB = .028;
+      const mx = Math.abs(dx) < DB ? 0 : dx - Math.sign(dx) * DB;
+      const my = Math.abs(dy) < DB ? 0 : dy - Math.sign(dy) * DB;
+      tgt.yaw   += (taskView[JOBS[ji].id].yaw + mx * 260 - tgt.yaw) * .12;
+      tgt.pitch += (BASE_PITCH - my * 160 - tgt.pitch) * .12;
+      // dead-center of frame = home — park your nose in the middle and
+      // the view returns to the default shot instead of drifting
+      if (Math.abs(n.x - .5) < .06 && Math.abs(n.y - .47) < .06) {
+        tgt.yaw += (taskView[JOBS[ji].id].yaw - tgt.yaw) * .18;
+        tgt.pitch += (BASE_PITCH - tgt.pitch) * .18;
+      }
+      tgt.yaw = THREE.MathUtils.clamp(tgt.yaw, -55, 55);
+      tgt.pitch = THREE.MathUtils.clamp(tgt.pitch, -34, 32);
+      const z = THREE.MathUtils.clamp((face.state.size - noseRef.size) / noseRef.size, -.3, .45);
+      tgt.fov = taskView[JOBS[ji].id].fov - z * 25;
+      // no drift — the view holds where you look; press C to recenter
+      $('[data-peep]').textContent = 'face · locked';
+    };
+
+    /* ================= hand cursor → 3d ================= */
+    const ray = new THREE.Raycaster();
+    const workPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 3.1);   // z = -3.1 bench plane
+    const grabPlane = new THREE.Plane();                                 // set at grab time, keeps depth
+    const hand3 = new THREE.Vector3(), camDir = new THREE.Vector3();
+    let grabbed = null, heldTool = null, grabSide = null, grabOff = new THREE.Vector3();
+    let grabDepth = 2.4, pullDepth = 2.4;   // depth animates: prop comes to your hand
+    const rollQ = new THREE.Quaternion();
+    const tiltQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -.22);
+    const cursor3D = (nx, ny, out, plane) => {
+      const nd = new THREE.Vector2(nx * 2 - 1, -(ny * 2 - 1));
+      ray.setFromCamera(nd, cam);
+      return ray.ray.intersectPlane(plane || workPlane, out) ? out : null;
+    };
+    const hit = (nx, ny) => {
+      const nd = new THREE.Vector2(nx * 2 - 1, -(ny * 2 - 1));
+      ray.setFromCamera(nd, cam);
+      for (const hh of ray.intersectObjects(grabbables, true)) {
+        let o = hh.object; while (o && !o.userData.grab) o = o.parent;
+        if (o && !o.userData.parked) return o;      // parked props don't exist yet
+      }
+      return null;
+    };
+
+    const handsOf = (hs) => (hs.hands || []).filter(Boolean);
+    const sidePinch = (hs, s) =>
+      handsOf(hs).find(h => h.side === s && h.kind === 'pinch')?.pinchAt
+      || (handsOf(hs).some(h => h.side) ? null : hs.pinch);
+
+    /* force-pull: POINT at a prop to aim it, snap FIST → it flies to that
+       hand and stays while the fist holds (power grab). Open → release.
+       Covers props you can't physically reach with a pinch. */
+    let aimed = null, powerObj = null, powerSide = null;
+    const forcePull = (hs) => {
+      const pt = handsOf(hs).find(h => h.kind === 'point');
+      const fk = handsOf(hs).find(h => h.kind === 'fist');
+      if (pt && !grabbed && !powerObj) {
+        aimed = hit(pt.indexTip.x, pt.indexTip.y);
+      } else if (!fk) { aimed = null; }
+      if (fk && aimed && !powerObj) { powerObj = aimed; powerSide = fk.side; aimed = null; }
+      if (powerObj) {
+        const f = handsOf(hs).find(h => h.side === powerSide && h.kind === 'fist')
+               || handsOf(hs).find(h => h.kind === 'fist');
+        if (f && !grabbed) {
+          const pl = f.palm || f.wrist;
+          const nd = new THREE.Vector2((pl.x * .76 + .12) * 2 - 1, -((pl.y * .76 + .1) * 2 - 1));
+          ray.setFromCamera(nd, cam);
+          const dst = new THREE.Vector3();
+          ray.ray.at(2.0, dst);
+          dst.y = Math.max(dst.y, -1.55);
+          powerObj.position.lerp(dst, .16);
+          powerPos = pl;
+        } else { powerObj = null; powerPos = null; }
+      }
+    };
+    let powerPos = null;
+
+    /* per-job interaction */
+    let weldProg = 0, drillProg = 0, rivetProg = 0;
+    const leverHomeY = leverObj ? leverObj.position.y : -1.15;
+    let leverFired = false;
+    const stowZone = new THREE.Box3(
+      new THREE.Vector3(2.65, -2.5, -4.65), new THREE.Vector3(3.55, -1.5, -3.75));
+    const stowRing = new THREE.Mesh(
+      new THREE.RingGeometry(.3, .36, 32).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x4f8f6b, side: THREE.DoubleSide, transparent: true, opacity: .8 }));
+    stowRing.position.set(3.1, FLOOR + .02, -4.2); set.add(stowRing);
+
+    const jobTick = (hs) => {
+      const rp = sidePinch(hs, 'right'), lp = sidePinch(hs, 'left');
+      const job = JOBS[ji];
+
+      forcePull(hs);
+
+      // generic grab — pinch on a grabbable picks it up
+      for (const [p, s] of [[lp, 'left'], [rp, 'right']]) {
+        if (p && !grabbed) {
+          const o = hit(p.x, p.y);
+          if (o) {
+            // Slide parts across their work surface. Only the hat and lever
+            // need vertical travel. Pulling every object toward the camera
+            // made placement targets unreachable.
+            const lift = o.userData.tag === 'hardhat' || o.userData.tag === 'lever';
+            const center = new THREE.Box3().setFromObject(o).getCenter(new THREE.Vector3());
+            grabPlane.set(lift ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0),
+              lift ? -center.z : -center.y);
+            if (!cursor3D(p.x, p.y, hand3, grabPlane)) continue;
+            grabbed = o; grabSide = s; o.userData.freeLift = lift;
+            heldTool = (s === 'right' && o.userData.tag !== 'pipe' && o.userData.tag !== 'toolbox') ? o : null;
+            grabDepth = cam.position.distanceTo(o.position);
+            pullDepth = THREE.MathUtils.clamp(grabDepth * .72, .9, 2.5);   // pull it to your hand
+            grabOff.copy(o.position).sub(hand3);
+
+          }
+        }
+      }
+      if (grabbed && (grabSide === 'left' ? !lp : !rp)) {
+        grabbed = null; heldTool = null; grabSide = null;
+      }
+      if (grabbed) {
+        const p = grabSide === 'left' ? lp : rp;
+        if (p && cursor3D(p.x, p.y, hand3, grabPlane)) {
+          const next = hand3.add(grabOff);
+          next.x = THREE.MathUtils.clamp(next.x, -5, 5);
+          next.z = THREE.MathUtils.clamp(next.z, -6.2, -1.25);
+          if (grabbed.userData.freeLift) next.y = THREE.MathUtils.clamp(next.y, -2.5, .35);
+          grabbed.position.copy(next);
+        }
+        const hr = handsOf(hs).find(h => h.side === grabSide && h.lm?.length >= 21);
+        if (hr) {
+          const w = hr.lm[0], k9 = hr.lm[9];
+          const ang = Math.atan2(k9.y - w.y, (1 - k9.x) - (1 - w.x));  // wrist→knuckles, mirrored
+          cam.getWorldDirection(camDir);
+          rollQ.setFromAxisAngle(camDir, ang + Math.PI / 2).multiply(tiltQ);
+          grabbed.quaternion.slerp(rollQ, .12);
+        }
+      }
+
+      if (job.id === 'don') {
+        // don the hard hat — pinch-carry it to your head (or just lift it
+        // high when there's no face track) → it stays on you in the peephole
+        if (hatObj && grabbed === hatObj) {
+          const p = grabSide === 'left' ? lp : rp;
+          let d = 9;
+          if (p && face?.state.found) {
+            const n = face.state.nose;
+            d = Math.hypot(p.x - n.x, p.y - (n.y - .16));       // just above the brow
+          }
+          elProg.style.width = `${Math.max(0, 100 - d * 500)}%`;
+          const lifted = grabbed.position.y > -0.85;            // no-face fallback
+          if (d < .15 || lifted) {
+            hatOn = true; hatObj.visible = false;
+            grabbed = null; heldTool = null; grabSide = null;
+            complete('PPE ON — head\'s covered');
+          }
+        }
+      }
+      if (job.id === 'fit') {
+        // pipe seated when its left end meets the seam center
+        if (pipeR) {
+          const bb = new THREE.Box3().setFromObject(pipeR);
+          const d = Math.abs(bb.min.x - 0.0);
+          elProg.style.width = `${Math.max(0, 100 - d * 400)}%`;
+          if (d < .06) { pipeR.position.x -= bb.min.x; complete('SEAM SEATED — nice fit-up'); }
+        }
+      }
+      if (job.id === 'weld') {
+        if (rp && cursor3D(rp.x, rp.y, hand3)) {
+          const d = hand3.distanceTo(seam.position);
+          sparkAt.copy(seam.position);
+          if (d < .28) {
+            weldProg += 2.5; arcLight.intensity = 5 + Math.random() * 4;
+            arcLight.position.copy(seam.position).z += .15;
+            if (Math.random() < .35) burst();
+            elProg.style.width = `${Math.min(100, weldProg)}%`;
+            if (weldProg >= 100) complete('TACKED — solid arc');
+          } else arcLight.intensity = 0;
+        } else arcLight.intensity = 0;
+      }
+      if (job.id === 'drill') {
+        const ok = heldTool === M.drill || grabbed?.userData.tag === 'drill';
+        if (ok && rp && cursor3D(rp.x, rp.y, hand3)) {
+          const d = hand3.distanceTo(hole.position);
+          sparkAt.copy(hole.position);
+          if (d < .22) {
+            drillProg += 3; if (Math.random() < .3) burst();
+            arcLight.intensity = 2; arcLight.position.copy(hole.position).y += .1;
+            elProg.style.width = `${Math.min(100, drillProg)}%`;
+            if (drillProg >= 100) { hole.material.color.set(0x1a140f); complete('HOLE PUNCHED — true center'); }
+          } else arcLight.intensity = 0;
+        }
+      }
+      if (job.id === 'cogs') {
+        // cog-b seats when it lands within mesh distance of cog-a
+        if (cogAObj && cogBObj && !jobDone) {
+          const d = cogBObj.position.distanceTo(cogAObj.position);
+          elProg.style.width = `${Math.max(0, 100 - Math.max(0, d - .16) * 300)}%`;
+          if (d < .16) {
+            cogBObj.position.copy(cogAObj.position).x += .17;
+            cogBObj.userData.grab = false;
+            complete('GEARS MESHED — drives turning');
+          }
+        }
+      }
+      if (job.id === 'lever') {
+        // pull the lever down past throw → the line powers up
+        if (leverObj && !jobDone) {
+          const drop = leverHomeY - leverObj.position.y;
+          elProg.style.width = `${THREE.MathUtils.clamp(drop / .13, 0, 1) * 100}%`;
+          if (drop > .13 && !grabbed) {
+            leverFired = true; leverObj.rotation.x = -.55;
+            if (M['screen-hanging-wide']) M['screen-hanging-wide'].visible = true;
+            complete('LINE LIVE — power\'s on');
+          }
+        }
+      }
+      if (job.id === 'rivet') {
+        const ok = heldTool === hammerObj || grabbed?.userData.tag === 'hammer';
+        if (ok && rp && cursor3D(rp.x, rp.y, hand3)) {
+          const d = hand3.distanceTo(rivetRing.position);
+          sparkAt.copy(rivetRing.position);
+          if (d < .22) {
+            rivetProg += 3; if (Math.random() < .3) burst();
+            arcLight.intensity = 1.5; arcLight.position.copy(rivetRing.position).y += .1;
+            elProg.style.width = `${Math.min(100, rivetProg)}%`;
+            if (rivetProg >= 100) { rivetRing.material.color.set(0x1a140f); complete('RIVET SET — flush and true'); }
+          } else arcLight.intensity = 0;
+        }
+      }
+      if (job.id === 'stow') {
+        const tb = M.toolbox;
+        if (tb) {
+          const inZ = stowZone.containsPoint(tb.position);
+          elProg.style.width = inZ ? '100%' : '0%';
+          if (inZ) complete('STOWED — bench is clear');
+        }
+      }
+    };
+
+    /* ================= glove overlay ================= */
+    const hc = $('#hands'), hx = hc.getContext('2d');
+    const drawOverlay = (hs) => {
+      hx.clearRect(0, 0, hc.width, hc.height);
+      for (const hnd of handsOf(hs)) {
+        if (!hnd.lm) continue;
+        const P = hnd.lm.map(p => ({ x: (1 - p.x) * hc.width, y: p.y * hc.height }));
+        drawGlove(hx, P, {
+          kind: hnd.kind, side: hnd.side,
+          pinchAt: hnd.pinchAt ? { x: hnd.pinchAt.x * hc.width, y: hnd.pinchAt.y * hc.height } : null,
+        });
+      }
+      const cur = hs.pinch || hs.point;
+      if (cur) {
+        hx.beginPath(); hx.arc(cur.x * hc.width, cur.y * hc.height, hs.pinch ? 13 : 9, 0, 7);
+        hx.strokeStyle = hs.pinch ? '#d85c3a' : 'rgba(243,237,225,.85)';
+        hx.lineWidth = hs.pinch ? 3 : 2; hx.stroke();
+      }
+      // aim marker on the pointed-at prop + pull beam on a power grab
+      const proj = (o) => {
+        const v = o.getWorldPosition(new THREE.Vector3()).project(cam);
+        return v.z < 1 ? { x: (v.x + 1) / 2 * hc.width, y: (1 - v.y) / 2 * hc.height } : null;
+      };
+      // Keep the current action in view; future job targets stay quiet.
+      const task = JOBS[ji].id;
+      const focus = { don:hatObj, fit:pipeR, weld:seam, drill:M.drill, cogs:cogBObj, lever:leverObj, rivet:hammerObj, stow:M.toolbox };
+      const destination = { fit:seam, drill:hole, cogs:cogAObj, rivet:rivetRing, stow:stowRing };
+      const mark = (o, label, color) => {
+        if (!o || !o.visible || o.userData.parked) return;
+        const v = new THREE.Box3().setFromObject(o).getCenter(new THREE.Vector3()).project(cam);
+        if (v.z < -1 || v.z > 1) return;
+        const x = (v.x + 1) * .5 * hc.width, y = (1 - v.y) * .5 * hc.height;
+        if (x < 22 || x > hc.width - 22 || y < 200 || y > hc.height - 45) return;
+        const pulse = 18 + Math.sin(performance.now() / 320) * 3;
+        hx.beginPath(); hx.arc(x, y, pulse, 0, Math.PI * 2);
+        hx.strokeStyle = color; hx.lineWidth = 2.5; hx.stroke();
+        hx.font = '700 11px system-ui'; hx.textAlign = 'center';
+        const w = hx.measureText(label).width + 18;
+        hx.fillStyle = 'rgba(15,20,19,.84)'; hx.fillRect(x - w/2, y - 46, w, 21);
+        hx.fillStyle = color; hx.fillText(label, x, y - 31); hx.textAlign = 'start';
+      };
+      if (!jobDone) {
+        mark(focus[task], 'GRAB / WORK', '#ffe0a0');
+        if (destination[task] !== focus[task]) mark(destination[task], 'PLACE / TARGET', '#a5eac3');
+      }
+      if (aimed) {
+        const a = proj(aimed);
+        if (a) {
+          hx.setLineDash([4, 4]); hx.beginPath(); hx.arc(a.x, a.y, 16, 0, 7);
+          hx.strokeStyle = '#d8b06a'; hx.lineWidth = 2; hx.stroke(); hx.setLineDash([]);
+          hx.font = '600 9px system-ui'; hx.fillStyle = '#d8b06a';
+          hx.fillText('FIST TO PULL', a.x - 30, a.y - 22);
+        }
+      }
+      if (powerObj && powerPos) {
+        const a = proj(powerObj), px = { x: powerPos.x * hc.width, y: powerPos.y * hc.height };
+        if (a) {
+          hx.setLineDash([6, 5]); hx.beginPath(); hx.moveTo(px.x, px.y); hx.lineTo(a.x, a.y);
+          hx.strokeStyle = 'rgba(159,212,255,.8)'; hx.lineWidth = 2; hx.stroke(); hx.setLineDash([]);
+        }
+      }
+    };
+
+    /* nose dot + donned hard hat on the peephole */
+    let hatOn = false;
+    const nc = $('[data-nose]'), nx = nc.getContext('2d');
+    const noseDot = () => {
+      const w = nc.width = nc.clientWidth, h = nc.height = nc.clientHeight;
+      nx.clearRect(0, 0, w, h);
+      if (face?.state.found) {
+        nx.beginPath(); nx.arc(face.state.nose.x * w, face.state.nose.y * h, 4, 0, 7);
+        nx.fillStyle = '#d85c3a'; nx.fill();
+        if (hatOn) {
+          // cartoon hard hat riding the top of your head — AR'd onto you
+          const cx = face.state.center.x * w;
+          const top = (face.state.center.y - face.state.size * .52) * h;
+          const hw = face.state.size * w * .5;
+          nx.save(); nx.translate(cx, top);
+          nx.beginPath(); nx.ellipse(0, 2, hw, hw * .26, 0, 0, 7);          // brim
+          nx.fillStyle = '#e8c832'; nx.fill();
+          nx.strokeStyle = '#33291d'; nx.lineWidth = 1.6; nx.stroke();
+          nx.beginPath(); nx.arc(0, 0, hw * .82, Math.PI, 0);                // dome
+          nx.fillStyle = '#f0d83f'; nx.fill(); nx.stroke();
+          nx.beginPath(); nx.moveTo(-hw * .28, -hw * .72); nx.lineTo(hw * .28, -hw * .72);
+          nx.lineTo(hw * .28, -hw * .5); nx.lineTo(-hw * .28, -hw * .5);
+          nx.closePath(); nx.fillStyle = '#f0d83f'; nx.fill(); nx.stroke();  // ridge
+          nx.restore();
+        }
+      }
+    };
+
+    /* ================= pointer controls ================= */
+    // Click and drag works with no camera and is also available alongside hand
+    // tracking. Shift-drag looks around; left/right drag act as the two hands.
+    let orbit = null, mouseSide = null;
+    const mouse = { x: .5, y: .5, active: false };
+    const mouseHands = () => {
+      const p = { x: mouse.x, y: mouse.y };
+      const h = mouseSide ? { side: mouseSide, kind: 'pinch', pinchAt: p } : null;
+      return { hands: h ? [h] : [], pinch: mouseSide ? p : null };
+    };
+    cvs.addEventListener('contextmenu', e => e.preventDefault());
+    cvs.addEventListener('pointerdown', e => {
+      cvs.setPointerCapture(e.pointerId);
+      mouse.x = e.clientX / innerWidth; mouse.y = e.clientY / innerHeight;
+      mouse.active = true;
+      if (e.shiftKey || e.button === 1) orbit = { x: e.clientX, y: e.clientY };
+      else mouseSide = e.button === 2 ? 'right' : 'left';
+    });
+    cvs.addEventListener('pointermove', e => {
+      mouse.x = e.clientX / innerWidth; mouse.y = e.clientY / innerHeight;
+      if (orbit) {
+        tgt.yaw = THREE.MathUtils.clamp(tgt.yaw - (e.clientX - orbit.x) * .22, -55, 55);
+        tgt.pitch = THREE.MathUtils.clamp(tgt.pitch + (e.clientY - orbit.y) * .16, -40, 26);
+        orbit = { x: e.clientX, y: e.clientY };
+      }
+    });
+    const releaseMouse = () => { mouseSide = null; orbit = null; };
+    cvs.addEventListener('pointerup', releaseMouse);
+    cvs.addEventListener('pointercancel', releaseMouse);
+    addEventListener('keydown', e => {
+      if (e.key === 'c' || e.key === 'C') {
+        noseRef = savedRef = null; hadRef = false;
+        tgt.yaw = taskView[JOBS[ji].id].yaw; tgt.pitch = BASE_PITCH;
+      }
+    });
+
+    /* ================= loop ================= */
+    function resize() {
+      ren.setSize(innerWidth, innerHeight);
+      cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix();
+      hc.width = innerWidth; hc.height = innerHeight;
+    }
+    addEventListener('resize', resize); resize();
+
+    let last = performance.now(), fpsN = 0, fpsT = last;
+    function loop() {
+      requestAnimationFrame(loop);
+      const now = performance.now(), dt = Math.min(.05, (now - last) / 1000); last = now;
+      if (framedJob !== ji) {
+        const frame = taskView[JOBS[ji].id];
+        tgt.yaw = frame.yaw; tgt.pitch = BASE_PITCH; tgt.fov = frame.fov;
+        framedJob = ji;
+      }
+      noseTick(); noseDot();
+      const hs = window.__forceHands || (mouseSide ? mouseHands() : hands?.state || mouseHands());
+      jobTick(hs); drawOverlay(hs);
+      sparkTick(dt); popTick();
+      const k = .14;
+      view.yaw += (tgt.yaw - view.yaw) * k; view.pitch += (tgt.pitch - view.pitch) * k;
+      view.fov += (THREE.MathUtils.clamp(tgt.fov, 55, 100) - view.fov) * k;
+      cam.fov = innerWidth < 700 ? Math.min(115, view.fov + 46) : view.fov;
+      cam.updateProjectionMatrix();
+      const phi = THREE.MathUtils.degToRad(90 - view.pitch), th = THREE.MathUtils.degToRad(view.yaw);
+      cam.lookAt(Math.sin(phi) * Math.sin(th), Math.cos(phi), -Math.sin(phi) * Math.cos(th));
+      seam.material.opacity = .5 + Math.sin(now / 300) * .3;
+      hole.material.opacity = .6 + Math.sin(now / 300) * .3;
+      stowRing.material.opacity = .5 + Math.sin(now / 300) * .3;
+      seam.visible = ['fit','weld'].includes(JOBS[ji].id);
+      hole.visible = JOBS[ji].id === 'drill';
+      rivetRing.visible = JOBS[ji].id === 'rivet';
+      stowRing.visible = JOBS[ji].id === 'stow';
+      ren.render(scene, cam);
+      if (++fpsN === 60) { const f = Math.round(60000 / (now - fpsT)); fpsN = 0; fpsT = now;
+        if (face) status.textContent = `face · ${face.delegate} · ${f} fps`; }
+    }
+    loop();
+    window.__job = { THREE, view: tgt, scene, set, grabbables, setJob, complete, award, cam,
+      get face() { return face; }, get hands() { return hands; },
+      get grabbed() { return grabbed; }, get aimed() { return aimed; },
+      get powerObj() { return powerObj; },
+      setJob: (i) => { weldProg = drillProg = rivetProg = 0; setJob(i); } };
+  </script>
+</body>
+</html>
