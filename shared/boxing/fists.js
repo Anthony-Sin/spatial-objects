@@ -6,7 +6,8 @@
                        kind ∈ 'jab'(left) 'cross'(right) 'hook' 'uppercut'
        fists.guard     {left:0..1, right:0..1}  glove-up-ness per side
        fists.sway      -1..1 head lean vs calibrated center (+ = screen right)
-     fists.calibrate() call on a neutral pose ('C' key): re-zeros sway and
+       fists.duck      0..1 head drop below the neutral nose height
+     fists.calibrate() call on a neutral pose ('C' key): re-zeros sway/duck and
                        snaps span baselines so current hand size = reach 1
      fists.debug()     {span, reach, guard, sway, baseline, state}
 
@@ -60,6 +61,8 @@ export const TUNING = {
                         // ~400ms between a real head lean and the dodge)
   SWAY_SMOOTH: 15,      // /s — sway EMA
   SWAY_RANGE: .13,      // nose-x units of lean that map to ±1
+  DUCK_LO: .035,        // nose-y drop ignored (posture drift / nodding)
+  DUCK_RANGE: .09,      // further nose-y drop that maps to duck 1
   DT_MAX: .1,           // s — clamp dt (tab-switch spikes)
 };
 
@@ -75,11 +78,13 @@ export class FistTracker {
     this.guard = { left: 0, right: 0 };
     this.reach = { left: 1, right: 1 };     // live view — overlay reads this instead of debug()
     this.sway = 0;
+    this.duck = 0;
     this._pick = { left: null, right: null };   // one pick pass instead of find() per side
     this._t = 0;
     this._s = { left: this._blank(), right: this._blank() };
     this._nose = { x: .5, y: .5 };          // smoothed nose (guard band + sway)
     this._cx = .5;                          // calibrated sway center
+    this._cy = null;                        // neutral nose height — first face sighting
     this._faceSize = 0;
   }
 
@@ -129,8 +134,12 @@ export class FistTracker {
         ? ema(this._faceSize, f.size, T.FACE_SMOOTH, dt) : f.size;
       const lean = clamp((this._nose.x - this._cx) / T.SWAY_RANGE, -1, 1);
       this.sway = ema(this.sway, lean, T.SWAY_SMOOTH, dt);
+      if (this._cy === null) this._cy = f.nose.y;
+      const drop = clamp((this._nose.y - this._cy - T.DUCK_LO) / T.DUCK_RANGE, 0, 1);
+      this.duck = ema(this.duck, drop, T.SWAY_SMOOTH, dt);
     } else {
       this.sway = ema(this.sway, 0, T.SWAY_SMOOTH * .5, dt);
+      this.duck = ema(this.duck, 0, T.SWAY_SMOOTH * .5, dt);
     }
 
     // ---- hands ------------------------------------------------------------
@@ -259,7 +268,8 @@ export class FistTracker {
   calibrate() {
     // neutral pose snapshot: sway re-centers, current span becomes rest size
     this._cx = this._nose.x;
-    this.sway = 0;
+    if (this._cy !== null) this._cy = this._nose.y;   // no face yet → keep auto-pick
+    this.sway = 0; this.duck = 0;
     for (const side of SIDES) {
       const S = this._s[side];
       if (S.seen && S.lastSpan > this.T.MIN_SPAN) {
@@ -276,6 +286,7 @@ export class FistTracker {
       reach: r({ left: this._s.left.reach, right: this._s.right.reach }),
       guard: { ...this.guard },
       sway: this.sway,
+      duck: this.duck,
       baseline: r({ left: this._s.left.baseline, right: this._s.right.baseline }),
       state: r({ left: this._s.left.state, right: this._s.right.state }),
     };

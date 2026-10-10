@@ -2,14 +2,24 @@
    runs in plain node so tests can drive it with scripted inputs.
 
      const f = new Fight({ seed: 7 });
-     f.step(dt, { punches, guard, sway, distance });   // every frame
+     f.step(dt, { punches, guard, sway, duck, dodge, distance });   // every frame
      f.state.phase / f.state.events / f.npcDir()
 
    inputs:
      punches  [{kind:'jab'|'cross'|'hook'|'uppercut', side, power:0..1}] — drained
      guard    {left:0..1, right:0..1}
-     sway     -1..1 head lean; |sway|>=dodgeT at npc impact = clean dodge
+     sway     -1..1 head lean; a FRESH lean past dodgeT starts a slip
+     duck     0..1 head drop; a fresh duck past dodgeT starts a duck
+     dodge    -1|0|1 explicit slip trigger (keyboard)
      distance world-units gap between fighters (from RingSim)
+
+   DODGING is a move, not a pose: a slip/duck grants dodgeWin of i-frames,
+   then a dodgeCd reset (spam = exposed). PIP aims at a lean/duck you are
+   already HOLDING when it winds up, so you have to move on the telegraph.
+   Starting the dodge within perfectWin of impact = PERFECT: PIP reels
+   ('stunned') and every glove you land shaves the stun — a free flurry.
+   Ducking into an uppercut eats duckUpperMul damage. A dodged swing
+   leaves PIP 'whiff' (off-balance, open). Landed swings may chain combos.
 
    NPC personality: PIP is a showboat. Loop = circle for an angle → press in →
    telegraphed windup → swing → recover, with taunts when it's feeling cocky,
@@ -50,14 +60,26 @@ export const TUNING = {
                                                           // readable anticipation;
                                                           // the SWING stays .22 so
                                                           // releases still feel fast
-  punchDur: .22,        // npc swing length
-  hitAt: .45,           // impact lands this far (t01) through the swing
+  punchDur: .26,        // npc swing length — long enough to SEE the glove come in
+  hitAt: .5,            // impact lands this far (t01) through the swing
+
+  dodgeWin: .5,         // a committed slip/duck keeps you out of the way this long
+  dodgeCd: .22,         // then a short reset before the next one — spam = exposed
+  perfectWin: .24,      // dodge started within this of impact = PERFECT
+  perfectStun: 1.4,     // PIP reels this long after a perfect dodge — free flurry
+  stunHitCost: .17,     // each flurry hit shaves this off the remaining stun
+  duckUpperMul: 1.35,   // ducking INTO an uppercut eats extra damage
+  comboChance: .4,      // chance a landed/blocked swing chains another
+  comboRage: .35,       // extra chain chance at full rage
+  comboWindup: .32,     // follow-up telegraph — shorter, the real dodge test
+  comboMax: 3,          // longest chain (swings) PIP will throw
 
   stamCost: { jab: .10, cross: .16, hook: .18, uppercut: .22 },
   stamRegen: .28,       // player stamina per second
   exhaustMul: .35,      // an exhausted whiff still burns cost*this
-  npcCost: .3,          // npc stamina per swing — combos genuinely drain it
-  npcRegen: .1,         // slow enough that burst fatigue is reachable
+  npcCost: .2,          // npc stamina per swing (follow-ups .6×) — combos genuinely drain it
+  npcRegen: .15,        // slow enough that burst fatigue is reachable, fast enough
+                        // that PIP isn't gassed (and passive) for the whole fight
 
   gassedT: .3,          // below this stamina a fighter is 'gassed' (state flag)
   gassedHyst: .15,      // stay gassed until stamina climbs back past gassedT+this
@@ -89,7 +111,7 @@ export const TUNING = {
   counterWindow: 1.0,  // a block or slip opens a short reply window
   counterDamage: 1.35,
   tiltDecay: .7,        // tilt (recent player hits) fades per second
-  score: { hitMul: 5, block: 15, dodge: 30, ko: 500, decision: 300 },
+  score: { hitMul: 5, block: 15, dodge: 30, perfect: 80, ko: 500, decision: 300 },
 };
 
 // deterministic PRNG — no Math.random anywhere in this file
@@ -110,7 +132,8 @@ export class Fight {
     this.state = {
       phase: 'intro', round: 0, timeLeft: this.opts.roundLen,
       player: { hp: 0, maxHp: 0, stamina: 1, score: 0, combo: 0, bestCombo: 0,
-        counterT: 0, status: 'idle', hurtT: 0, gassed: false },
+        counterT: 0, status: 'idle', hurtT: 0, gassed: false,
+        dodge: { dir: null, t: 9, cd: 0 }, perfects: 0 },   // dir: 'left'|'right'|'duck'|null
       npc: { hp: 0, maxHp: 0, stamina: 1, name: '', action: 'idle', actionT: 0, telegraph: null, gassed: false },
       events: [],       // strings, cleared at the top of every step
       lastBlow: null,   // resolution details for the most recent punch
@@ -131,11 +154,16 @@ export class Fight {
     this._regenSlowT = 0;             // post-hit window where player regen stays slow
     this._tilt = 0;                   // recent player hits — rattles PIP
     this._celebrateCd = 0;
+    this._prevSway = 0; this._prevDuck = 0;   // dodge edge detection
+    this._aim = 0;                    // what PIP aimed at: -1|1 held lean, 'duck', 0
+    this._chain = 0;                  // swings thrown in the current combo
+    this._swing = null;               // how the live swing resolved: hit|blocked|dodged|perfect|whiff
     s.phase = 'intro'; s.round = 0; s.timeLeft = o.roundLen;
     s.events.length = 0; s.lastBlow = null;
     this._comboT = 0;
     Object.assign(s.player, { hp: o.playerHp, maxHp: o.playerHp, stamina: 1, score: 0,
-      combo: 0, bestCombo: 0, counterT: 0, status: 'idle', hurtT: 0, gassed: false });
+      combo: 0, bestCombo: 0, counterT: 0, status: 'idle', hurtT: 0, gassed: false,
+      dodge: { dir: null, t: 9, cd: 0 }, perfects: 0 });
     Object.assign(s.npc, { hp: o.npcHp, maxHp: o.npcHp, stamina: 1, name: o.npcName, action: 'idle', actionT: 0, telegraph: null, gassed: false });
   }
 
@@ -144,13 +172,30 @@ export class Fight {
     dt = Math.min(Math.max(+dt || 0, 0), .1);
     s.events.length = 0; s.lastBlow = null;
     const inp = this._inp || (this._inp = {   // persistent — same fields re-set each step
-      punches: [], guard: { left: 0, right: 0 }, sway: 0, distance: Infinity });
+      punches: [], guard: { left: 0, right: 0 }, sway: 0, duck: 0, dodge: 0, distance: Infinity });
     if (Array.isArray(inputs.punches)) inp.punches = inputs.punches;
     else inp.punches.length = 0;
     inp.guard.left = clamp(num(inputs.guard?.left, 0), 0, 1);
     inp.guard.right = clamp(num(inputs.guard?.right, 0), 0, 1);
     inp.sway = clamp(num(inputs.sway, 0), -1, 1);
+    inp.duck = clamp(num(inputs.duck, 0), 0, 1);
+    inp.dodge = Math.sign(num(inputs.dodge, 0));
     inp.distance = Number.isFinite(+inputs.distance) ? Math.max(0, +inputs.distance) : Infinity;
+
+    // dodge move clock: active window → cooldown → ready
+    const dg = p.dodge;
+    dg.t += dt;
+    if (dg.dir && dg.t >= T.dodgeWin) { dg.dir = null; dg.cd = T.dodgeCd; }
+    else if (!dg.dir && dg.cd > 0) dg.cd = Math.max(0, dg.cd - dt);
+    if (s.phase === 'fighting') {
+      // a FRESH lean / duck past dodgeT (or a key) commits a dodge
+      const swEdge = Math.abs(inp.sway) >= T.dodgeT && Math.abs(this._prevSway) < T.dodgeT;
+      const dkEdge = inp.duck >= T.dodgeT && this._prevDuck < T.dodgeT;
+      if (inp.dodge) this._startDodge(inp.dodge < 0 ? 'left' : 'right');
+      else if (dkEdge) this._startDodge('duck');
+      else if (swEdge) this._startDodge(inp.sway < 0 ? 'left' : 'right');
+    }
+    this._prevSway = inp.sway; this._prevDuck = inp.duck;
 
     // meters and flinch timers tick in every phase. Regen is REAL: it crawls
     // while you're punching/recovering and for hurtRegenT after taking a hit,
@@ -196,6 +241,7 @@ export class Fight {
 
     p.status = p.hp <= 0 ? 'down'
       : p.hurtT > 0 ? 'hurt'
+      : p.dodge.dir ? 'dodging'
       : this._punchT > 0 ? 'punching'
       : Math.max(inp.guard.left, inp.guard.right) >= T.guardT ? 'blocking'
       : 'idle';
@@ -218,6 +264,12 @@ export class Fight {
   /* ---------- internals ---------- */
 
   _emit(e) { this.state.events.push(e); }
+  _startDodge(dir) {   // ignored mid-dodge or during the reset — no spamming
+    const dg = this.state.player.dodge;
+    if (dg.dir || dg.cd > 0 || this.state.player.hp <= 0) return;
+    dg.dir = dir; dg.t = 0;
+    this._emit('player-dodge');
+  }
   _rage() { const n = this.state.npc; return n.maxHp > 0 ? 1 - n.hp / n.maxHp : 0; }
   _idle() { return (TUNING.idleMin + this._rng() * TUNING.idleVar) * (1 - .4 * this._rage()); }
   _circle() { return TUNING.circleMin + this._rng() * TUNING.circleVar; }
@@ -301,10 +353,13 @@ export class Fight {
     const evasive = n.action === 'circle' || n.action === 'retreat';
     if (evasive && this._rng() < T.slipBase + T.slipRage * this._rage())
       return this._whiff(pn, 'slipped');
+    // a perfect-dodged swing is still finishing — PIP is already reeling
+    if (n.action === 'punch' && this._swing === 'perfect') this._stun();
+    const flurry = n.action === 'stunned';
     // clean hit — interrupts whatever PIP was doing, windups included
     const counter = p.counterT > 0;
     const dmg = T.dmg[kind] * (T.powFloor + (1 - T.powFloor) * power)
-      * (counter ? T.counterDamage : 1);
+      * (counter || flurry ? T.counterDamage : 1);
     p.counterT = 0;
     p.combo = this._comboT > 0 ? p.combo + 1 : 1;
     p.bestCombo = Math.max(p.bestCombo, p.combo);
@@ -312,11 +367,16 @@ export class Fight {
     n.hp = Math.max(0, n.hp - dmg);
     p.score += Math.round(dmg * T.score.hitMul * (1 + Math.min(5, p.combo - 1) * .15));
     this._tilt += 1;
-    s.lastBlow = { who: 'player', kind, dmg, result: 'hit', counter, combo: p.combo };
+    s.lastBlow = { who: 'player', kind, dmg, result: 'hit', counter, combo: p.combo, flurry };
     if (counter) this._emit('counter');
     this._emit('player-hit'); this._emit('npc-hit');
     if (n.hp <= 0) return this._ko('npc');
+    if (flurry) {   // no i-frames while reeling — every glove shaves the stun
+      this._actFor = Math.max(n.actionT + .08, this._actFor - T.stunHitCost);
+      return;
+    }
     n.action = 'hurt'; n.actionT = 0; n.telegraph = null;
+    this._chain = 0;
   }
 
   _whiff(pn, reason) {
@@ -360,6 +420,9 @@ export class Fight {
       case 'celebrate':
         if (n.actionT >= T.celebrateT) this._setAct('idle', this._idle());
         break;
+      case 'whiff': case 'stunned':   // off-balance / reeling — wide open
+        if (n.actionT >= this._actFor) this._setAct('idle', this._idle());
+        break;
       case 'windup':
         n.telegraph.t01 = Math.min(1, n.actionT / this._windupFor);
         if (n.telegraph.t01 >= 1) {   // committed — the swing comes out
@@ -375,48 +438,96 @@ export class Fight {
           this._impacted = true;
           this._impact(inp);
         }
-        // a dodged or whiffed swing leaves PIP off-balance longer (whiffT)
-        if (n.action === 'punch' && n.actionT >= T.punchDur)
-          this._setAct('idle', this._landed ? T.recoverT : T.whiffT);
+        if (n.action === 'punch' && n.actionT >= T.punchDur) this._afterSwing(inp);
         break;
       // 'down' — out cold, nothing to decide
     }
   }
 
-  _windup() {
-    const T = TUNING, n = this.state.npc, rage = this._rage();
-    const r = this._rng();
-    const kind = r < .5 - .1 * rage ? 'jab' : r < .8 ? 'hook' : 'upper';
-    const side = kind === 'jab' ? (this._rng() < .8 ? 'left' : 'right')
+  _stun() {
+    const n = this.state.npc;
+    this._chain = 0; this._swing = null;
+    this._setAct('stunned', TUNING.perfectStun);
+    n.stamina = Math.max(0, n.stamina - .1);
+  }
+
+  // what the swing did decides PIP's next beat: reel, stumble, chain, or reset
+  _afterSwing(inp) {
+    const T = TUNING, n = this.state.npc;
+    const res = this._swing; this._swing = null;
+    if (res === 'perfect') return this._stun();
+    if (res !== 'hit' && res !== 'blocked') {   // dodged / swung at air
+      this._chain = 0;
+      return this._setAct('whiff', T.whiffT);   // off-balance — counter window
+    }
+    if (this._chain < T.comboMax - 1 && !n.gassed && inp.distance <= T.npcReach
+        && this._rng() < T.comboChance + T.comboRage * this._rage())
+      return this._windup(true);
+    this._chain = 0;
+    if (res === 'hit') this._taunt(.4);        // showboats over a clean shot
+    if (n.action === 'punch') this._setAct('idle', T.recoverT);
+  }
+
+  _windup(combo = false) {
+    const T = TUNING, n = this.state.npc, rage = this._rage(), inp = this._inp;
+    const prev = this._pk.kind, r = this._rng();
+    // PIP reads a HELD duck and digs an uppercut; combos follow real patterns
+    const ducking = inp && inp.duck >= T.dodgeT;
+    let kind = ducking && this._rng() < .7 ? 'upper'
+      : combo ? (prev === 'jab' ? (r < .55 ? 'jab' : 'hook')
+        : prev === 'hook' ? (r < .6 ? 'upper' : 'hook') : 'jab')
+      : r < .5 - .1 * rage ? 'jab' : r < .8 ? 'hook' : 'upper';
+    // combos alternate hands (hook→hook switches sides, the classic double)
+    const side = combo && kind === 'hook' && prev === 'hook'
+      ? (this._pk.side === 'left' ? 'right' : 'left')
+      : kind === 'jab' ? (this._rng() < .8 ? 'left' : 'right')
       : kind === 'upper' ? (this._rng() < .7 ? 'right' : 'left')
       : (this._rng() < .5 ? 'left' : 'right');
-    n.stamina = Math.max(0, n.stamina - T.npcCost);
-    this._windupFor = T.windup[kind] * (1 - T.rageSpeed * rage)
+    // aim where the head IS — holding a lean/duck through the telegraph gets you tagged
+    this._aim = inp && Math.abs(inp.sway) >= T.dodgeT ? Math.sign(inp.sway)
+      : ducking ? 'duck' : 0;
+    this._chain = combo ? this._chain + 1 : 0;
+    n.stamina = Math.max(0, n.stamina - T.npcCost * (combo ? .6 : 1));
+    this._windupFor = (combo ? T.comboWindup : T.windup[kind]) * (1 - T.rageSpeed * rage)
       * (n.gassed ? T.gasWindup : 1);   // tired arms telegraph slower
     this._pk = { kind, side };
     n.action = 'windup'; n.actionT = 0;
-    n.telegraph = { kind, side, t01: 0 };   // side = PIP's glove (mirrored on screen)
+    n.telegraph = { kind, side, t01: 0, combo: this._chain };   // side = PIP's glove (mirrored on screen)
+  }
+
+  // did the player get out of the way? → 'left'|'right'|'duck'|null (+ perfect)
+  _dodgeAt(inp) {
+    const T = TUNING, dg = this.state.player.dodge;
+    if (dg.dir) return { dir: dg.dir, perfect: dg.t <= T.perfectWin };
+    if (Math.abs(inp.sway) >= T.dodgeT && Math.sign(inp.sway) !== this._aim)
+      return { dir: inp.sway < 0 ? 'left' : 'right', perfect: false };
+    if (inp.duck >= T.dodgeT && this._aim !== 'duck') return { dir: 'duck', perfect: false };
+    return null;
   }
 
   _impact(inp) {
     const s = this.state, T = TUNING, p = s.player;
     const { kind, side } = this._pk;
     this._landed = false;
+    this._swing = 'whiff';
     s.lastBlow = { who: 'npc', kind, side, result: 'whiff' };
     if (inp.distance > T.npcReach) return;                    // swung at air
-    if (Math.abs(inp.sway) >= T.dodgeT) {                     // clean dodge
-      p.score += T.score.dodge;
-      p.counterT = T.counterWindow;
-      s.lastBlow.result = 'dodged';
+    const dz = this._dodgeAt(inp);
+    const duckedInto = dz?.dir === 'duck' && kind === 'upper';   // ducked INTO the uppercut
+    if (dz && !duckedInto) {                                  // clean dodge
+      p.score += dz.perfect ? T.score.perfect : T.score.dodge;
+      p.counterT = T.counterWindow * (dz.perfect ? 1.6 : 1);
+      s.lastBlow.result = 'dodged'; s.lastBlow.dodge = dz.dir; s.lastBlow.perfect = dz.perfect;
+      this._swing = dz.perfect ? 'perfect' : 'dodged';
       this._emit('player-dodged');
-      this._taunt(.35);                                       // hates looking silly
+      if (dz.perfect) { p.perfects++; this._emit('perfect-dodge'); }
       return;
     }
     // mirrored block — PIP's 'left' glove comes at the player's right side.
     // a gassed guard is sluggish: effective guard caps at gasGuard < guardT.
     const gCap = p.gassed ? T.gasGuard : 1;
-    const g = Math.min(side === 'left' ? inp.guard.right : inp.guard.left, gCap);
-    const dmg = T.npcDmg[kind];
+    const g = duckedInto ? 0 : Math.min(side === 'left' ? inp.guard.right : inp.guard.left, gCap);
+    const dmg = T.npcDmg[kind] * (duckedInto ? T.duckUpperMul : 1);
     this._landed = true;
     this._regenSlowT = T.hurtRegenT;        // getting tagged stalls your regen
     if (g >= T.guardT) {
@@ -425,14 +536,16 @@ export class Fight {
       p.score += T.score.block;
       p.counterT = T.counterWindow;
       s.lastBlow.result = 'blocked'; s.lastBlow.dmg = dmg * T.blockMul;
+      this._swing = 'blocked';
       this._emit('player-blocked');
     } else {
       p.combo = 0; this._comboT = 0; p.counterT = 0;
       p.hp = Math.max(0, p.hp - dmg);
-      p.hurtT = T.hurtT;
+      p.hurtT = T.hurtT * (duckedInto ? 1.5 : 1);
       s.lastBlow.result = 'hit'; s.lastBlow.dmg = dmg;
+      if (duckedInto) s.lastBlow.reason = 'ducked-into';
+      this._swing = 'hit';
       this._emit('player-hit-taken');
-      this._taunt(.4);
     }
     if (p.hp <= 0) this._ko('player');
   }

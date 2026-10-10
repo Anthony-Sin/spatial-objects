@@ -26,6 +26,8 @@ export const EVENT_SFX = {
   'npc-blocked': 'thud',        // player punch eats PIP's gloves
   'player-blocked': 'thud',     // guard absorbs PIP's swing
   'player-dodged': 'dodge',     // clean head-movement whoosh
+  'player-dodge': 'whoosh',     // your own slip/duck — a soft body-move swish
+  'perfect-dodge': 'dodge',     // + bullet-time shimmer and a low slow-mo bwoom
   'counter': 'dodge',           // bright cue on the reply punch
   'player-hit-taken': 'hurt',   // heavy low thud + little "oof" chirp
   'ko': 'ko',                   // buzzer + slow-mo pitch drop + crowd swell
@@ -112,6 +114,11 @@ export class BoxingAudio {
         return this.play('hurt', { dmg: b.dmg });
       case 'player-dodged': case 'counter':
         return this.play('dodge');
+      case 'player-dodge':
+        return this.play('whoosh', { kind: 'jab', miss: true, peak: .45 });
+      case 'perfect-dodge':
+        this._crowdLevel = Math.min(1, this._crowdLevel + .6);   // the crowd GASPS
+        return this.play('dodge', { perfect: true });
       case 'round-start':
         return this.play('bell', { times: 3 });
       case 'ko':
@@ -171,7 +178,7 @@ export class BoxingAudio {
 
   _whoosh(o) {   // filtered noise burst; kind pitches it, miss = airier
     const w = WHOOSH[o.kind] || WHOOSH.cross;
-    const p = o.miss ? .5 : 1;
+    const p = (o.miss ? .5 : 1) * (o.peak ?? 1);
     this._noise({
       f0: w.f0 * (o.miss ? 1.3 : 1), f1: w.f1, q: 1.1,
       dur: w.dur * (o.miss ? 1.15 : 1), peak: w.peak * p, delay: o.delay,
@@ -193,6 +200,11 @@ export class BoxingAudio {
 
   _dodge(o) {   // airy slip whoosh — faster, thinner, brighter tail
     this._noise({ f0: 900, f1: 2600, dur: .22, peak: .26, q: 2, type: 'bandpass', delay: o.delay });
+    if (!o.perfect) return;
+    // PERFECT: a slowed glove rushing past + rising sparkle ding
+    this._noise({ f0: 380, f1: 120, dur: .6, peak: .3, q: 1.4, type: 'bandpass', delay: o.delay });
+    this._tone({ type: 'sine', f0: 90, f1: 42, dur: .55, peak: .32, delay: o.delay });
+    this._fm({ f: 1318.5, f1: 1975.5, ratio: 2, idx: 1.8, dur: .45, peak: .2, delay: o.delay + .06 });
   }
 
   _hurt(o) {   // player eats it: heavy low thud + a little FM "oof" bark
@@ -200,6 +212,9 @@ export class BoxingAudio {
     this._tone({ type: 'sine', f0: 110, f1: 45, dur: .22, peak: .5 * p, delay: o.delay });
     this._noise({ f0: 700, f1: 200, dur: .1, peak: .3, type: 'lowpass', delay: o.delay });
     this._fm({ f: 220, f1: 130, ratio: 2.4, idx: 3, dur: .12, peak: .16, delay: o.delay + .02 });
+    // heavy shot → ears ring: a thin high whine that fades over a second
+    if ((o.dmg || 0) >= 12)
+      this._tone({ type: 'sine', f0: 3150, f1: 2950, dur: 1.3, peak: .05, a: .04, delay: o.delay + .06 });
   }
 
   _ko(o) {   // buzzer + slow-mo pitch drop; crowd swell rides _crowdLevel

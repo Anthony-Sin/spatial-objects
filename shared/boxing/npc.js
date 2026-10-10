@@ -13,10 +13,13 @@
      · protoBoxer module itself missing → tiny built-in emergency boxer so
        the page still runs pre-merge. Default pick = 'bubble'.
 
-   npc.update(dt, { pos:{x,z}, target:{x,z}, npc: fight.state.npc }) places
-   the fighter, faces it at the player and maps fight action + telegraph
-   onto poses: windup = lean back (brows are protoBoxer's job), down =
-   flatten, punch kind jab|hook|upper → jab|hook|cross.
+   npc.update(dt, { pos:{x,z}, target:{x,z}, npc: fight.state.npc, strike })
+   places the fighter, faces it at the player and maps fight action +
+   telegraph onto poses: windup = kind-specific tell, down = flatten,
+   punch kind jab|hook|upper → jab|hook|upper, stunned/whiff → reel/stumble.
+   strike = {reach, y} (npc-local lens target from game.js): while set, the
+   punching glove flies at the camera — and stays planted there through a
+   landed-hit hold even after the fight state has moved on.
 */
 
 const pickId = () => {
@@ -57,7 +60,11 @@ function makeRig(THREE, inner) {
     hurt:      { rx: -.16, rz: .3,  sy: .93, y: 0,  z: -.1 },
     down:      { rx: -1.35,rz: 0,   sy: .62, y: .06,z: -.25 },
     celebrate: { rx: 0,    rz: 0,   sy: 1.05,y: 0,  z: 0 },
+    stunned:   { rx: -.12, rz: .18, sy: .92, y: 0,  z: -.04 },
+    whiff:     { rx: .24,  rz: -.1, sy: .97, y: 0,  z: .14 },
   };
+  POSES.upper = POSES.cross;
+  for (const k of ['windup', 'jab', 'cross', 'hook', 'upper']) POSES[k + 'L'] = POSES[k];
   const FIELDS = ['rx', 'rz', 'sy', 'y', 'z'];
   return {
     group: rig,
@@ -93,12 +100,16 @@ const CLIP_FOR = {
   windup:    ['idle-attack', 'windup', 'block', 'guard'],
   block:     ['block', 'guard', 'idle'],
   idle:      ['idle', 'rest', 'breath', 'stand'],
+  stunned:   ['dizzy', 'stun', 'hit', 'hurt'],
+  whiff:     ['stumble', 'trip', 'hit', 'idle'],
 };
+CLIP_FOR.upper = ['uppercut', 'upper', ...CLIP_FOR.cross];
 // mirrored proto poses reuse the same clips — GLB can't mirror, base is close enough
 CLIP_FOR.windupL = CLIP_FOR.windup; CLIP_FOR.jabL = CLIP_FOR.jab;
 CLIP_FOR.hookL = CLIP_FOR.hook;     CLIP_FOR.crossL = CLIP_FOR.cross;
-const ONCE = new Set(['jab', 'cross', 'hook', 'down', 'hurt', 'celebrate',
-  'jabL', 'crossL', 'hookL']);
+CLIP_FOR.upperL = CLIP_FOR.upper;
+const ONCE = new Set(['jab', 'cross', 'hook', 'upper', 'down', 'hurt', 'celebrate',
+  'jabL', 'crossL', 'hookL', 'upperL', 'whiff']);
 const pickClip = (clips, pose) => {
   for (const kw of CLIP_FOR[pose] || CLIP_FOR.idle) {
     const c = clips.find(c => c.name.toLowerCase().includes(kw));
@@ -194,21 +205,28 @@ function emergency(THREE) {
 const PUNCH_POSE = {
   jab:   { left: 'jabL',  right: 'jab' },
   hook:  { left: 'hookL', right: 'hook' },
-  upper: { left: 'cross', right: 'crossL' },
+  upper: { left: 'upper', right: 'upperL' },
 };
 const ACT = { name: 'idle', t01: 0 };
-function mapAction(npc) {
+const punchPose = npc => PUNCH_POSE[npc._seenKind]?.[npc._seenSide] || 'jab';
+function mapAction(npc, striking) {
   const A = ACT;
   if (!npc) { A.name = 'idle'; A.t01 = 0; return A; }
   const t = Math.min(1, (npc.actionT || 0) / .45);
+  // a glove still planted on the lens / sailing past it holds the punch pose
+  if (striking && npc.action !== 'punch' && npc.action !== 'hurt' && npc.action !== 'down') {
+    A.name = punchPose(npc); A.t01 = .5; return A;
+  }
   switch (npc.action) {
     case 'windup':    A.name = npc.telegraph?.side === 'right' ? 'windupL' : 'windup';
       A.t01 = npc.telegraph?.t01 ?? t; break;
-    case 'punch':     A.name = PUNCH_POSE[npc._seenKind]?.[npc._seenSide] || 'jab'; A.t01 = t; break;
+    case 'punch':     A.name = punchPose(npc); A.t01 = t; break;
     case 'block':     A.name = 'block';     A.t01 = t; break;
     case 'hurt':      A.name = 'hurt';      A.t01 = t; break;
     case 'down':      A.name = 'down';      A.t01 = Math.min(1, (npc.actionT || 0) / .6); break;
     case 'celebrate': A.name = 'celebrate'; A.t01 = t; break;
+    case 'stunned':   A.name = 'stunned';   A.t01 = npc.actionT || 0; break;   // cyclic wobble
+    case 'whiff':     A.name = 'whiff';     A.t01 = t; break;
     default:          A.name = 'idle';      A.t01 = 0;
   }
   return A;
@@ -254,12 +272,16 @@ export async function createNpc(THREE, opts = {}) {
     }
   });
   let dmgCur = 0;
+  // fighters with modelled wounds (protoBoxer) only need a light flush — the
+  // shiner/lump/bandage carry the story; GLBs get the full bruise wash
+  const wash = impl.setDamage ? .45 : 1;
   function setDamage(frac) {                      // frac 0..1 = hp fraction lost
     frac = Math.min(1, frac);
     if (frac <= dmgCur) return;                   // monotone — no-op when not worsening
     dmgCur = frac;                                // wounds persist between rounds
+    impl.setDamage?.(dmgCur);
     for (const { m, c, head } of mats) {
-      const amt = head ? dmgCur * .6 : dmgCur * .38;
+      const amt = (head ? dmgCur * .6 : dmgCur * .38) * wash;
       m.color.copy(c).lerp(BRUISE, amt);
       if (m.emissive) m.emissive.copy(BRUISE).multiplyScalar(dmgCur * .12);
     }
@@ -294,9 +316,12 @@ export async function createNpc(THREE, opts = {}) {
     group.add(tel);
   }
 
+  const STRIKE = { kind: null, reach: null, y: null };   // shared — no per-frame alloc
+  const gc = impl.gloveColor ?? 0xe0341f;
   const api = {
     group, id, name, kind,
     eyeY, headY: bb.min.y + H * .8, height: H, bbox: bb,
+    gloveColor: '#' + gc.toString(16).padStart(6, '0'),   // for the 2D smash overlay
     kick: { x: 0, y: 0, z: 0 },           // visual knock flinch — decays, never sim state
     setDamage,
     get variant() { return impl.variant || id; },
@@ -311,8 +336,12 @@ export async function createNpc(THREE, opts = {}) {
       if (npc?.telegraph?.kind) {                                    // punch loses telegraph — stash it
         npc._seenKind = npc.telegraph.kind; npc._seenSide = npc.telegraph.side;
       }
-      const p = mapAction(npc);
-      impl.pose(p.name, p.t01);
+      const striking = Number.isFinite(ctx.strike?.reach);
+      const p = mapAction(npc, striking);
+      STRIKE.kind = npc?.telegraph?.kind ?? npc?._seenKind ?? null;
+      STRIKE.reach = striking ? ctx.strike.reach : null;
+      STRIKE.y = striking ? ctx.strike.y : null;
+      impl.pose(p.name, p.t01, STRIKE);
       impl.tick(dt, npc || {}, Math.hypot(ctx.vel?.x || 0, ctx.vel?.z || 0));
       // telegraph marker over the cocked glove — 'left'/'right' name PIP's
       // anatomical glove; the proto rig faces +Z so its left glove is gloveR

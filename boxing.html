@@ -138,6 +138,21 @@
     background: radial-gradient(ellipse at center, transparent 42%,
       rgba(200,26,14,.45) 74%, rgba(150,8,6,.75) 100%); }
 
+  /* big center callouts — PERFECT! / PUNCH NOW! — the moments that matter */
+  .callout { position: fixed; left: 50%; top: 17%; z-index: 31; pointer-events: none;
+    transform: translate(-50%,-50%) scale(.4) rotate(-4deg); opacity: 0;
+    font-size: clamp(34px, 5.2vw, 70px); font-weight: 900; letter-spacing: .04em;
+    color: var(--sun); white-space: nowrap;
+    text-shadow: 0 4px 0 var(--ink), 0 0 2px var(--ink), 0 10px 30px rgba(0,0,0,.6);
+    -webkit-text-stroke: 2px var(--ink);
+    transition: transform .18s cubic-bezier(.34,1.8,.64,1), opacity .12s; }
+  .callout.on { transform: translate(-50%,-50%) scale(1) rotate(-4deg); opacity: 1; }
+  .callout.perfect { color: #fff8ec; }
+  .callout.flurry { color: var(--coral); animation: thump .22s ease-in-out infinite alternate; }
+  @keyframes thump { to { transform: translate(-50%,-50%) scale(1.12) rotate(-2deg); } }
+  /* slow-mo tint while time crawls after a perfect dodge */
+  body.slowmo #world { filter: saturate(.55) contrast(1.15) brightness(1.08); }
+
   /* end-of-fight card */
   .endcard { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(0);
     z-index: 35; background: var(--paper); color: var(--ink); border: 3px solid var(--ink);
@@ -167,6 +182,7 @@
     .legend { right: 14px; bottom: 14px; font-size: 9px; line-height: 1.6; max-width: 55vw; }
     .entrance { left: 14px; right: 14px; bottom: 138px; width: auto; padding: 12px; }
     .entrance .name { font-size: 23px; }
+    .callout { top: 36%; }
   }
 </style>
 </head>
@@ -187,6 +203,7 @@
   <div class="vin" data-vin></div>
   <div class="tele" data-tele></div>
   <div class="flash" data-flash></div>
+  <div class="callout" data-callout></div>
   <div class="count" data-count><span>1</span><small>DOWN FOR THE COUNT</small></div>
 
   <div class="endcard" data-end>
@@ -218,8 +235,9 @@
 
   <div class="legend">
     <div><b>punch</b> — thrust a fist at the camera · <b>guard</b> — gloves up by your face</div>
-    <div><b>lean</b> — sway / dodge · <b>step</b> — move toward / away from camera</div>
-    <div><b>mouse</b> — left/right drag = gloves · <b>shift</b>-drag = sway · <b>w/s</b> = step</div>
+    <div><b>slip</b> — lean left/right as it swings · <b>duck</b> — drop your head (not vs uppercuts!)</div>
+    <div><b>dodge late</b> = PERFECT → it's dizzy, unload on it · <b>step</b> — toward / away from camera</div>
+    <div><b>keys</b> — <b>a/d ←/→</b> slip · <b>space</b> duck · <b>w/s</b> step · mouse L/R = gloves</div>
     <div><b>c</b> — recenter · <b>m</b> — mute</div>
   </div>
 
@@ -242,6 +260,7 @@
       round: $('[data-round]'), time: $('[data-time]'), php: $('[data-php]'),
       nhp: $('[data-nhp]'), stam: $('[data-stam]'), score: $('[data-score]'), combo: $('[data-combo]'), counter: $('[data-counter]'), feed: $('[data-feed]'),
       tele: $('[data-tele]'), flash: $('[data-flash]'), count: $('[data-count]'), end: $('[data-end]'),
+      callout: $('[data-callout]'), world: $('#world'),
       vin: $('[data-vin]'), entrance: $('[data-entrance]'), entranceSign: $('[data-entrance-sign]'),
       endTitle: $('[data-endtitle]'), endSub: $('[data-endsub]'),
       npcName: $('[data-npcname]'), npcLbl: $('[data-npclbl]'), peep: $('[data-peep]'),
@@ -347,9 +366,10 @@
       'player-miss': (s, lb) => `WHIFF${lb?.reason ? ' · ' + String(lb.reason).toUpperCase() : '…'}`,
       'npc-blocked': () => 'BLOCKED',
       'npc-punch': () => 'INCOMING',
-      'player-hit-taken': (s, lb) => lb?.dmg ? `OUCH −${Math.round(lb.dmg)}` : 'OUCH',
+      'player-hit-taken': (s, lb) => lb?.reason === 'ducked-into' ? `DUCKED INTO IT −${Math.round(lb.dmg)}`
+        : lb?.dmg ? `OUCH −${Math.round(lb.dmg)}` : 'OUCH',
       'player-blocked': () => 'BLOCKED IT',
-      'player-dodged': () => 'DODGED',
+      'player-dodged': (s, lb) => lb?.perfect ? 'PERFECT DODGE — UNLOAD!' : 'DODGED · COUNTER!',
       'counter': () => 'COUNTER! +35% POWER',
       'ko': () => 'K.O.!',
       'win': () => 'YOU WIN!',
@@ -357,11 +377,15 @@
     };
     const FLASH = {
       'player-hit': 'POW!', 'npc-hit': 'POW!', 'player-hit-taken': 'TAGGED!',
-      'ko': 'K.O.!', 'player-blocked': 'BLOCKED', 'player-dodged': 'SLIPPED',
+      'ko': 'K.O.!', 'player-blocked': 'BLOCKED', 'player-dodged': 'SLIPPED!',
       'counter': 'COUNTER!',
     };
-    let flashT = 0, vinT = 0;
+    let flashT = 0, vinT = 0, calloutT = 0;
     const flash = (t) => { el.flash.textContent = t; el.flash.style.opacity = 1; flashT = performance.now(); };
+    const callout = (t, cls = '', ms = 700) => {
+      el.callout.textContent = t; el.callout.className = `callout on ${cls}`;
+      calloutT = performance.now() + ms;
+    };
     const feed = (t) => {
       const d = document.createElement('div'); d.textContent = t;
       el.feed.prepend(d);
@@ -420,20 +444,36 @@
       }
       tog('teleOn', el.tele, st.npc.action === 'windup');
       if (st.npc.telegraph) {
-        const attack = st.npc.telegraph.kind === 'upper' ? 'UPPERCUT' : st.npc.telegraph.kind.toUpperCase();
+        const tg = st.npc.telegraph;
         // telegraph.side is the NPC's glove — it lands on the player's
         // opposite side, so the cue names the guard to raise
-        const guardSide = st.npc.telegraph.side === 'left' ? 'RIGHT' : 'LEFT';
-        txt('teleTxt', el.tele, `${attack} · GUARD ${guardSide}`);
+        const guardSide = tg.side === 'left' ? 'R' : 'L';
+        const how = tg.kind === 'upper' ? 'UPPERCUT · SLIP ⟷  NO DUCK!'
+          : tg.kind === 'hook' ? `HOOK · DUCK ↓ / GUARD ${guardSide}`
+          : `JAB · SLIP ⟷ / GUARD ${guardSide}`;
+        txt('teleTxt', el.tele, tg.combo ? `COMBO ×${tg.combo + 1} — ${how}` : how);
       }
       for (const e of out.events) {
         window.__boxing.log.push(e);
         const f = FEED[e]; if (f) feed(f(st, st.lastBlow));
         if (FLASH[e]) flash(FLASH[e]);
         if (e === 'player-hit-taken' || (e === 'ko' && st.phase === 'playerdown')) vinT = performance.now();
+        if (e === 'perfect-dodge') callout('PERFECT!', 'perfect', 650);
+        if (e === 'player-hit-taken' && st.lastBlow?.reason === 'ducked-into') callout('DUCKED INTO IT!', '', 800);
         if (e === 'win') showEnd(true, st);
         if (e === 'lose') showEnd(false, st);
       }
+      // reeling PIP → the flurry prompt owns the center until it recovers
+      const now = performance.now();
+      if (st.npc.action === 'stunned' && st.phase === 'fighting' && now > calloutT)
+        callout('PUNCH! PUNCH!', 'flurry', 120);
+      else if (calloutT && now > calloutT) { el.callout.className = 'callout'; calloutT = 0; }
+      togN('slowmo', (out.slow ?? 1) < .9);
+      // rung bell: crisp while the glove is planted in your face, THEN the
+      // world smears as you reel back from it — harder on heavy shots
+      const blur = st.phase === 'fighting' && !(out.holdT > 0) ? Math.min(3.5, st.player.hurtT * 9) : 0;
+      const bq = Math.round(blur * 4) / 4;
+      if (hLast.blur !== bq) { hLast.blur = bq; el.world.style.filter = bq ? `blur(${bq}px)` : ''; }
       if (flashT && performance.now() - flashT > 1100) { el.flash.style.opacity = 0; flashT = 0; }
       // blood edge: persistent base scales with hp lost + a hot pulse on hits
       const blood = 1 - st.player.hp / (st.player.maxHp || 100);
@@ -507,8 +547,10 @@
     };
     cvs.addEventListener('pointerup', releaseMouse);
     cvs.addEventListener('pointercancel', releaseMouse);
-    const moveKeys = { forward: false, back: false };
+    const moveKeys = { forward: false, back: false, left: false, right: false, duck: false };
     Object.defineProperty(window.__boxing, 'moveKeys', { get: () => moveKeys });
+    const DODGE_KEYS = { a: 'left', A: 'left', ArrowLeft: 'left', d: 'right', D: 'right', ArrowRight: 'right', ' ': 'duck' };
+    let dodgeTap = 0, duckTap = false;
     const entranceInput = { sign: null, until: 0 };
     const entrancePose = sign => { entranceInput.sign = sign; entranceInput.until = performance.now() + 1000; };
     document.querySelectorAll('[data-sign]').forEach(button =>
@@ -522,14 +564,21 @@
       }
       if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { moveKeys.forward = true; e.preventDefault(); }
       if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { moveKeys.back = true; e.preventDefault(); }
+      if (DODGE_KEYS[e.key] && !e.repeat) {
+        const k = DODGE_KEYS[e.key];
+        moveKeys[k] = true; e.preventDefault();
+        if (k !== 'duck') dodgeTap = k === 'left' ? -1 : 1;   // latched — a sub-frame tap still slips
+        else duckTap = true;
+      }
       if (e.key === 'c' || e.key === 'C') { game?.calibrate(); mouse.sway = 0; }
       if (e.key === 'm' || e.key === 'M') { if (audio) { audio.unlock(); audio.muted = !audio.muted; } }
     });
     addEventListener('keyup', e => {
       if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') moveKeys.forward = false;
       if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') moveKeys.back = false;
+      if (DODGE_KEYS[e.key]) moveKeys[DODGE_KEYS[e.key]] = false;
     });
-    addEventListener('blur', () => { moveKeys.forward = false; moveKeys.back = false; });
+    addEventListener('blur', () => { for (const k in moveKeys) moveKeys[k] = false; });
 
     /* ================= glove overlay =================
        Gloves are the PLAYER'S HANDS — drawn only while a hand is actually
@@ -569,6 +618,32 @@
     };
     const wrapAng = (a) => ((a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
     const blockFx = { t: -9, side: 'right' };        // white shield burst on a caught block
+    const hitFx = { t: -9, x: .5, y: .5, heavy: false };   // comic impact frame when you get tagged
+    // fixed pseudo-random spoke table — impact lines never allocate per frame
+    const SPOKES = Array.from({ length: 34 }, (_, i) => ({
+      a: i / 34 * Math.PI * 2 + Math.sin(i * 12.9898) * .08,
+      w: .55 + (Math.sin(i * 78.233) * .5 + .5) * .9, r0: .5 + (Math.sin(i * 4.1) * .5 + .5) * .2 }));
+    const drawImpact = (nowS) => {
+      const u = (nowS - hitFx.t) / (hitFx.heavy ? .5 : .38);
+      if (u < 0 || u >= 1) return;
+      const W = hc.width, H = hc.height, cx = W * hitFx.x, cy = H * hitFx.y, R = Math.hypot(W, H) * .6;
+      if (u < .1) {                                     // 1-2 frame white pop
+        hx.globalAlpha = (1 - u / .1) * (hitFx.heavy ? .85 : .6);
+        hx.fillStyle = '#fff8ec'; hx.fillRect(0, 0, W, H);
+      }
+      hx.globalAlpha = (1 - u) * .9;                     // ink speed-lines converge on the glove
+      hx.fillStyle = '#2b2118';
+      hx.beginPath();
+      for (const s of SPOKES) {
+        const r0 = R * (s.r0 + u * .12), w = s.w * .022;
+        hx.moveTo(cx + Math.cos(s.a) * R, cy + Math.sin(s.a) * R);
+        hx.lineTo(cx + Math.cos(s.a - w) * r0, cy + Math.sin(s.a - w) * r0);
+        hx.lineTo(cx + Math.cos(s.a + w) * r0, cy + Math.sin(s.a + w) * r0);
+        hx.closePath();
+      }
+      hx.fill();
+      hx.globalAlpha = 1;
+    };
     const drawOverlay = (hs, dt, out) => {
       const nowS = performance.now() / 1000;
       const k = 1;  // direct hand-to-glove mapping; tracker cadence sets the update rate
@@ -676,10 +751,19 @@
          telegraph: which side to cover. telegraph.side names the NPC's glove;
          it lands on the player's OPPOSITE side. The chevron pulses faster as
          the swing charges and flips green the moment that side is guarded. */
-      if (out?.events) for (const e of out.events)
+      if (out?.events) for (const e of out.events) {
         if (e === 'player-blocked') { blockFx.t = nowS;
           blockFx.side = out.state?.lastBlow?.side === 'left' ? 'right'
             : out.state?.lastBlow?.side === 'right' ? 'left' : blockFx.side; }
+        if (e === 'player-hit-taken') {
+          const lb = out.state?.lastBlow || {};
+          hitFx.t = nowS; hitFx.heavy = (lb.dmg || 0) >= 12;
+          // PIP's left glove lands on your right; uppercuts come up the middle
+          hitFx.x = lb.kind === 'upper' ? .5 : lb.side === 'left' ? .58 : .42;
+          hitFx.y = lb.kind === 'upper' ? .6 : .5;
+        }
+      }
+      drawImpact(nowS);
       const tel = out?.telegraph;
       const g2 = game?.tracker?.guard || {};
       if (tel && out?.state?.phase === 'fighting') {
@@ -786,7 +870,7 @@
     addEventListener('resize', resize); resize();
 
     const EMPTY_HS = { hands: [], pinch: null, point: null, orbit: null, zoom: null, spread: null };
-    const controls = { step: 0, sign: null, waitForHands: false };    // persistent input
+    const controls = { step: 0, sign: null, waitForHands: false, dodge: 0, duck: 0 };    // persistent input
     let last = performance.now(), fpsN = 0, fpsT = last, orbitT = 0, frameI = 0;
     function loop() {
       requestAnimationFrame(loop);
@@ -798,6 +882,9 @@
       let out = null;
       if (game) {
         controls.step = Number(moveKeys.forward) - Number(moveKeys.back);
+        controls.dodge = dodgeTap || Number(moveKeys.right) - Number(moveKeys.left);   // game.js edge-triggers
+        controls.duck = moveKeys.duck || duckTap ? 1 : 0;
+        dodgeTap = 0; duckTap = false;
         controls.sign = performance.now() < entranceInput.until ? entranceInput.sign : null;
         controls.waitForHands = !noTrack && !!(video.srcObject || video.src) && handStatus === 'loading';
         out = game.step(dt, hs, fs, controls);

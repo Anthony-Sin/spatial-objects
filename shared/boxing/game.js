@@ -65,7 +65,15 @@ export async function createGame(opts = {}) {
   let downCamT = 0;
   let neutralFaceSize = 0, lastFaceSize = 0, depthStep = 0;
   let push = 0, pushUp = 0;                       // camera shove-back + uppercut launch
+  let snapYaw = 0;                                // hook snaps the head sideways
   let hitStopT = 0;                               // impact freeze — classic hit-stop
+  let slowT = 0;                                  // perfect-dodge slow-mo (real seconds left)
+  let holdT = 0;                                  // landed glove stays planted in your face
+  let dodgeX = 0, dodgeY = 0;                     // eased camera slip / duck offset
+  let prevDodgeKey = 0;
+  let swingRes = null;                            // live npc swing: null → 'landed'|'dodged'
+  const SLOW_LEN = .55, SLOW_SCALE = .22;
+  const strike = { reach: null, y: null };        // npc punch target (npc-local)
   const hitPos = new THREE.Vector3();
   const NO_PUNCHES = [];                          // shared empty — splice only when non-empty
   const EMPTY_HS = { hands: [] };
@@ -95,7 +103,12 @@ export async function createGame(opts = {}) {
        input tracking, camera shake and the glove overlay keep running —
        the punch reads heavy without the fight ever feeling slow. */
     if (hitStopT > 0) hitStopT = Math.max(0, hitStopT - dt);
-    const fdt = hitStopT > 0 ? 0 : dt;
+    // perfect-dodge slow-mo: the world crawls while the glove sails past,
+    // then eases back to full speed (input + camera stay real-time)
+    if (slowT > 0) slowT = Math.max(0, slowT - dt);
+    const slow = slowT > 0 ? SLOW_SCALE + (1 - SLOW_SCALE) * Math.pow(1 - slowT / SLOW_LEN, 3) : 1;
+    const fdt = hitStopT > 0 ? 0 : dt * slow;
+    if (holdT > 0) holdT = Math.max(0, holdT - dt);
     tracker.update(hs || EMPTY_HS, fs || null, dt);
     const punches = tracker.punches.length
       ? tracker.punches.splice(0, tracker.punches.length) : NO_PUNCHES;
@@ -124,9 +137,14 @@ export async function createGame(opts = {}) {
     depthStep += (targetStep - depthStep) * (1 - Math.exp(-dt * 9));
     simIn.sway = sw; simIn.playerDodge = dodge; simIn.playerStep = depthStep;
     simIn.npcDir = fight.npcDir();
-    simIn.npcStunned = st.npc.action === 'hurt' || st.npc.action === 'down';
+    simIn.npcStunned = st.npc.action === 'hurt' || st.npc.action === 'down' || st.npc.action === 'stunned';
     sim.step(fdt, simIn);
+    // keyboard dodge is edge-triggered (a held key = one slip); duck holds
+    const dKey = Math.sign(+controls.dodge || 0);
+    fightIn.dodge = dKey && dKey !== prevDodgeKey ? dKey : 0;
+    prevDodgeKey = dKey;
     fightIn.punches = punches; fightIn.guard = tracker.guard; fightIn.sway = sw;
+    fightIn.duck = Math.max(tracker.duck || 0, +controls.duck || 0);
     fightIn.distance = sim.distance();
     fight.step(waiting ? 0 : fdt, fightIn);
     // The entrance lasts six real seconds even when rendering runs slowly.
@@ -176,6 +194,9 @@ export async function createGame(opts = {}) {
       for (const e of events) {
         if (e === 'ko') hasKo = true;
         else if (e === 'player-hit' || e === 'npc-hit' || e === 'player-hit-taken') hasHit = true;
+        if (e === 'npc-punch') swingRes = null;
+        else if (e === 'player-hit-taken' || e === 'player-blocked') swingRes = 'landed';
+        else if (e === 'player-dodged') swingRes = 'dodged';
         if (e === 'player-hit') {
           hitStopT = Math.max(hitStopT, .07);
           // white impact pop — the freeze + flash frame that sells contact
@@ -193,12 +214,18 @@ export async function createGame(opts = {}) {
             npc.kick.x += px * sgn * .16; npc.kick.z += pz * sgn * .16;
           }
         } else if (e === 'player-hit-taken') {
-          hitStopT = Math.max(hitStopT, .1);                          // you eat it — hold the frame
+          const heavy = (lb.dmg || 0) >= 12;
+          hitStopT = Math.max(hitStopT, heavy ? .17 : .12);           // you eat it — hold the frame
+          holdT = heavy ? .3 : .22;                                     // glove stays planted on the lens
           push += .14 + Math.min(.3, (lb.dmg || 10) * .012);            // view shoved back
-          if (lb.kind === 'upper') pushUp += .22;                        // uppercut rocks the head UP
+          if (lb.kind === 'upper') pushUp += .26;                        // uppercut rocks the head UP
+          // hook whips the head AWAY from the glove: PIP's left lands on your right
+          if (lb.kind === 'hook') snapYaw += (lb.side === 'left' ? 1 : -1) * .32;
           hitPos.set(sim.player.pos.x, EYE * .85, sim.player.pos.z - .2);
           fx.burst(hitPos,
                    { color: (lb.dmg || 0) >= 14 ? 'blood' : 'star', n: 18, speed: .8, up: .6, spread: .5 });
+        } else if (e === 'perfect-dodge') {
+          slowT = SLOW_LEN;                                              // bullet-time fly-by
         } else if (e === 'player-blocked') {
           push += .06;                                                   // blocked still nudges
         } else if (e === 'ko') {
@@ -231,6 +258,20 @@ export async function createGame(opts = {}) {
     } else npcIn.pos = sim.npc.pos;
     npcIn.vel = sim.npc.vel;
     npcIn.target = sim.player.pos; npcIn.npc = st.npc;
+    /* the swing is aimed at the LENS, not at air in front of PIP: the punching
+       glove's npc-local target is the camera's resting spot. A landed glove
+       stops just short of the glass (then holds there); a dodged one keeps
+       going straight through where your head was. */
+    const na = st.npc.action;
+    const holding = holdT > 0 && swingRes === 'landed' && na !== 'hurt' && na !== 'down';
+    const flyBy = swingRes === 'dodged'
+      && (na === 'punch' || ((na === 'whiff' || na === 'stunned') && st.npc.actionT < .15));
+    if (st.phase === 'fighting' && (na === 'punch' || holding || flyBy)) {
+      const viewPull = .38 + Math.max(0, 1.2 - (cam?.aspect || 1)) * 1.5;
+      strike.reach = sim.distance() + viewPull + (flyBy ? .35 : -.3);
+      strike.y = EYE - .04;            // aimed where your head WAS — slip and it sails by
+    } else strike.reach = null;
+    npcIn.strike = strike;
     npc.update(fdt, npcIn);
     if (st.phase === 'intro' && entryU > 0 && entryU < 1)
       npc.pose('celebrate', tNow * 1.8);              // showboat strut
@@ -249,9 +290,17 @@ export async function createGame(opts = {}) {
       downCamT = Math.max(0, Math.min(.8, downCamT));
       const fall = downCamT / .8;
       camSway += (sw - camSway) * Math.min(1, dt * 14);   // was *8 — trailed the lean
+      // committed dodge = a big, fast head move that eases home (snap out, drift back)
+      const dd = st.player.dodge?.dir;
+      const tx = dd === 'left' ? -1 : dd === 'right' ? 1 : 0;
+      const ty = Math.max(dd === 'duck' ? 1 : 0, (fightIn.duck || 0) * .85);   // held duck shows too
+      dodgeX += (tx - dodgeX) * (1 - Math.exp(-dt * (tx ? 24 : 8)));
+      dodgeY += (ty - dodgeY) * (1 - Math.exp(-dt * (ty ? 24 : 8)));
       shakeT = Math.max(0, shakeT - dt);
       push *= Math.exp(-dt * 5.5);                          // spring back
       pushUp *= Math.exp(-dt * 6);
+      snapYaw *= Math.exp(-dt * 7);
+      const wob = st.player.hurtT > 0 ? Math.sin(tNow * 17) * st.player.hurtT * .09 : 0;   // rung bell
       const shk = shakeT > 0 ? Math.sin(tNow * 90) * shakeT * .06 : 0;
       const bob = Math.sin(tNow * 2.3) * .016 + Math.sin(tNow * 3.7) * .007;  // idle bob
       const weave = Math.sin(tNow * .9) * .035;
@@ -259,9 +308,11 @@ export async function createGame(opts = {}) {
       // then snaps back on release: reads as danger without slowing anything
       const ant = st.npc.action === 'windup' ? (st.npc.telegraph?.t01 || 0) : 0;
       const pull = push + shk + viewPull - ant * .055;
-      const px = p.x + lx * (camSway * .55 + weave) - fwdX * pull;
-      const py = EYE - Math.abs(camSway) * .09 + bob + push * .05 + pushUp;
-      const pz = p.z + lz * (camSway * .55 + weave) - fwdZ * pull;
+      const lat = camSway * .55 + dodgeX * .46 + weave;
+      const px = p.x + lx * lat - fwdX * pull;
+      const py = EYE - Math.abs(camSway) * .09 - Math.abs(dodgeX) * .08 - dodgeY * .34
+        + bob + push * .05 + pushUp;
+      const pz = p.z + lz * lat - fwdZ * pull;
       // Film the player's visible boxer first, then move behind them into
       // the tracked first-person view for the opening bell.
       const sweep = Math.max(0, Math.min(1, introU / .72));
@@ -278,10 +329,12 @@ export async function createGame(opts = {}) {
       cam.lookAt(p.x * (1 - blend) + n.x * blend,
         .84 * (1 - blend) + (st.phase === 'npcdown' ? HEAD * .42 : HEAD) * blend,
         p.z * (1 - blend) + n.z * blend);
-      cam.rotateZ(-camSway * .14 - push * .08 + fall * .5);
+      cam.rotateZ(-camSway * .14 - dodgeX * .2 * blend - push * .08 + fall * .5 + wob * blend);
+      cam.rotateY(snapYaw * blend);                         // hook whips the head sideways
       cam.rotateX(push * .4 + pushUp * .6);                 // hits pitch the view upward
     }
     out.events = events; out.state = st; out.depthStep = depthStep;
+    out.holdT = holdT; out.slow = slow; out.duck = fightIn.duck;
     out.entranceSign = sign; out.entranceWaiting = waiting;
     out.telegraph = st.npc.telegraph;              // overlay block-side cue
     return out;
@@ -292,7 +345,7 @@ export async function createGame(opts = {}) {
     step,
     skipIntro() { if (fight.state.phase === 'intro') { tNow = FIGHT_TUNING.introT; skipRequested = true; } },
     calibrate() { tracker.calibrate?.(); if (lastFaceSize) neutralFaceSize = lastFaceSize; depthStep = 0; },
-    reset() { sim.reset(); fight.reset(); neutralFaceSize = lastFaceSize || 0; depthStep = 0; tNow = 0; skipRequested = false; hitStopT = 0; introStartedAt = typeof performance !== 'undefined' ? performance.now() : 0; },
+    reset() { sim.reset(); fight.reset(); neutralFaceSize = lastFaceSize || 0; depthStep = 0; tNow = 0; skipRequested = false; hitStopT = 0; slowT = 0; holdT = 0; swingRes = null; introStartedAt = typeof performance !== 'undefined' ? performance.now() : 0; },
     get hands() { return hands; }, get face() { return face; },
   };
 }

@@ -113,6 +113,12 @@ const settle = (ft, h, f = fc(), n = 30) => { for (let i = 0; i < n; i++) ft.upd
   check('nose left of center → sway negative', ft.sway < -.4, ft.sway.toFixed(2));
   ft.calibrate();
   check('re-calibrate re-zeros sway', ft.sway === 0, ft.sway);
+  for (let i = 0; i < 20; i++) ft.update(hs(), fc(.38, .4), DT);
+  check('neutral nose height → no duck', ft.duck < .05, ft.duck.toFixed(2));
+  for (let i = 0; i < 20; i++) ft.update(hs(), fc(.38, .54), DT);
+  check('nose drops well below neutral → duck', ft.duck > .7, ft.duck.toFixed(2));
+  for (let i = 0; i < 30; i++) ft.update(hs(), fc(.38, .4), DT);
+  check('head back up → duck releases', ft.duck < .1, ft.duck.toFixed(2));
   // calibrate also re-norms depth: settle, grow the hand, calibrate → reach 1
   settle(ft, hand('left', .4, .55, 1.6), fc(.38), 20);
   drain(ft);

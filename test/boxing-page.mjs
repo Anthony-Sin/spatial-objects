@@ -183,6 +183,12 @@ if (booted) {
   await pg.keyboard.up('s');
   check('S steps back in mouse mode', keyHeld && back > home + .1,
     `held=${keyHeld} home=${home.toFixed(2)} back=${back.toFixed(2)}`);
+  // a real key tap must reach the fight as a committed slip (latched, sub-frame safe)
+  await pg.evaluate(() => { const d = window.__boxing.state.player.dodge; d.dir = null; d.cd = 0; });
+  await pg.keyboard.press('a');
+  await pg.waitForFunction(() => window.__boxing.state.player.dodge.dir !== null, { timeout: 3000 }).catch(() => {});
+  const slip = await pg.evaluate(() => window.__boxing.state.player.dodge.dir);
+  check('A key slips left', slip === 'left', `dodge=${slip}`);
 }
 
 check('zero page errors on load', errs.length === 0, errs.slice(0, 3).join(' | ') || 'clean');

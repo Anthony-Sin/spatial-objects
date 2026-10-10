@@ -123,7 +123,49 @@ ok(eyeChild(b.parts.eyeL, 'open').visible && !eyeChild(b.parts.eyeL, 'x').visibl
   'idle → open eyes again');
 const mouthChild = mode => b.parts.mouth.children.find(c => c.userData.mode === mode);
 b.pose('windup', 1);
-ok(mouthChild('flat').visible, 'windup → gritted flat mouth');
+ok(mouthChild('grit').visible && !mouthChild('flat').visible, 'windup → bared mouthguard grit');
+
+// ---- strike aim: punches fly to the lens instead of stopping short ----
+{
+  const s = buildBoxer(THREE, { variant: 'bubble' });
+  s.pose('jab', .5, { reach: 1.1, y: .8 });
+  for (let i = 0; i < 40; i++) s.tick(1 / 60);
+  ok(Math.abs(s.parts.gloveL.position.z - 1.1) < .05 && Math.abs(s.parts.gloveL.position.y - .8) < .05,
+    `strike jab reaches the lens target (z=${s.parts.gloveL.position.z.toFixed(2)})`);
+  ok(s.parts.armL.userData.bone.scale.y > 3.2, 'rubber arm stretches to follow a long strike');
+  s.pose('upper', .5, { reach: 1.0, y: .9 });
+  for (let i = 0; i < 40; i++) s.tick(1 / 60);
+  ok(s.parts.gloveR.position.z > .9 && s.parts.gloveR.position.y > .8, 'uppercut drives up into the lens');
+  // windup tells differ by punch kind
+  s.pose('windup', 1, { kind: 'upper' }); s.tick(1);
+  const upY = s.parts.gloveR.position.y;
+  s.pose('windup', 1, { kind: 'hook' }); s.tick(1);
+  const hookX = s.parts.gloveR.position.x;
+  s.pose('windup', 1, { kind: 'jab' }); s.tick(1);
+  ok(upY < s.parts.gloveR.position.y - .15 && hookX > s.parts.gloveR.position.x + .08,
+    'windup tells: uppercut drops low, hook cocks wide');
+}
+
+// ---- reeling / damage / fatigue reads ----
+{
+  const s = buildBoxer(THREE, { variant: 'bean' });
+  const starsOf = () => s.parts.head.children.find(c => c.children.length === 3 && c.position.y > .3);
+  s.pose('stunned', .3); s.tick(1 / 60);
+  ok(eyeChild(s.parts.eyeL, 'spiral').visible && starsOf()?.visible, 'stunned → spiral eyes + dizzy stars');
+  s.pose('idle', 0); s.tick(1 / 60);
+  ok(!starsOf()?.visible, 'stars hide once recovered');
+  const vis = () => s.parts.head.children.filter(c => c.visible).length;
+  const v0 = vis();
+  s.setDamage(.7); s.tick(1 / 60);
+  ok(vis() >= v0 + 3, `heavy damage shows shiner + lump + bandage (+${vis() - v0})`);
+  s.setDamage(.1);
+  ok(vis() >= v0 + 3, 'wounds persist (monotone)');
+  s.tick(.3, { gassed: true });
+  ok(s.parts.head.children.some(c => c.visible && c.material?.opacity !== undefined && c.material.transparent
+    && c.scale.y > 1.2), 'gassed → sweat beads');
+  s.pose('whiff', .4); s.tick(.2);
+  ok(s.parts.root.rotation.x > .05, 'whiff → overextended stumble');
+}
 
 // ---- breathing actually moves things between identical poses ----
 b.pose('idle', 0);

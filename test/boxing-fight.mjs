@@ -9,6 +9,8 @@ const inp = (o = {}) => ({
   punches: o.punches || [],
   guard: { left: 0, right: 0, ...(o.guard || {}) },
   sway: o.sway || 0,
+  duck: o.duck || 0,
+  dodge: o.dodge || 0,
   distance: o.distance ?? 1.0,
 });
 
@@ -112,19 +114,119 @@ const captureKind = () => {   // remembers the last telegraphed swing kind/side
     `kind=${kind} took=${took}`);
 }
 
-/* 4 — same attack, committed sway → zero damage + 'player-dodged' */
+/* 4 — same attack, sway committed ON the telegraph → zero damage + 'player-dodged' */
+const resolvedSwing = s => s.events.includes('player-dodged') || s.events.includes('player-hit-taken')
+  || s.events.includes('player-blocked');
 {
   const f = new Fight({ seed: 7 });
   toFighting(f);
   const seen = [];
-  const resolved = until(f,
-    s => s.events.includes('player-dodged') || s.events.includes('player-hit-taken')
-      || s.events.includes('player-blocked'), 12, () => inp({ sway: 1 }), seen);
-  check('committed sway resolves an npc attack', resolved, seen.join(','));
+  // lean once the telegraph is half charged — a real read, not a parked lean
+  const mk = g => inp({ sway: g.state.npc.telegraph?.t01 > .5 || g.state.npc.action === 'punch' ? 1 : 0 });
+  const resolved = until(f, resolvedSwing, 12, mk, seen);
+  check('sway on the telegraph resolves an npc attack', resolved, seen.join(','));
   check("'player-dodged', zero damage, no hit-taken",
     seen.includes('player-dodged') && !seen.includes('player-hit-taken')
       && f.state.player.hp === f.state.player.maxHp,
     `hp=${f.state.player.hp} events=${seen.join(',')}`);
+  check('a fresh lean commits a dodge move', seen.includes('player-dodge'), seen.join(','));
+  until(f, s => s.npc.action !== 'punch', 1);
+  check('dodged swing leaves PIP off-balance (whiff)', ['whiff', 'stunned'].includes(f.state.npc.action),
+    f.state.npc.action);
+}
+
+/* 4b — a lean PARKED through the whole windup gets tagged: PIP aims at your head */
+{
+  const f = new Fight({ seed: 7 });
+  toFighting(f);
+  const seen = [];
+  until(f, resolvedSwing, 12, () => inp({ sway: 1 }), seen);
+  check('held lean through the telegraph → hit-taken', seen.includes('player-hit-taken')
+    && !seen.includes('player-dodged'), seen.join(','));
+}
+
+/* 4c — perfect dodge: commit inside perfectWin of impact → stun + flurry */
+{
+  const f = new Fight({ seed: 7 });
+  toFighting(f);
+  const seen = [];
+  // key-dodge on the last ~.1s before impact (end of windup)
+  const mk = g => inp({ dodge: g.state.npc.action === 'windup' && g.state.npc.telegraph.t01 > .93 ? 1 : 0 });
+  until(f, resolvedSwing, 12, mk, seen);
+  check("late key-dodge → 'perfect-dodge'", seen.includes('perfect-dodge') && f.state.player.perfects === 1,
+    seen.join(','));
+  until(f, s => s.npc.action !== 'punch', 1);
+  check('perfect dodge leaves PIP stunned', f.state.npc.action === 'stunned', f.state.npc.action);
+  const hp0 = f.state.npc.hp;
+  f.state.player.counterT = 0;               // isolate the flurry bonus
+  f.step(DT, inp({ punches: [{ kind: 'jab', side: 'left', power: 1 }] }));
+  check('flurry hit: bonus damage, PIP stays stunned (no i-frames)',
+    Math.abs(hp0 - f.state.npc.hp - TUNING.dmg.jab * TUNING.counterDamage) < .01
+      && f.state.npc.action === 'stunned', `dmg=${hp0 - f.state.npc.hp} action=${f.state.npc.action}`);
+  const hp1 = f.state.npc.hp;
+  f.step(DT, inp({ punches: [{ kind: 'cross', side: 'right', power: 1 }] }));
+  check('second flurry hit lands back-to-back', f.state.npc.hp < hp1, `hp=${f.state.npc.hp}`);
+  let t = 0;
+  while (f.state.npc.action === 'stunned' && t < 3) { f.step(DT, IDLE); t += DT; }
+  check('flurry hits shave the stun', t < TUNING.perfectStun - 2 * TUNING.stunHitCost + .1, `left=${t.toFixed(2)}`);
+}
+
+/* 4d — dodging too EARLY (window expires before impact) still gets tagged */
+{
+  const f = new Fight({ seed: 7 });
+  toFighting(f);
+  const seen = [];
+  let fired = false;
+  const mk = g => {
+    const go = !fired && g.state.npc.action === 'windup';
+    if (go) fired = true;
+    return inp({ dodge: go ? -1 : 0 });
+  };
+  until(f, resolvedSwing, 12, mk, seen);
+  check('key-dodge at windup start expires → hit-taken', seen.includes('player-dodge')
+    && seen.includes('player-hit-taken'), seen.join(','));
+}
+
+/* 4e — dodge can't be spammed; ducking into an uppercut hurts more */
+{
+  const f = new Fight({ seed: 7 });
+  toFighting(f);
+  f.step(DT, inp({ dodge: 1 }));
+  check('key dodge starts a slip', f.state.player.dodge.dir === 'right' && f.state.player.status === 'dodging');
+  for (let i = 0; i < Math.ceil(TUNING.dodgeWin / DT) + 1; i++) f.step(DT, inp({ distance: 4 }));
+  check('slip ends into a cooldown', f.state.player.dodge.dir === null && f.state.player.dodge.cd > 0);
+  f.step(DT, inp({ dodge: -1, distance: 4 }));
+  check('dodge during cooldown is ignored', f.state.player.dodge.dir === null);
+
+  const g = new Fight({ seed: 7 });
+  toFighting(g);
+  g._pk = { kind: 'upper', side: 'right' };
+  g.state.player.dodge.dir = 'duck'; g.state.player.dodge.t = .1;
+  g._impact(inp({ guard: { left: 1, right: 1 } }));
+  check('ducking INTO an uppercut: guard ignored, extra damage',
+    g.state.lastBlow.result === 'hit' && g.state.lastBlow.reason === 'ducked-into'
+      && Math.abs(100 - g.state.player.hp - TUNING.npcDmg.upper * TUNING.duckUpperMul) < .01,
+    JSON.stringify(g.state.lastBlow));
+  const h = new Fight({ seed: 7 });
+  toFighting(h);
+  h._pk = { kind: 'hook', side: 'left' };
+  h.state.player.dodge.dir = 'duck'; h.state.player.dodge.t = .4;
+  h._impact(inp());
+  check('ducking a hook is a clean dodge', h.state.lastBlow.result === 'dodged', JSON.stringify(h.state.lastBlow));
+}
+
+/* 4f — PIP chains combos on an idle target */
+{
+  let maxChain = 0;
+  for (const seed of [1, 3, 7, 11]) {
+    const f = new Fight({ seed });
+    toFighting(f);
+    for (let i = 0; i < 20 * 60 && f.state.phase === 'fighting'; i++) {
+      f.step(DT, IDLE);
+      maxChain = Math.max(maxChain, f.state.npc.telegraph?.combo || 0);
+    }
+  }
+  check('PIP throws multi-punch combos', maxChain >= 1, `maxChain=${maxChain}`);
 }
 
 /* 5 — hammer npc.hp → 'npcdown' → 'win' */

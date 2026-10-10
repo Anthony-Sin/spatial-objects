@@ -9,8 +9,12 @@
      import * as THREE from 'three';
      const pip = buildBoxer(THREE, { variant: 'bubble' });
      scene.add(pip.group);                      // feet at y=0, faces +Z
-     // per frame:  pip.pose(action, actionT01);  pip.tick(dt);
-     // poses: idle windup jab cross hook block hurt down celebrate
+     // per frame:  pip.pose(action, actionT01, strike?);  pip.tick(dt, state);
+     // poses: idle windup jab cross hook upper block hurt down celebrate
+     //        stunned whiff   (+ mirrored *L variants)
+     // strike = {reach, y}: punch poses aim the glove at this body-space
+     //          z / height (the camera lens) instead of the default extension
+     // pip.setDamage(0..1): black eye → bump → bandage → swollen shut
 
    API (see .teamwork/CONTRACT.md):
      VARIANTS                                    → string ids, >=3 styles
@@ -46,13 +50,16 @@ export const VARIANT_INFO = {
 const VPAL = {
   bubble: { skin: 0xffc99a, skinShade: 0xdfaa82, skinLight: 0xffd0a5,
     glove: HOUSE.coral, gloveDeep: 0xc63e38, gloveShine: 0xff947b,
-    shorts: HOUSE.sun, trim: HOUSE.paper, cheek: 0xff9b7a, leaf: HOUSE.leaf },
+    shorts: HOUSE.sun, trim: HOUSE.paper, cheek: 0xff9b7a, leaf: HOUSE.leaf,
+    guardTeeth: HOUSE.sky, band: 0xc63e38, gold: 0xf2b630 },
   blocky: { skin: 0xe9b78f, skinShade: 0xc99170, skinLight: 0xefbf99,
     glove: HOUSE.sky, gloveDeep: 0x337eae, gloveShine: 0x9ad1fa,
-    shorts: HOUSE.leaf, trim: HOUSE.paper, cheek: 0xff9b7a, leaf: HOUSE.ink },
+    shorts: HOUSE.leaf, trim: HOUSE.paper, cheek: 0xff9b7a, leaf: HOUSE.ink,
+    guardTeeth: HOUSE.coral, band: 0x337eae, gold: 0xf2b630 },
   bean: { skin: 0xf6c48c, skinShade: 0xd69a70, skinLight: 0xf9c997,
     glove: HOUSE.berry, gloveDeep: 0x843aa4, gloveShine: 0xd9a5ed,
-    shorts: HOUSE.sky, trim: HOUSE.paper, cheek: 0xff9b7a, leaf: HOUSE.leaf },
+    shorts: HOUSE.sky, trim: HOUSE.paper, cheek: 0xff9b7a, leaf: HOUSE.leaf,
+    guardTeeth: HOUSE.sun, band: 0x843aa4, gold: 0xf2b630 },
 };
 
 // ---- tiny math kit (deterministic — no Math.random, no Date) ----
@@ -79,21 +86,21 @@ const CFG = {
   bubble: {
     headY: .96,
     face: { ex: .115, ey: .05, ez: .262, by: .155, my: -.105, bx: .18, byy: -.05 },
-    shx: .30, shy: .66, armR: .05, armLen: .18, gloveR: .17,
+    shx: .30, shy: .66, armR: .05, armLen: .18, gloveR: .2,
     guard: { l: [-.27, .70, .27], r: [.28, .68, .23] },
     hipX: .13, hipY: .30, legR: .05, legLen: .12, foot: [.14, .055, .045],
   },
   blocky: {
     headY: .99,
     face: { ex: .13, ey: .03, ez: .243, by: .135, my: -.125, bx: .195, byy: -.06 },
-    shx: .33, shy: .66, armR: .06, armLen: .17, gloveR: .165,
+    shx: .33, shy: .66, armR: .06, armLen: .17, gloveR: .195,
     guard: { l: [-.30, .70, .26], r: [.31, .68, .22] },
     hipX: .15, hipY: .33, legR: .055, legLen: .11, foot: [.15, .05, .05],
   },
   bean: {
     headY: .95,
     face: { ex: .105, ey: .02, ez: .235, by: .125, my: -.10, bx: .165, byy: -.055 },
-    shx: .295, shy: .60, armR: .05, armLen: .17, gloveR: .165,
+    shx: .295, shy: .60, armR: .05, armLen: .17, gloveR: .195,
     guard: { l: [-.26, .65, .28], r: [.27, .63, .24] },
     hipX: .11, hipY: .24, legR: .045, legLen: .10, foot: [.11, .048, .05],
   },
@@ -118,6 +125,7 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   const basic = (c, o = {}) => mt(new Basic({ color: c, ...o }));
   const inkHullMat = basic(P.ink, { side: BACK });
   const inkFlat = basic(P.ink);
+  const shineMat = basic(0xffffff);
 
   const SPH = (r, w = 20, h = 14) => gm(new THREE.SphereGeometry(r, w, h));
   const BOX = (x, y, z) => gm(new THREE.BoxGeometry(x, y, z));
@@ -175,16 +183,23 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   }
 
   // ---- face (built in head space; modes toggled via .visible) ----
-  const eyes = [], pupils = [], openEyes = [];
-  let mouth = null;
+  const eyes = [], pupils = [], openEyes = [], wounds = [];
+  let mouth = null, dmg = 0;                     // dmg: hp fraction lost (setDamage)
 
   function buildEye(side, F) {
     const e = grp(side * F.ex, F.ey, F.ez);
     const open = grp();
     const white = new THREE.Mesh(SPH(.075, 14, 10), basic(P.paper));
     white.scale.set(1, 1.18, .5);
-    const pupil = new THREE.Mesh(SPH(.032, 10, 8), inkFlat);
+    const pupil = new THREE.Mesh(SPH(.04, 12, 9), inkFlat);
+    pupil.scale.set(1, 1.12, .6);
     pupil.position.set(0, -.004, .052);
+    // catchlights ride the pupil — the single biggest "alive" cue on a toon face
+    const shine = new THREE.Mesh(SPH(.013, 8, 6), shineMat);
+    shine.position.set(side * -.012 + .006, .016, .03);
+    const shine2 = new THREE.Mesh(SPH(.006, 6, 5), shineMat);
+    shine2.position.set(side * .012 - .004, -.013, .03);
+    pupil.add(shine, shine2);
     open.add(white, pupil);
     open.userData.mode = 'open';
     pupils.push(pupil); openEyes.push(open);
@@ -233,7 +248,21 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     o.userData.mode = 'o'; o.visible = false;
     const flat = new THREE.Mesh(BOX(.11, .024, .02), inkFlat);
     flat.userData.mode = 'flat'; flat.visible = false;
-    m.add(smile, grin, o, flat);
+    // gritted mouthguard — bared, clenched, the "here it comes" face
+    const grit = grp();
+    const lip = new THREE.Mesh(BOX(.15, .062, .02), inkFlat);
+    const guard = new THREE.Mesh(BOX(.128, .04, .014), toon(P.guardTeeth));
+    guard.position.z = .011;
+    const gap = new THREE.Mesh(BOX(.128, .006, .016), inkFlat);
+    gap.position.z = .013;
+    grit.add(lip, guard, gap);
+    for (const x of [-.032, 0, .032]) {
+      const tooth = new THREE.Mesh(BOX(.004, .04, .016), inkFlat);
+      tooth.position.set(x, 0, .013);
+      grit.add(tooth);
+    }
+    grit.userData.mode = 'grit'; grit.visible = false;
+    m.add(smile, grin, o, flat, grit);
     m.userData.mode = 'smile';
     return m;
   }
@@ -247,7 +276,7 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     mark('eyeL', put(headNode, buildEye(-1, F)));
     mark('eyeR', put(headNode, buildEye(1, F)));
     for (const s of [-1, 1]) {
-      const b = new THREE.Mesh(BOX(.12, .028, .03), inkFlat);
+      const b = new THREE.Mesh(BOX(.13, .036, .03), inkFlat);
       b.position.set(s * F.ex, F.by, F.ez + .015);
       mark(s < 0 ? 'browL' : 'browR', put(headNode, b));
       const blush = new THREE.Mesh(SPH(.045, 10, 8), basic(P.cheek));
@@ -266,6 +295,24 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     put(headNode, nose);
     mouth = buildMouth(F);
     mark('mouth', put(headNode, mouth));
+
+    /* progressive damage — wounds that make every landed glove READ:
+       stage 1 shiner around the left eye, 2 lump on the crown,
+       3 cross bandage on the cheek, 4 right eye swells half shut */
+    const shiner = new THREE.Mesh(TOR(.074, .026), toon(0x5a2f7d, { transparent: true, opacity: .85 }));
+    shiner.scale.set(1, 1.12, .4);
+    shiner.position.set(-F.ex, F.ey - .006, F.ez + .004);
+    const lump = inked(SPH(.06, 12, 9), P.skinShade, { hull: .04 });
+    lump.scale.set(1, .7, 1);
+    lump.position.set(.09, .27, .09);
+    const bandage = grp(F.bx + .01, F.byy + .02, F.ez + .016);
+    for (const r of [.6, -.6]) {
+      const strip = new THREE.Mesh(BOX(.09, .028, .008), toon(0xf4e1c1));
+      strip.rotation.z = r;
+      bandage.add(strip);
+    }
+    for (const nd of [shiner, lump, bandage]) { nd.visible = false; put(headNode, nd); }
+    wounds.push(shiner, lump, bandage);
   }
 
   // ---- boxing glove: padded knuckle panel, thumb and layered cuff ----
@@ -284,7 +331,21 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     cuffBand.position.z = -R * .68;
     const cuff = inked(TOR(R * .62, R * .2), P.trim);
     cuff.position.z = -R * .82;
-    g.add(main, thumb, pad, cuffBand, cuff);
+    // white star badge on the striking face — reads as a GLOVE at a glance
+    // and gives the incoming fist a bright target to track
+    const stripe = grp(-side * R * .05, -R * .2, R * .99);
+    for (const r of [0, Math.PI / 2, Math.PI / 4, -Math.PI / 4]) {
+      const ray = new THREE.Mesh(BOX(r % (Math.PI / 2) ? R * .2 : R * .3, R * .08, R * .04), toon(P.trim));
+      ray.rotation.z = r; stripe.add(ray);
+    }
+    // criss-cross laces on the palm side of the cuff
+    const laces = grp(0, -R * .62, -R * .72);
+    for (const r of [.55, -.55]) for (const z of [-.06, .06]) {
+      const l = new THREE.Mesh(BOX(R * .55, R * .07, R * .07), inkFlat);
+      l.rotation.y = r; l.position.z = z * R * 2;
+      laces.add(l);
+    }
+    g.add(main, thumb, pad, cuffBand, cuff, stripe, laces);
     return g;
   }
 
@@ -294,14 +355,38 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
       stripe.position.set(s * sideX, -.025, frontZ);
       shorts.add(stripe);
     }
-    const badge = new THREE.Mesh(CYL(.046, .046, .014, 12), toon(P.trim));
-    badge.rotation.x = Math.PI / 2;
-    badge.position.set(0, waistY, frontZ + .025);
-    shorts.add(badge);
-    const center = new THREE.Mesh(CYL(.016, .016, .016, 10), basic(P.ink));
-    center.rotation.x = Math.PI / 2;
-    center.position.set(0, waistY, frontZ + .037);
-    shorts.add(center);
+    // title-belt buckle — a gold plate with a jewel; this is a CHAMP you're fighting
+    const plate = inked(CYL(.085, .085, .02, 16), P.gold, { hull: .08 });
+    plate.rotation.x = Math.PI / 2; plate.scale.set(1.25, 1, .9);
+    plate.position.set(0, waistY, frontZ + .03);
+    shorts.add(plate);
+    const rim = new THREE.Mesh(TOR(.06, .009), toon(0xfff0b0));
+    rim.position.set(0, waistY, frontZ + .043); rim.scale.set(1.25, .9, 1);
+    shorts.add(rim);
+    const jewel = new THREE.Mesh(SPH(.026, 10, 8), toon(P.glove));
+    jewel.scale.set(1, 1, .5);
+    jewel.position.set(0, waistY, frontZ + .045);
+    shorts.add(jewel);
+  }
+
+  // rival headband — knotted at the back, two tails that whip with motion
+  const tails = [];
+  function headband(head, r, y, square = false) {
+    const band = square ? inked(BOX(.565, .06, .5), P.band, { hull: .03 })
+      : inked(TOR(r, .03), P.band, { hull: .03 });
+    if (!square) band.rotation.x = Math.PI / 2;
+    band.position.y = y;
+    head.add(band);
+    const knot = inked(SPH(.04, 10, 8), P.band, { hull: .03 });
+    knot.position.set(0, y, -r); head.add(knot);
+    for (const s of [-1, 1]) {
+      const piv = grp(s * .02, y, -r - .02);
+      const tail = inked(BOX(.05, .02, .17), P.band, { hull: .04 });
+      tail.position.z = -.08;
+      piv.add(tail); piv.rotation.set(-.5, s * .35, 0);
+      piv.userData.s = s;
+      head.add(piv); tails.push(piv);
+    }
   }
 
   // ---- the three bodies ----
@@ -457,6 +542,32 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   };
 
   BUILDERS[variant]();
+  if (!playerLook) {                     // square head → square band; tails fly on all
+    // sits ABOVE the brows — the brows are PIP's tell and must stay readable
+    const HB = { bubble: [.226, .205], blocky: [.25, .205], bean: [.195, .185] }[variant];
+    headband(parts.head, HB[0], HB[1], variant === 'blocky');
+  }
+  // dizzy stars — orbit the crown while reeling / out cold (animated in tick,
+  // deliberately NOT mark()ed so the pose blender never fights the orbit)
+  const stars = put(parts.head, grp(0, .36, 0));
+  for (let i = 0; i < 3; i++) {
+    const st = grp(Math.cos(i * TAU / 3) * .26, 0, Math.sin(i * TAU / 3) * .26);
+    for (const r of [0, Math.PI / 2, Math.PI / 4, -Math.PI / 4]) {
+      const ray = inked(BOX(r % (Math.PI / 2) ? .055 : .09, .026, .026), HOUSE.sun, { hull: .12 });
+      ray.rotation.z = r; st.add(ray);
+    }
+    stars.add(st);
+  }
+  stars.visible = false;
+  // sweat beads — drip off the temples when gassed
+  const sweat = [];
+  for (const s of [-1, 1]) {
+    const d = new THREE.Mesh(SPH(.024, 10, 8), toon(0xbfe6ff, { transparent: true, opacity: .9 }));
+    d.scale.set(.8, 1.3, .8);
+    d.userData.home = [s * .27, .08, .1];
+    d.visible = false;
+    put(parts.head, d); sweat.push(d);
+  }
   if (playerLook) {
     // A ring-ready headband makes the entrance boxer readable beside the
     // opponent, even though both share the same compact procedural rig.
@@ -492,6 +603,75 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   /* POSES — each mutates the fresh-from-rest target table T.
      k = t01 phase. f = {eye, mouth} expression modes. R = rest table. */
   const R = rest;
+  // live strike aim from pose(…, {kind, reach, y}) — null = classic extension
+  let SK = null, SZ = null, SY = null;
+  const other = g => g === 'gloveL' ? 'gloveR' : 'gloveL';
+  const angryBrows = (t, a) => { t.browL.r[2] = -a; t.browR.r[2] = a; };
+
+  // g = punching glove part, sx = its screen side (+1 = gloveR side)
+  function windupSide(t, k, f, g, sx) {
+    const e = ss(0, 1, k), r = R[g].p;
+    if (SK === 'hook') {                         // cocked WIDE and high — it comes from the side
+      t[g].p = [r[0] + .24 * sx * e, r[1] + .1 * e, r[2] - .14 * e];
+      t[g].r[1] = sx * .9 * e;
+      t.torso.r[1] = .6 * sx * e; t.head.r[1] = -.18 * sx * e;
+    } else if (SK === 'upper') {                 // sinks low — it comes from below
+      t[g].p = [r[0] + .06 * sx * e, r[1] - .28 * e, r[2] - .04 * e];
+      t[g].r[0] = -.6 * e;
+      t.torso.r[1] = .3 * sx * e; t.torso.r[0] = .22 * e;
+      t.root.p[1] -= .07 * e; t.root.r[2] = .12 * sx * e;
+    } else {                                     // jab / straight — pulled back on the line
+      t[g].p = [r[0] + .1 * sx * e, r[1] + .05 * e, r[2] - .26 * e];
+      t[g].r[0] = .5 * e;
+      t.torso.r[1] = .42 * sx * e; t.head.r[1] = -.14 * sx * e;
+    }
+    t[g].s = [1 + .2 * e, 1 + .2 * e, 1 + .2 * e];  // cocked glove swells
+    t[other(g)].p[2] -= .07 * e;
+    t.squash.s = [1 + .05 * e, 1 - .07 * e, 1 + .05 * e];
+    t.root.p[1] -= .02 * e;
+    angryBrows(t, .5 * e);                       // angry V
+    t.browL.p[1] -= .018 * e; t.browR.p[1] -= .018 * e;
+    f.mouth = 'grit';
+  }
+  function straight(t, k, f, g, sx, zEnd, smear, twist) {
+    const e = attack(k), r = R[g].p;
+    t[g].p = [lerp(r[0], .05 * sx, e), lerp(r[1], SY ?? .74, e), lerp(r[2], SZ ?? zEnd, e)];
+    t[g].s = [1 - .12 * e, 1 - .12 * e, 1 + smear * e];   // motion smear
+    t[g].r[0] = -.32 * e;
+    t.torso.r[1] = -twist * sx * e; t.head.r[1] = (twist > .5 ? .12 : .08) * sx * e;
+    if (twist > .5) t.root.p[2] += .05 * e;
+    t.squash.s = [1 - .02 * e, 1 + .025 * e, 1 + .055 * e];
+    t[other(g)].p[2] -= (twist > .5 ? .1 : .07) * e;
+    angryBrows(t, .33 * e);
+    f.mouth = 'grit';
+  }
+  function hookSide(t, k, f, g, sx) {
+    const e = attack(k), r = R[g].p, arc = Math.sin(e * Math.PI);
+    t[g].p = [
+      lerp(r[0], -.05 * sx, e) + arc * (SZ ? .34 : .2) * sx,   // swing wide then across
+      lerp(r[1], SY ?? .76, e),
+      lerp(r[2], SZ ?? .36, e) + arc * .07,
+    ];
+    t[g].r[1] = -1.25 * sx * e;
+    t[g].s = [1 + .22 * e, 1 - .08 * e, 1 - .08 * e];
+    t.torso.r[1] = -.62 * sx * e; t.head.r[1] = .16 * sx * e;
+    t.squash.s = [1 + .04 * e, 1 - .02 * e, 1 - .02 * e];
+    angryBrows(t, .38 * e);
+    f.mouth = 'grit';
+  }
+  function upperSide(t, k, f, g, sx) {
+    const e = attack(k), r = R[g].p;
+    // scoop: starts at the hip and drives UP the centre line into the chin
+    t[g].p = [lerp(r[0], .04 * sx, e), lerp(r[1] - .26, SY ?? .95, e), lerp(r[2], SZ ?? .6, e)];
+    t[g].r[0] = lerp(-.6, -1.1, e);
+    t[g].s = [1 - .1 * e, 1 + .35 * e, 1 - .1 * e];        // vertical smear
+    t.torso.r[1] = -.4 * sx * e; t.torso.r[0] = lerp(.22, -.12, e);
+    t.root.p[1] += .05 * e; t.head.r[0] = -.12 * e;
+    t.squash.s = [1 - .04 * e, 1 + .07 * e, 1 - .03 * e];  // rises onto the toes
+    t[other(g)].p[2] -= .08 * e;
+    angryBrows(t, .42 * e);
+    f.mouth = 'grit';
+  }
   const POSES = {
     idle(t, k, f) {
       const w = Math.sin(k * TAU);
@@ -507,106 +687,41 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
       t.torso.r[0] = .04;
       f.mouth = 'smile';
     },
-    windup(t, k, f) {                            // telegraphed right-hand load
-      const e = ss(0, 1, k);
-      t.gloveR.p = [R.gloveR.p[0] + .12 * e, R.gloveR.p[1] + .05 * e, R.gloveR.p[2] - .26 * e];
-      t.gloveR.s = [1 + .18 * e, 1 + .18 * e, 1 + .18 * e];   // cocked glove swells
-      t.gloveR.r[0] = .5 * e;
-      t.gloveL.p[2] -= .07 * e;
-      t.torso.r[1] = .42 * e; t.head.r[1] = -.14 * e;
-      t.squash.s = [1 + .05 * e, 1 - .07 * e, 1 + .05 * e];
-      t.root.p[1] -= .02 * e;
-      t.browL.r[2] = -.45 * e; t.browR.r[2] = .45 * e;      // angry V
-      t.browL.p[1] -= .015 * e; t.browR.p[1] -= .015 * e;
-      f.mouth = 'flat';
+    /* windups are KIND-SPECIFIC tells (strike.kind): jab pulls straight back,
+       hook cocks the glove wide and high, uppercut sinks the shoulder and
+       drops the glove to the hip. Learn the shapes, not just the '!'. */
+    windup(t, k, f) { windupSide(t, k, f, 'gloveR', 1); },   // telegraphed right-hand load
+    windupL(t, k, f) { windupSide(t, k, f, 'gloveL', -1); }, // gloveL-side mirror
+    jab(t, k, f) { straight(t, k, f, 'gloveL', -1, .68, .4, .42); },       // left snap out +Z
+    jabL(t, k, f) { straight(t, k, f, 'gloveR', 1, .68, .4, .42); },       // gloveR mirror of jab
+    cross(t, k, f) { straight(t, k, f, 'gloveR', 1, .72, .45, .52); },     // right power shot
+    crossL(t, k, f) { straight(t, k, f, 'gloveL', -1, .72, .45, .52); },   // gloveL mirror of cross
+    hook(t, k, f) { hookSide(t, k, f, 'gloveL', -1); },     // left arm whips in an arc
+    hookL(t, k, f) { hookSide(t, k, f, 'gloveR', 1); },     // gloveR mirror of hook
+    upper(t, k, f) { upperSide(t, k, f, 'gloveR', 1); },    // gloveR scoops up from the hip
+    upperL(t, k, f) { upperSide(t, k, f, 'gloveL', -1); },
+    stunned(t, k, f) {                           // reeling: arms dropped, head lolling, wide open
+      const w = Math.sin(k * 5.2), w2 = Math.sin(k * 3.1 + 1);
+      t.root.r[2] = w * .16; t.root.r[0] = -.08 + w2 * .05;
+      t.root.p[0] += w * .05;
+      t.head.r[2] = -w * .22; t.head.r[0] = -.18 + w2 * .08;
+      t.gloveL.p = [R.gloveL.p[0] - .08, R.gloveL.p[1] - .3 + w * .03, R.gloveL.p[2] - .06];
+      t.gloveR.p = [R.gloveR.p[0] + .08, R.gloveR.p[1] - .3 - w * .03, R.gloveR.p[2] - .06];
+      t.squash.s = [1 + .04, 1 - .05, 1 + .04];
+      t.browL.r[2] = .45; t.browR.r[2] = -.45;
+      t.browL.p[1] += .025; t.browR.p[1] += .025;
+      f.eye = 'spiral'; f.mouth = 'o';
     },
-    windupL(t, k, f) {                           // gloveL-side load — X/yaw mirror of windup
-      const e = ss(0, 1, k);
-      t.gloveL.p = [R.gloveL.p[0] - .12 * e, R.gloveL.p[1] + .05 * e, R.gloveL.p[2] - .26 * e];
-      t.gloveL.s = [1 + .18 * e, 1 + .18 * e, 1 + .18 * e];
-      t.gloveL.r[0] = .5 * e;
-      t.gloveR.p[2] -= .07 * e;
-      t.torso.r[1] = -.42 * e; t.head.r[1] = .14 * e;
-      t.squash.s = [1 + .05 * e, 1 - .07 * e, 1 + .05 * e];
-      t.root.p[1] -= .02 * e;
-      t.browL.r[2] = -.45 * e; t.browR.r[2] = .45 * e;
-      t.browL.p[1] -= .015 * e; t.browR.p[1] -= .015 * e;
-      f.mouth = 'flat';
-    },
-    jab(t, k, f) {                               // left snap straight out +Z
-      const e = attack(k);
-      t.gloveL.p = [lerp(R.gloveL.p[0], -.05, e), lerp(R.gloveL.p[1], .74, e), lerp(R.gloveL.p[2], .68, e)];
-      t.gloveL.s = [1 - .12 * e, 1 - .12 * e, 1 + .4 * e];  // motion smear
-      t.gloveL.r[0] = -.3 * e;
-      t.torso.r[1] = .42 * e; t.head.r[1] = -.08 * e;
-      t.squash.s = [1 - .02 * e, 1 + .02 * e, 1 + .05 * e];
-      t.gloveR.p[2] -= .07 * e;
-      t.browL.r[2] = -.3 * e; t.browR.r[2] = .3 * e;
-      f.mouth = 'flat';
-    },
-    cross(t, k, f) {                             // right power shot, big twist
-      const e = attack(k);
-      t.gloveR.p = [lerp(R.gloveR.p[0], .05, e), lerp(R.gloveR.p[1], .73, e), lerp(R.gloveR.p[2], .72, e)];
-      t.gloveR.s = [1 - .12 * e, 1 - .12 * e, 1 + .45 * e];
-      t.gloveR.r[0] = -.35 * e;
-      t.torso.r[1] = -.52 * e; t.head.r[1] = .12 * e;
-      t.root.p[2] += .05 * e;
-      t.squash.s = [1 - .02 * e, 1 + .03 * e, 1 + .06 * e];
-      t.gloveL.p[2] -= .1 * e;
-      t.browL.r[2] = -.35 * e; t.browR.r[2] = .35 * e;
-      f.mouth = 'o';
-    },
-    jabL(t, k, f) {                              // gloveR snap — X/yaw mirror of jab
-      const e = attack(k);
-      t.gloveR.p = [lerp(R.gloveR.p[0], .05, e), lerp(R.gloveR.p[1], .74, e), lerp(R.gloveR.p[2], .68, e)];
-      t.gloveR.s = [1 - .12 * e, 1 - .12 * e, 1 + .4 * e];
-      t.gloveR.r[0] = -.3 * e;
-      t.torso.r[1] = -.42 * e; t.head.r[1] = .08 * e;
-      t.squash.s = [1 - .02 * e, 1 + .02 * e, 1 + .05 * e];
-      t.gloveL.p[2] -= .07 * e;
-      t.browL.r[2] = -.3 * e; t.browR.r[2] = .3 * e;
-      f.mouth = 'flat';
-    },
-    hookL(t, k, f) {                             // gloveR arm whips — mirror of hook
-      const e = attack(k);
-      const arc = Math.sin(e * Math.PI);
-      t.gloveR.p = [
-        lerp(R.gloveR.p[0], -.05, e) + arc * .20,
-        lerp(R.gloveR.p[1], .76, e),
-        lerp(R.gloveR.p[2], .36, e) + arc * .07,
-      ];
-      t.gloveR.r[1] = -1.25 * e;
-      t.gloveR.s = [1 + .22 * e, 1 - .08 * e, 1 - .08 * e];
-      t.torso.r[1] = -.58 * e; t.head.r[1] = .16 * e;
-      t.squash.s = [1 + .04 * e, 1 - .02 * e, 1 - .02 * e];
-      t.browL.r[2] = -.35 * e; t.browR.r[2] = .35 * e;
-      f.mouth = 'o';
-    },
-    crossL(t, k, f) {                            // gloveL power shot — mirror of cross
-      const e = attack(k);
-      t.gloveL.p = [lerp(R.gloveL.p[0], -.05, e), lerp(R.gloveL.p[1], .73, e), lerp(R.gloveL.p[2], .72, e)];
-      t.gloveL.s = [1 - .12 * e, 1 - .12 * e, 1 + .45 * e];
-      t.gloveL.r[0] = -.35 * e;
-      t.torso.r[1] = .52 * e; t.head.r[1] = -.12 * e;
-      t.root.p[2] += .05 * e;
-      t.squash.s = [1 - .02 * e, 1 + .03 * e, 1 + .06 * e];
-      t.gloveR.p[2] -= .1 * e;
-      t.browL.r[2] = -.35 * e; t.browR.r[2] = .35 * e;
-      f.mouth = 'o';
-    },
-    hook(t, k, f) {                              // left arm whips in an arc
-      const e = attack(k);
-      const arc = Math.sin(e * Math.PI);
-      t.gloveL.p = [
-        lerp(R.gloveL.p[0], .05, e) - arc * .20,   // swing wide then across
-        lerp(R.gloveL.p[1], .76, e),
-        lerp(R.gloveL.p[2], .36, e) + arc * .07,
-      ];
-      t.gloveL.r[1] = 1.25 * e;
-      t.gloveL.s = [1 + .22 * e, 1 - .08 * e, 1 - .08 * e];
-      t.torso.r[1] = .58 * e; t.head.r[1] = -.16 * e;
-      t.squash.s = [1 + .04 * e, 1 - .02 * e, 1 - .02 * e];
-      t.browL.r[2] = -.35 * e; t.browR.r[2] = .35 * e;
+    whiff(t, k, f) {                             // overextended stumble after a miss
+      const e = attack(Math.min(1, k * 1.3));
+      t.root.r[0] = .2 * e; t.root.p[2] += .1 * e;
+      t.root.r[2] = .12 * e * Math.sin(k * 7);
+      t.torso.r[1] = .3 * e;
+      t.gloveL.p = [R.gloveL.p[0] + .1 * e, R.gloveL.p[1] - .1 * e, R.gloveL.p[2] + .25 * e];
+      t.gloveR.p = [R.gloveR.p[0] + .12 * e, R.gloveR.p[1] - .18 * e, R.gloveR.p[2] - .05 * e];
+      t.head.r[0] = .15 * e;
+      t.browL.r[2] = .35 * e; t.browR.r[2] = -.35 * e;
+      t.browL.p[1] += .03 * e; t.browR.p[1] += .03 * e;
       f.mouth = 'o';
     },
     block(t, k, f) {                             // mitts up over the face
@@ -693,9 +808,12 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   // 'down' is a held state: if the caller pins t01 at 1 we still play the
   // plush-toy fall once via an internal ramp; partial t01 is respected
   // verbatim so the fall can also be scrubbed.
-  const CYCLIC = new Set(['idle', 'celebrate', 'wave', 'victory']);
+  const CYCLIC = new Set(['idle', 'celebrate', 'wave', 'victory', 'stunned']);
   let downT = 0, effK = 0;
-  function pose(name, t01 = 0) {
+  function pose(name, t01 = 0, strike = null) {
+    SK = strike?.kind ?? null;
+    SZ = Number.isFinite(strike?.reach) ? strike.reach : null;
+    SY = SZ !== null && Number.isFinite(strike?.y) ? strike.y : null;
     if (!POSES[name]) {
       if (!warned.has(name)) {
         warned.add(name);
@@ -739,7 +857,9 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     const d = Math.hypot(dx, dy, dz) || 1e-5;
     piv.rotation.x = -Math.atan2(dy, h);
     piv.rotation.y = Math.atan2(dx, dz);
-    const s = clamp(d / piv.userData.len, .55, 3.2), sh = 1 / Math.sqrt(s);
+    // rubber hose: a lens-bound strike stretches the arm way out, but the
+    // bone never thins past half width so it still reads as an arm
+    const s = clamp(d / piv.userData.len, .55, 7), sh = Math.max(.5, 1 / Math.sqrt(s));
     const b = piv.userData.bone;
     b.scale.set(sh, s, sh);
     b.position.z = piv.userData.len * s * .5;
@@ -804,7 +924,36 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     parts.gloveR.position.y += Math.sin(time * 3.1 + .9) * .006 * calm;
     const cyc = time % 3.7;
     const bl = eyeMode === 'open' && cyc < .14 ? 1 - .92 * Math.sin(Math.PI * cyc / .14) : 1;
-    for (const o of openEyes) o.scale.y = bl;
+    for (let i = 0; i < openEyes.length; i++)
+      openEyes[i].scale.y = bl * (i === 1 && dmg >= .78 ? .5 : 1);   // right eye swells shut
+    // dizzy stars orbit while reeling / out cold
+    const dizzy = cur === 'stunned' || (cur === 'down' && effK > .4);
+    stars.visible = dizzy;
+    if (dizzy) {
+      stars.rotation.y = time * 4.2;
+      for (let i = 0; i < stars.children.length; i++) {
+        const st = stars.children[i];
+        st.position.y = Math.sin(time * 6 + i * 2.1) * .03;
+        st.rotation.y = -time * 4.2;              // keep each sparkle facing out
+        st.rotation.z = time * 3 + i;
+      }
+    }
+    // gassed → sweat beads slide off the temples on a loop
+    const gas = !!state?.gassed && cur !== 'down';
+    for (let i = 0; i < sweat.length; i++) {
+      const d = sweat[i], h = d.userData.home;
+      d.visible = gas;
+      if (!gas) continue;
+      const u = (time * .9 + i * .5) % 1;
+      d.position.set(h[0] * (1 + u * .15), h[1] - u * .22, h[2]);
+      d.material.opacity = .9 * (1 - u);
+    }
+    // headband tails trail the head motion with a lazy flutter
+    for (const tl of tails) {
+      const s = tl.userData.s;
+      tl.rotation.x = -.5 + Math.sin(time * 6.5 + s) * .12 - (cur === 'stunned' ? .3 : 0);
+      tl.rotation.y = s * (.35 + Math.sin(time * 4.3 + s * 2) * .1) - parts.head.rotation.y * .8;
+    }
     if (eyeMode === 'open')
       for (let i = 0; i < pupils.length; i++) {
         pupils[i].position.x = Math.sin(time * .8 + i * 1.9) * .012;
@@ -821,6 +970,16 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     geos.clear(); mats.clear();
   }
 
+  // wounds accumulate (monotone) — 0..1 fraction of hp lost
+  function setDamage(frac) {
+    dmg = Math.max(dmg, clamp(+frac || 0, 0, 1));
+    const [shiner, lump, bandage] = wounds;
+    if (shiner) shiner.visible = dmg >= .3;
+    if (lump) lump.visible = dmg >= .5;
+    if (bandage) bandage.visible = dmg >= .65;
+  }
+
   pose('idle', 0); applyNow();                    // start standing, guard up
-  return { group, parts, pose, snap, tick, trackHands, dispose, variant, height: 1.3 };
+  return { group, parts, pose, snap, tick, trackHands, setDamage, dispose, variant, height: 1.3,
+    gloveColor: P.glove };
 }
