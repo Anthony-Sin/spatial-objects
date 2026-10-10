@@ -45,9 +45,11 @@ export async function createGame(opts = {}) {
     if (!hands) try { hands = (await import('../hands.js')).default.create(opts.video, vend); } catch {}
   }
 
-  /* camera sits at the *fighter's* eye line — eye-to-eye with the pick */
-  const EYE = npc.eyeY ?? 1.4;
-  const HEAD = npc.headY ?? 1.0;
+  /* camera sits low — chin/chest height — so the fighter's face rides the
+     upper frame and its gloves own the center. NPC punches thrown at glove
+     height come straight at the lens and read as real hits. */
+  const EYE = (npc.eyeY ?? 1.4) * .78;
+  const HEAD = (npc.headY ?? 1.0) * .85;
 
   const fx = makeFx(THREE, world.scene);
   let camSway = 0, shakeT = 0, dodged = false, tNow = 0;

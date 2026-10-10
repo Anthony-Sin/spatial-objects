@@ -73,7 +73,7 @@ if (booted) {
       // span swells (the throw), then the fist must STAY out ~350ms —
       // FistTracker emits at thrust apex / MAX_THROW_T, and a hand that
       // vanishes mid-throw cancels the punch instead of emitting it
-      for (const s of [.04, .06, .085, .11]) { set(side, .35, .55, s); await sleep(70); }
+      for (const s of [.04, .055, .07, .09, .11]) { set(side, .35, .55, s); await sleep(90); }
       set(side, .35, .55, .11); await sleep(400);
       set(null); await sleep(120);
     };
@@ -92,13 +92,18 @@ if (booted) {
       await sleep(120);
     }
 
-    /* phase 2 — jab spam until the NPC feels it */
+    /* phase 2 — time shots like a player: only swing when PIP is in reach
+       (blind spam at a circling fighter whiffs 'range' — that's the game
+       working, not a bug). Wait ≤2.5s per swing for the press to close. */
     let swung = 0;
     const hp0 = B.fight.state.npc.hp;
     const t1 = performance.now();
-    while (performance.now() - t1 < 25000 &&
+    while (performance.now() - t1 < 30000 &&
            B.fight.state.npc.hp >= hp0 &&
            !B.log.some(e => e === 'npc-hit' || e === 'player-hit')) {
+      const tw = performance.now();
+      while (B.sim.distance() > 1.35 && performance.now() - tw < 2500) await sleep(60);
+      if (B.fight.state.phase !== 'fighting') break;
       await punch(swung++ % 2 ? 'right' : 'left');
     }
     return {

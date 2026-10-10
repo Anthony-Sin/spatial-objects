@@ -1,7 +1,8 @@
 /* shared/boxing/boxglove.js — the boxing mitt overlay.
 
-   A single chunky BLOCKY boxing glove — Kenney-style: rounded-rect mitt
-   with a flat-ish knuckle face, thumb bump, wide laced cuff, ink outline.
+   One big ROUND boxing mitt — a puffball lobe like the old hand renderer's
+   blob, but circular and fingerless: fat red circle, smaller thumb circle
+   tucked on the inner side, wide laced cuff, ink outline, paper sheen.
    NO fingers, ever: the hand's 21 landmarks are used ONLY for position,
    angle and size (span = depth → bigger = closer). The mitt itself is a
    fixed silhouette so tracking jitter can't distort it.
@@ -10,11 +11,11 @@
      P    — either 21 {x,y} canvas-pixel landmarks, or null/short
             (then opts.manual must carry the pose)
      opts — { side:'left'|'right', kind, reach (1=rest, >1=thrust),
-              squash (0..1 punch smear), dim (0..1 lost-tracking fade),
-              manual:{x,y,size,ang} }
+             squash (0..1 punch smear), dim (0..1 lost-tracking fade),
+             manual:{x,y,size,ang} }
 */
 const RED = '#e0341f', RED_D = '#b3261a', INK = '#2b2118',
-  CUFF = '#fff8ec', LACE = '#e0341f', SHINE = 'rgba(255,248,236,.75)';
+  CUFF = '#fff8ec', LACE = '#e0341f', SHINE = 'rgba(255,248,236,.8)';
 
 const palmPos = (P) => {
   const ring = [0, 5, 9, 13, 17];
@@ -34,56 +35,54 @@ export function drawBoxGlove(ctx, P, opts = {}) {
   const size = pos.size * (0.55 + 0.45 * Math.min(reach, 1.8));   // thrust grows the mitt
   const dim = opts.dim ?? 1;
   const sq = opts.squash ?? 0;                 // 0..1 stretch along the punch
-  const w = size * 1.9, h = size * 1.55;       // chunky blocky lobe
+  const R = size * .92;                        // main lobe radius — big circle
+  const thumbSide = opts.side === 'right' ? -1 : 1;
+  const inkW = Math.max(3, size * .06);
 
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(ang + Math.PI / 2);               // lm0→lm9 is wrist→knuckle; mitt faces forward
   ctx.globalAlpha = dim;
 
-  // punch squash: lobe stretches along the thrust, cuffs stay put
-  ctx.translate(0, -h * .18 * sq);
-  ctx.scale(1 - sq * .18, 1 + sq * .34);
+  // punch squash: lobe stretches along the thrust, cuff stays put
+  ctx.translate(0, -R * .3 * sq);
+  ctx.scale(1 - sq * .16, 1 + sq * .3);
 
-  const r = Math.min(w, h) * .42;              // big-but-squared corner radius (blocky)
-  const thumbSide = opts.side === 'right' ? -1 : 1;
-
-  // --- cuff (drawn first, sits behind the lobe) ---
-  const cuffW = w * .62, cuffH = size * .62;
+  // --- cuff (drawn first, sits behind everything) ---
+  const cuffW = R * 1.15, cuffH = size * .6;
   ctx.beginPath();
-  ctx.roundRect(-cuffW / 2, h * .34, cuffW, cuffH, cuffW * .3);
+  ctx.roundRect(-cuffW / 2, R * .62, cuffW, cuffH, cuffW * .35);
   ctx.fillStyle = CUFF; ctx.fill();
   ctx.lineWidth = Math.max(2.5, size * .055); ctx.strokeStyle = INK; ctx.stroke();
   // lace ticks across the cuff
   ctx.lineWidth = Math.max(1.6, size * .035);
-  for (const lx of [-.22, 0, .22]) {
+  for (const lx of [-.28, 0, .28]) {
     ctx.beginPath();
-    ctx.moveTo(lx * cuffW * 1.9, h * .42); ctx.lineTo(lx * cuffW * 1.9, h * .42 + cuffH * .62);
+    ctx.moveTo(lx * cuffW, R * .72); ctx.lineTo(lx * cuffW, R * .72 + cuffH * .62);
     ctx.strokeStyle = LACE; ctx.stroke();
   }
 
-  // --- thumb bump (behind the lobe, on the inner side) ---
+  // --- thumb: smaller circle hugging the inner side ---
   ctx.beginPath();
-  ctx.ellipse(thumbSide * w * .42, -h * .02, w * .24, h * .3, thumbSide * .5, 0, 7);
+  ctx.arc(thumbSide * R * .78, -R * .1, R * .46, 0, 7);
   ctx.fillStyle = RED_D; ctx.fill();
   ctx.lineWidth = Math.max(2.5, size * .05); ctx.strokeStyle = INK; ctx.stroke();
 
-  // --- main mitt lobe ---
+  // --- main mitt: one big fat circle ---
   ctx.beginPath();
-  ctx.roundRect(-w / 2, -h * .92, w, h * 1.28, r);
+  ctx.arc(0, -R * .35, R, 0, 7);
   ctx.fillStyle = RED; ctx.fill();
-  ctx.lineWidth = Math.max(3, size * .06); ctx.strokeStyle = INK; ctx.stroke();
+  ctx.lineWidth = inkW; ctx.strokeStyle = INK; ctx.stroke();
 
-  // knuckle face — a slightly darker flat panel up top (blocky planes)
+  // seam ring inside the lobe (glove panel line)
   ctx.beginPath();
-  ctx.roundRect(-w * .38, -h * .82, w * .76, h * .3, r * .5);
-  ctx.fillStyle = RED_D; ctx.fill();
-  ctx.lineWidth = Math.max(1.8, size * .03); ctx.stroke();
+  ctx.arc(0, -R * .35, R * .62, Math.PI * .15, Math.PI * .85);
+  ctx.strokeStyle = RED_D; ctx.lineWidth = Math.max(1.8, size * .032); ctx.stroke();
 
-  // sheen arc on the knuckle face
+  // sheen arc across the upper knuckle
   ctx.beginPath();
-  ctx.arc(-w * .12, -h * .66, w * .16, Math.PI * 1.05, Math.PI * 1.65);
-  ctx.strokeStyle = SHINE; ctx.lineWidth = Math.max(2, size * .045);
+  ctx.arc(-R * .18, -R * .52, R * .5, Math.PI * 1.08, Math.PI * 1.62);
+  ctx.strokeStyle = SHINE; ctx.lineWidth = Math.max(2.5, size * .05);
   ctx.lineCap = 'round'; ctx.stroke();
 
   ctx.restore();
