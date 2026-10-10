@@ -21,13 +21,13 @@
       <div id="empty" class="empty">
         <div class="target-icon"><i></i><i></i><i></i><i></i><span>◉</span></div>
         <h1>Make your surroundings interactive.</h1>
-        <p>Point your camera at everyday objects. Capture a frame to explore object labels and an aligned AI depth estimate.</p>
+        <p>Point your camera at everyday objects. Tap a detected object to inspect it. Live depth runs when connected to your computer.</p>
         <button id="startBtn" class="primary">Start camera <span>↗</span></button>
         <button id="uploadBtn" class="text-button">Or try a photo</button>
         <input id="fileInput" type="file" accept="image/*" hidden>
       </div>
       <div class="stage-top"><span class="live-dot"></span><span id="stageState">CAMERA OFF</span><span id="resolution"></span></div>
-      <div id="hint" class="scan-hint">Tap a detected object for actions</div>
+      <div id="hint" class="scan-hint">Tap a highlighted object for actions</div>
       <div class="reticle" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
       <div class="stage-bottom"><span id="objectCount">0 OBJECTS</span><span id="depthState">DEPTH IDLE</span></div>
     </section>
@@ -50,9 +50,10 @@
       <div class="actions"><button id="anchorBtn">⌖ &nbsp; Pin</button><button id="shareBtn">↗ &nbsp; Share</button><button id="copyBtn">⧉ &nbsp; Copy label</button></div>
     </aside>
 
-    <section class="info-strip"><span class="spark">✳</span><p><b>On-device scan.</b> Frames stay in your browser. The object and depth models download on first use. Depth is AI estimated from one image, so it cannot give real-world distance or reliable occlusion.</p></section>
+    <section class="info-strip"><span class="spark">✳</span><p id="processingNote"><b>On-device scan.</b> Frames stay in your browser. The object and depth models download on first use. Depth is AI estimated from one image, so it cannot give real-world distance or reliable occlusion.</p></section>
     <footer><span>EXPERIMENTAL XR INTERFACE</span><span id="status" role="status">Ready to explore</span></footer>
   </main>
+  <script src="./mqtt.min.js"></script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

@@ -1,1 +1,4 @@
 site-build.tar.gz
+node_modules/
+tools/
+live-qr.png

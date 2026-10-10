@@ -2,7 +2,9 @@ const $ = id => document.getElementById(id);
 const video = $('video'), view = $('view'), ctx = view.getContext('2d');
 const source = document.createElement('canvas'), sourceCtx = source.getContext('2d', { willReadFrequently: true });
 const depthCanvas = document.createElement('canvas'), depthCtx = depthCanvas.getContext('2d');
-const state = { stream: null, detector: null, detectorPromise: null, depthModel: null, depthPromise: null, detections: [], depth: null, frozen: false, selected: -1, pins: [], mode: 'rgb', lastDetection: 0, sourceType: 'camera', busy: false };
+const params=new URLSearchParams(location.search);
+const state = { stream: null, detector: null, detectorPromise: null, depthModel: null, depthPromise: null, detections: [], depth: null, frozen: false, selected: -1, pins: [], mode: 'rgb', lastDetection: 0, sourceType: 'camera', busy: false, remote: params.has('token')||(params.has('relay')&&params.has('key')), socket: null, relayClient: null, relayKey: null, remoteReady: false, paused: false, frameId: 0, busyId: 0, sentFrames: new Map(), lastResultAt: 0, latestLive: null, latestDepth: null };
+const transmitCanvas = document.createElement('canvas');
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-tasks/object_detector/efficientdet_lite0_uint8.tflite';
 const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm';
 const VISION_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/+esm';
@@ -12,7 +14,6 @@ function status(message) { $('status').textContent = message; }
 function badge(message) { $('modeBadge').textContent = message; }
 function setStage(message) { $('stageState').textContent = message; }
 function readableError(error) { return error?.message || String(error); }
-function roundRect(x,y,w,h,r) { ctx.beginPath(); ctx.roundRect(x,y,w,h,r); }
 function resizeView() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const width = Math.round(view.clientWidth * dpr), height = Math.round(view.clientHeight * dpr);
@@ -114,9 +115,116 @@ async function startCamera(){
     state.frozen=false;state.sourceType='camera';state.depth=null;state.detections=[];state.pins=[];state.selected=-1;source.width=0;source.height=0;
     $('empty').hidden=true;$('captureBtn').disabled=false;$('captureBtn').hidden=false;$('resumeBtn').hidden=true;$('objectPanel').hidden=true;
     badge('LIVE');setStage('LIVE CAMERA');$('depthState').textContent='DEPTH IDLE';status('Point camera at objects'); updateCounters();draw();
-    loadDetector().catch(error=>status(`Object model failed: ${readableError(error)}`));
-    requestAnimationFrame(tick);
+    if(state.remote){$('captureBtn').hidden=true;connectRemote()}
+    else {loadDetector().catch(error=>status(`Object model failed: ${readableError(error)}`));requestAnimationFrame(tick)}
   }catch(error){badge('CAMERA ERROR');status(`Camera: ${readableError(error)}. Try a photo.`);}
+}
+function base64urlBytes(value){const base64=value.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-value.length%4)%4);const binary=atob(base64);return Uint8Array.from(binary,c=>c.charCodeAt(0))}
+async function encryptRelay(object){
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const plaintext=new TextEncoder().encode(JSON.stringify(object));
+  const encrypted=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},state.relayKey,plaintext));
+  const payload=new Uint8Array(iv.length+encrypted.length);payload.set(iv);payload.set(encrypted,iv.length);return payload;
+}
+async function decryptRelay(payload){
+  const bytes=payload instanceof Uint8Array?payload:new Uint8Array(payload);
+  const plaintext=await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes.slice(0,12)},state.relayKey,bytes.slice(12));
+  return JSON.parse(new TextDecoder().decode(plaintext));
+}
+async function sendRemoteMessage(message){
+  if(state.relayClient){
+    if(!state.relayClient.connected)throw new Error('Relay disconnected');
+    state.relayClient.publish(`spatial/${params.get('relay')}/frames`,await encryptRelay(message),{qos:0});
+  } else if(state.socket?.readyState===1)state.socket.send(JSON.stringify(message));
+  else throw new Error('Computer disconnected');
+}
+async function handleRemoteMessage(message){
+  if(message.type==='hello'){
+    if(message.status==='ready'){state.remoteReady=true;badge('PC LIVE');setStage('PC INFERENCE / LIVE');status('Computer is scanning live');sendRemoteFrame()}
+    else if(message.status==='error'){badge('MODEL ERROR');status(message.error||'Computer model failed')}
+    else {status(`Computer models: ${message.status}…`);setTimeout(()=>sendRemoteMessage({type:'status'}).catch(()=>{}),1800)}
+  }
+  if(message.type==='result'){
+    try{await applyRemoteResult(message)}catch(error){status(`Display error: ${readableError(error)}`)}
+    state.busy=false;
+    if(!state.paused)setTimeout(sendRemoteFrame,80);
+  }
+  if(message.type==='depth'){
+    try{await applyRemoteDepth(message)}catch(error){status(`Depth display error: ${readableError(error)}`)}
+  }
+  if(message.type==='error'){state.busy=false;status(`Computer: ${message.message}`);if(!state.paused)setTimeout(sendRemoteFrame,1000)}
+}
+async function connectRelay(){
+  try{
+    if(!window.mqtt)throw new Error('Relay library did not load');
+    state.relayKey=await crypto.subtle.importKey('raw',base64urlBytes(params.get('key')),'AES-GCM',false,['encrypt','decrypt']);
+    const client=window.mqtt.connect('wss://demo.tbmq.io/mqtt',{username:'demo',clientId:`spatial_phone_${Math.random().toString(36).slice(2)}`,reconnectPeriod:1500,keepalive:30});
+    state.relayClient=client;
+    client.on('connect',()=>{
+      client.subscribe(`spatial/${params.get('relay')}/results`,error=>{
+        if(error){status(`Relay subscribe: ${readableError(error)}`);return}
+        sendRemoteMessage({type:'status'}).catch(error=>status(readableError(error)));
+      });
+    });
+    client.on('message',async(topic,payload)=>{
+      if(topic!==`spatial/${params.get('relay')}/results`)return;
+      try{await handleRemoteMessage(await decryptRelay(payload))}catch(error){status(`Relay message: ${readableError(error)}`)}
+    });
+    client.on('close',()=>{state.remoteReady=false;state.busy=false;badge('RECONNECTING');status('Relay reconnecting…')});
+    client.on('error',error=>status(`Relay: ${readableError(error)}`));
+    setInterval(()=>{if(client.connected&&!state.remoteReady)sendRemoteMessage({type:'status'}).catch(()=>{})},3000);
+  }catch(error){badge('RELAY ERROR');status(`Relay setup: ${readableError(error)}`)}
+}
+function connectRemote(){
+  state.paused=false;state.remoteReady=false;
+  badge('CONNECTING');setStage('CONNECTING TO COMPUTER');status('Connecting to computer…');
+  if(params.has('relay')){connectRelay();return}
+  const url=new URL('/ws',location.href);url.protocol=location.protocol==='https:'?'wss:':'ws:';
+  url.searchParams.set('token',params.get('token'));
+  const socket=new WebSocket(url);state.socket=socket;
+  socket.onopen=()=>sendRemoteMessage({type:'status'}).catch(()=>{});
+  socket.onmessage=event=>{try{handleRemoteMessage(JSON.parse(event.data))}catch{}};
+  socket.onclose=()=>{state.remoteReady=false;state.busy=false;if(state.stream&&!state.paused){badge('RECONNECTING');status('Computer connection lost — reconnecting…');setTimeout(connectRemote,2200)}};
+  socket.onerror=()=>status('Computer connection error');
+}
+function sendRemoteFrame(){
+  if(!state.remoteReady||state.paused||state.busy||!state.stream||video.readyState<2)return;
+  const scale=Math.min(1,640/Math.max(video.videoWidth,video.videoHeight));
+  transmitCanvas.width=Math.max(1,Math.round(video.videoWidth*scale));transmitCanvas.height=Math.max(1,Math.round(video.videoHeight*scale));
+  transmitCanvas.getContext('2d').drawImage(video,0,0,transmitCanvas.width,transmitCanvas.height);
+  const id=++state.frameId,image=transmitCanvas.toDataURL('image/jpeg',.68);
+  state.sentFrames.set(id,image);while(state.sentFrames.size>16)state.sentFrames.delete(state.sentFrames.keys().next().value);
+  state.busy=true;state.busyId=id;
+  sendRemoteMessage({type:'frame',id,image}).catch(error=>{state.busy=false;status(`Send failed: ${readableError(error)}`)});
+  setTimeout(()=>{if(state.busy&&state.busyId===id){state.busy=false;if(!state.paused){status('Frame result dropped — resuming scan');sendRemoteFrame()}}},7000);
+}
+async function decodeRemoteFrame(message){
+  const sent=message.image||state.sentFrames.get(message.id);
+  if(!sent)return null;
+  const image=new Image();image.src=sent;await image.decode();
+  const detections=(message.detections||[]).map(d=>({categories:[{categoryName:d.label,score:d.score}],boundingBox:{originX:d.box.xmin,originY:d.box.ymin,width:d.box.xmax-d.box.xmin,height:d.box.ymax-d.box.ymin}}));
+  let depth=null;
+  if(message.depth){const binary=atob(message.depth.data),pixels=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)pixels[i]=binary.charCodeAt(i);depth={data:pixels,width:message.depth.width,height:message.depth.height}}
+  return {image,width:message.width,height:message.height,detections,depth};
+}
+function displayRemoteFrame(frame){
+  if(!frame)return;
+  source.width=frame.width;source.height=frame.height;sourceCtx.drawImage(frame.image,0,0);
+  state.frozen=true;state.detections=frame.detections;state.depth=frame.depth;
+  if(frame.depth)colorizeDepth(frame.depth);
+  updateCounters();draw();
+}
+async function applyRemoteResult(message){
+  const frame=await decodeRemoteFrame(message);if(!frame)return;
+  state.latestLive=frame;
+  if(!state.paused&&state.mode==='rgb')displayRemoteFrame(frame);
+  state.lastResultAt=performance.now();
+}
+async function applyRemoteDepth(message){
+  const frame=await decodeRemoteFrame(message);if(!frame)return;
+  state.latestDepth=frame;
+  $('depthState').textContent='LIVE RELATIVE DEPTH';
+  if(!state.paused&&state.mode!=='rgb')displayRemoteFrame(frame);
 }
 function tick(timestamp){
   if(state.frozen||!state.stream)return;
@@ -178,17 +286,34 @@ function selectObject(index){
   state.selected=index;const d=state.detections[index];const c=d.categories?.[0]||{};
   $('objectName').textContent=c.categoryName||'Object';$('confidence').textContent=`${Math.round((c.score||0)*100)}%`;
   $('objectDepth').textContent=relativeDepth(d.boundingBox);$('objectPanel').hidden=false;draw();
-  $('objectPanel').scrollIntoView({behavior:'smooth',block:'nearest'});
+  if(window.innerWidth>620)$('objectPanel').scrollIntoView({behavior:'smooth',block:'nearest'});
 }
-view.addEventListener('click',event=>{
+function nearestDetection(x,y,g){
+  let match=-1,area=Infinity;
+  const tolerance=32/g.scale;
+  state.detections.forEach((d,i)=>{const b=d.boundingBox;if(!b)return;
+    if(x>=b.originX-tolerance&&x<=b.originX+b.width+tolerance&&y>=b.originY-tolerance&&y<=b.originY+b.height+tolerance){
+      const a=b.width*b.height;if(a<area){match=i;area=a}
+    }
+  });
+  return match;
+}
+view.addEventListener('pointerdown',async event=>{
   const g=frameGeometry();if(!g)return;
   const rect=view.getBoundingClientRect(),x=(event.clientX-rect.left-g.x)/g.scale,y=(event.clientY-rect.top-g.y)/g.scale;
-  let match=-1,area=Infinity;
-  state.detections.forEach((d,i)=>{const b=d.boundingBox;if(x>=b.originX&&x<=b.originX+b.width&&y>=b.originY&&y<=b.originY+b.height){const a=b.width*b.height;if(a<area){match=i;area=a}}});
-  if(match>=0)selectObject(match);
+  if(x<0||y<0||x>g.sw||y>g.sh)return;
+  if(!state.remote&&!state.frozen&&state.detector){
+    source.width=video.videoWidth;source.height=video.videoHeight;sourceCtx.drawImage(video,0,0);state.frozen=true;
+    try{await state.detector.setOptions({runningMode:'IMAGE'});state.detections=state.detector.detect(source).detections||[];await state.detector.setOptions({runningMode:'VIDEO'})}catch(error){status(`Tap scan: ${readableError(error)}`)}
+    $('captureBtn').hidden=true;$('resumeBtn').hidden=false;$('resumeBtn').textContent='↺   Continue live scan';updateCounters();draw();
+  }
+  const match=nearestDetection(x,y,g);
+  if(match>=0){if(state.remote){state.paused=true;$('resumeBtn').hidden=false;$('resumeBtn').textContent='↺   Continue live scan';setStage('OBJECT SELECTED / PAUSED')}selectObject(match)}
+  else status('No detected object at that point — try another angle or lighting');
 });
 function setMode(mode){
   state.mode=mode;for(const name of ['rgb','depth','blend']){$(`${name}Btn`).classList.toggle('selected',name===mode);$(`${name}Btn`).setAttribute('aria-pressed',String(name===mode))}
+  if(state.remote){state.selected=-1;$('objectPanel').hidden=true;displayRemoteFrame(mode==='rgb'?state.latestLive:state.latestDepth);if(mode!=='rgb'&&!state.latestDepth)status('Waiting for the next aligned depth frame…');return}
   if(mode!=='rgb'&&!state.depth)status(state.frozen?'Depth is still loading or unavailable':'Scan a frame to estimate depth');draw();
 }
 async function usePhoto(file){
@@ -203,12 +328,13 @@ $('startBtn').addEventListener('click',startCamera);
 $('uploadBtn').addEventListener('click',()=>$('fileInput').click());
 $('fileInput').addEventListener('change',event=>usePhoto(event.target.files?.[0]));
 $('captureBtn').addEventListener('click',captureFrame);
-$('resumeBtn').addEventListener('click',()=>{if(state.sourceType==='photo'){$('fileInput').click();return}state.frozen=false;state.depth=null;state.selected=-1;state.pins=[];$('objectPanel').hidden=true;$('captureBtn').hidden=false;$('resumeBtn').hidden=true;badge('LIVE');setStage('LIVE CAMERA');$('depthState').textContent='DEPTH IDLE';setMode('rgb');requestAnimationFrame(tick)});
+$('resumeBtn').addEventListener('click',()=>{if(state.sourceType==='photo'){$('fileInput').click();return}state.selected=-1;state.pins=[];$('objectPanel').hidden=true;$('resumeBtn').hidden=true;if(state.remote){state.paused=false;badge('PC LIVE');setStage('PC INFERENCE / LIVE');sendRemoteFrame();return}state.frozen=false;state.depth=null;$('captureBtn').hidden=false;badge('LIVE');setStage('LIVE CAMERA');$('depthState').textContent='DEPTH IDLE';setMode('rgb');requestAnimationFrame(tick)});
 for(const mode of ['rgb','depth','blend'])$(`${mode}Btn`).addEventListener('click',()=>setMode(mode));
 $('closePanel').addEventListener('click',()=>{state.selected=-1;$('objectPanel').hidden=true;draw()});
 $('anchorBtn').addEventListener('click',()=>{const b=state.detections[state.selected]?.boundingBox;if(!b)return;state.pins.push({x:b.originX+b.width/2,y:b.originY+b.height/2});status('Pin attached to this captured frame');draw()});
 $('copyBtn').addEventListener('click',async()=>{const label=$('objectName').textContent;try{await navigator.clipboard.writeText(label);status(`Copied “${label}”`)}catch{status('Clipboard unavailable')}});
 $('shareBtn').addEventListener('click',async()=>{const label=$('objectName').textContent;try{if(navigator.share)await navigator.share({title:'Spatial Objects scan',text:`I scanned ${label} with Spatial Objects.`});else{await navigator.clipboard.writeText(`Spatial Objects: ${label}`);status('Object label copied')}}catch(error){if(error.name!=='AbortError')status(`Share failed: ${readableError(error)}`)}});
 window.addEventListener('resize',draw);
-window.addEventListener('pagehide',()=>state.stream?.getTracks().forEach(track=>track.stop()));
+window.addEventListener('pagehide',()=>{state.stream?.getTracks().forEach(track=>track.stop());state.socket?.close();state.relayClient?.end(true)});
+if(state.remote)$('processingNote').innerHTML='<b>Computer processing.</b> Camera frames are encrypted on this phone and relayed to your computer for object detection and relative depth. The view displays each processed frame with matching overlays. The session link contains the encryption key; keep it private.';
 draw();
