@@ -131,10 +131,37 @@ async function decryptRelay(payload){
   const plaintext=await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes.slice(0,12)},state.relayKey,bytes.slice(12));
   return JSON.parse(new TextDecoder().decode(plaintext));
 }
+const CHUNK_MAX=48000,CHUNK_MAGIC=[0x53,0x50,0x4c,0x31];
+const reassembly=new Map();let chunkSeq=0;
+function chunkedRelay(sealed){
+  if(sealed.length<=CHUNK_MAX)return[sealed];
+  const id=chunkSeq=(chunkSeq+1)%65536,body=CHUNK_MAX-8,total=Math.ceil(sealed.length/body),parts=[];
+  for(let i=0;i<total;i++){
+    const part=sealed.subarray(i*body,(i+1)*body),packet=new Uint8Array(8+part.length);
+    packet.set(CHUNK_MAGIC);packet[4]=id&255;packet[5]=id>>8;packet[6]=i;packet[7]=total;packet.set(part,8);
+    parts.push(packet);
+  }
+  return parts;
+}
+function unchunkRelay(payload){
+  if(payload.length<9||payload[0]!==0x53||payload[1]!==0x50||payload[2]!==0x4c||payload[3]!==0x31)return payload;
+  const id=payload[4]|payload[5]<<8,idx=payload[6],total=payload[7];
+  let entry=reassembly.get(id);
+  if(!entry||entry.total!==total){entry={total,parts:new Map(),at:Date.now()};reassembly.set(id,entry)}
+  entry.parts.set(idx,payload.subarray(8));
+  if(reassembly.size>24)for(const [k,v] of reassembly){if(Date.now()-v.at>15000)reassembly.delete(k)}
+  if(entry.parts.size<total)return null;
+  reassembly.delete(id);
+  let size=0;for(let i=0;i<total;i++)size+=entry.parts.get(i).length;
+  const full=new Uint8Array(size);let off=0;
+  for(let i=0;i<total;i++){const p=entry.parts.get(i);full.set(p,off);off+=p.length}
+  return full;
+}
 async function sendRemoteMessage(message){
   if(state.relayClient){
     if(!state.relayClient.connected)throw new Error('Relay disconnected');
-    state.relayClient.publish(`spatial/${params.get('relay')}/frames`,await encryptRelay(message),{qos:0});
+    const topic=`spatial/${params.get('relay')}/frames`;
+    for(const part of chunkedRelay(await encryptRelay(message)))state.relayClient.publish(topic,part,{qos:0});
   } else if(state.socket?.readyState===1)state.socket.send(JSON.stringify(message));
   else throw new Error('Computer disconnected');
 }
@@ -168,7 +195,7 @@ async function connectRelay(){
     });
     client.on('message',async(topic,payload)=>{
       if(topic!==`spatial/${params.get('relay')}/results`)return;
-      try{await handleRemoteMessage(await decryptRelay(payload))}catch(error){status(`Relay message: ${readableError(error)}`)}
+      try{const joined=unchunkRelay(payload);if(joined)await handleRemoteMessage(await decryptRelay(joined))}catch(error){status(`Relay message: ${readableError(error)}`)}
     });
     client.on('close',()=>{state.remoteReady=false;state.busy=false;badge('RECONNECTING');status('Relay reconnecting…')});
     client.on('error',error=>status(`Relay: ${readableError(error)}`));
