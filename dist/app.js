@@ -34,12 +34,11 @@ function draw() {
   const image = state.frozen ? source : video;
   if (image === video && video.readyState < 2) return;
   ctx.drawImage(image,g.x,g.y,g.w,g.h);
-  if (state.frozen && state.depth && state.mode !== 'rgb') {
-    if (state.mode === 'depth') { ctx.fillStyle='#091319'; ctx.fillRect(g.x,g.y,g.w,g.h); ctx.globalAlpha=.96; }
-    else ctx.globalAlpha=.59;
-    ctx.drawImage(depthCanvas,g.x,g.y,g.w,g.h);
-    ctx.globalAlpha=1;
+  if (state.frozen && state.depth && state.mode === 'depth') {
+    ctx.fillStyle='#091319'; ctx.fillRect(g.x,g.y,g.w,g.h);ctx.globalAlpha=.96;
+    ctx.drawImage(depthCanvas,g.x,g.y,g.w,g.h);ctx.globalAlpha=1;
   }
+  if (state.frozen && state.depth && state.mode === 'blend') drawMesh(g);
   for (const [index,d] of state.detections.entries()) drawBox(d,g,index);
   for (const pin of state.pins) drawPin(pin,g);
 }
@@ -58,6 +57,30 @@ function drawBox(d,g,index) {
   ctx.beginPath();ctx.moveTo(x,y+corner);ctx.lineTo(x,y);ctx.lineTo(x+corner,y);ctx.moveTo(x+w-corner,y);ctx.lineTo(x+w,y);ctx.lineTo(x+w,y+corner);ctx.stroke();
 }
 function drawPin(pin,g){const x=g.x+pin.x*g.scale,y=g.y+pin.y*g.scale;ctx.fillStyle='#fff1a6';ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#112821';ctx.lineWidth=2;ctx.stroke();}
+function drawMesh(g){
+  const {data,width,height}=state.depth;
+  const step=Math.max(26,Math.round(Math.min(g.w,g.h)/13));
+  const cols=Math.ceil(g.w/step),rows=Math.ceil(g.h/step);
+  const points=[];
+  for(let row=0;row<=rows;row++){
+    const line=[];
+    for(let col=0;col<=cols;col++){
+      const px=Math.min(g.w,col*g.w/cols),py=Math.min(g.h,row*g.h/rows);
+      const ix=Math.min(width-1,Math.floor(px/g.w*width)),iy=Math.min(height-1,Math.floor(py/g.h*height));
+      line.push({x:g.x+px,y:g.y+py,z:data[iy*width+ix]/255});
+    }
+    points.push(line);
+  }
+  ctx.lineWidth=1.05;
+  for(let row=0;row<rows;row++)for(let col=0;col<cols;col++){
+    const a=points[row][col],b=points[row][col+1],c=points[row+1][col],d=points[row+1][col+1];
+    const z=(a.z+b.z+c.z+d.z)/4;
+    ctx.strokeStyle=`rgba(${Math.round(69+56*z)},${Math.round(220+30*z)},${Math.round(187+35*z)},${(.28+.48*z).toFixed(2)})`;
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.lineTo(d.x,d.y);ctx.lineTo(c.x,c.y);ctx.closePath();
+    if((row+col)%2===0){ctx.moveTo(a.x,a.y);ctx.lineTo(d.x,d.y)}else{ctx.moveTo(b.x,b.y);ctx.lineTo(c.x,c.y)}
+    ctx.stroke();
+  }
+}
 function updateCounters(){ $('objectCount').textContent=`${state.detections.length} OBJECT${state.detections.length===1?'':'S'}`; $('resolution').textContent=source.width?`${source.width} × ${source.height}`:video.videoWidth?`${video.videoWidth} × ${video.videoHeight}`:''; }
 
 async function loadDetector(){
