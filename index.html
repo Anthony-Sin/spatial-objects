@@ -6,7 +6,7 @@
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Baloo+2:wght@700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Baloo+2:wght@700;800&family=Caveat:wght@600;700&display=swap" rel="stylesheet">
 <script type="importmap">
 { "imports": {
   "three": "./vendor/three/three.module.js"
@@ -112,22 +112,46 @@
   .logo-title .bang {
     color:#FF654E;
   }
-  /* Cursive Pip sprout rooted onto the SCRAP! title */
-  .title-sprout {
-    position:absolute;
-    top:clamp(-24px, -3.8vw, -46px);
-    left:clamp(30%, 33%, 36%);
-    width:clamp(42px, 6.5vw, 76px);
-    height:clamp(42px, 6.5vw, 76px);
+
+  /* Cursive Pip sprout rooted underneath the SCRAP! title at a playful dynamic angle */
+  .logo-sprout-under {
+    position:relative;
+    z-index:3;
+    margin-top:clamp(-12px, -1.8vmin, -22px);
+    margin-left:clamp(30px, 6vmin, 70px);
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    transform:rotate(-6deg);
     pointer-events:none;
-    z-index:5;
-    transform:rotate(-12deg);
-    filter:drop-shadow(0 4px 0 #2B2118) drop-shadow(0 0 0 #fff);
-    animation:sproutSway 3.6s ease-in-out infinite;
+    filter:drop-shadow(0 4px 0 #2B2118);
+    animation:sproutFloat 4s ease-in-out infinite;
   }
-  @keyframes sproutSway {
-    0%, 100% { transform:rotate(-12deg) translateY(0); }
-    50%      { transform:rotate(-4deg) translateY(-3px) scale(1.04); }
+  .logo-sprout-text {
+    font-family:"Caveat","Comic Sans MS",cursive,sans-serif;
+    font-size:clamp(30px, 5.2vmin, 54px);
+    font-weight:700;
+    color:#FFD64B;
+    letter-spacing:0.04em;
+    text-shadow:
+      -2.5px -2.5px 0 #2B2118,
+      2.5px -2.5px 0 #2B2118,
+      -2.5px 2.5px 0 #2B2118,
+      2.5px 2.5px 0 #2B2118,
+      0 4px 0 #2B2118;
+    white-space:nowrap;
+    line-height:1;
+  }
+  .logo-sprout-leaf {
+    width:clamp(32px, 5.2vmin, 52px);
+    height:clamp(32px, 5.2vmin, 52px);
+    flex-shrink:0;
+    transform:rotate(14deg);
+    filter:drop-shadow(0 2px 0 #2B2118);
+  }
+  @keyframes sproutFloat {
+    0%, 100% { transform:rotate(-6deg) translateY(0); }
+    50%      { transform:rotate(-3deg) translateY(-4px); }
   }
 
   .ring-canvas {
@@ -465,20 +489,20 @@
           </g>
         </svg>
       </div>
-      <h1 class="logo-title">
-        <!-- Pip's iconic leaf sprout in cursive cartoon style -->
-        <svg class="title-sprout" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <!-- Curving sprout stem -->
-          <path d="M42 66 C40 50 48 38 46 26" stroke="#2B2118" stroke-width="7" stroke-linecap="round" />
-          <path d="M42 66 C40 50 48 38 46 26" stroke="#4FB06D" stroke-width="3.5" stroke-linecap="round" />
-          <!-- Flowing right leaf -->
-          <path d="M46 28 C56 18 72 20 74 24 C72 34 58 38 46 28 Z" fill="#4FB06D" stroke="#2B2118" stroke-width="4.5" stroke-linejoin="round" />
-          <path d="M48 27 Q60 22 66 24" stroke="#8FE4AB" stroke-width="2" stroke-linecap="round" />
-          <!-- Curving left leaf -->
-          <path d="M44 34 C32 24 16 30 14 36 C20 44 36 42 44 34 Z" fill="#3D9B59" stroke="#2B2118" stroke-width="4.5" stroke-linejoin="round" />
+      <h1 class="logo-title">SCRAP<span class="bang">!</span></h1>
+      <div class="logo-sprout-under" aria-label="Sprout Edition">
+        <span class="logo-sprout-text">sprout</span>
+        <svg class="logo-sprout-leaf" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <!-- Curving stem -->
+          <path d="M22 52 C20 40 28 30 26 18" stroke="#2B2118" stroke-width="6" stroke-linecap="round" />
+          <path d="M22 52 C20 40 28 30 26 18" stroke="#4FB06D" stroke-width="3" stroke-linecap="round" />
+          <!-- Big glossy leaf -->
+          <path d="M26 20 C36 10 50 12 52 16 C50 26 36 30 26 20 Z" fill="#4FB06D" stroke="#2B2118" stroke-width="3.5" stroke-linejoin="round" />
+          <path d="M28 19 Q38 14 44 16" stroke="#8FE4AB" stroke-width="1.8" stroke-linecap="round" />
+          <!-- Small baby leaf -->
+          <path d="M24 25 C14 16 2 20 1 25 C6 32 18 31 24 25 Z" fill="#3D9B59" stroke="#2B2118" stroke-width="3.5" stroke-linejoin="round" />
         </svg>
-        SCRAP<span class="bang">!</span>
-      </h1>
+      </div>
     </div>
 
     <div class="menu-group">
@@ -843,17 +867,23 @@
     spot.shadow.bias = -0.001;
     scene.add(spot, spot.target);
 
-    // Overhead theatrical spotlight cone beam (calm, subtle, non-glowing atmospheric cone behind characters)
-    const beamGeo = new THREE.CylinderGeometry(0.20, 2.60, 5.8, 64, 1, true);
+    // Overhead theatrical spotlight cone beam (calm, subtle, non-glowing atmospheric cone fitting directly to the floor circular pool)
+    const beamHeight = 5.78;
+    const beamGeo = new THREE.CylinderGeometry(0.16, circleRadius, beamHeight, 64, 1, true);
+    // Cylinder extends from -beamHeight/2 to +beamHeight/2 along Y; translate so apex is at origin
+    beamGeo.translate(0, -beamHeight / 2, 0);
     const beamMat = new THREE.MeshBasicMaterial({
-      color: 0xdec8a2,
+      color: 0xebd4b7,
       transparent: true,
-      opacity: 0.12,
+      opacity: 0.14,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
     const beam = new THREE.Mesh(beamGeo, beamMat);
-    beam.position.set(0, 2.9, -0.45);
+    // Apex at overhead spotlight, base directly on the center of the circular pool on the mat floor
+    beam.position.copy(spot.position);
+    beam.lookAt(spotCircleMesh.position);
+    beam.rotateX(Math.PI / 2);
     scene.add(beam);
 
     // Soft rim accents for the characters
