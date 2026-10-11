@@ -869,7 +869,7 @@
     crowdFillR.position.set(3.8, 2.2, -1.0);
     scene.add(crowdFillL, crowdFillR);
 
-    // ---------- Simple Geometric Audience Heads (Circles Left & Squares Right - No Details) ----------
+    // ---------- Character Silhouette Audience Heads ----------
     const crowdGroup = new THREE.Group();
     scene.add(crowdGroup);
 
@@ -895,37 +895,83 @@
     const crowdColors = [0xff6b57, 0xffc53d, 0x4fb06d, 0x5da9e9, 0xb565d8, 0xfff8ec, 0xffa052, 0x3ac4b2];
     const spectators = [];
 
-    // Left bleachers: CIRCLES (spheres - Pip's crowd)
-    // Right bleachers: SQUARES (cubes - Blocky's crowd)
-    // Clean, non-detailed geometric shapes
-    const sphereGeo = new THREE.SphereGeometry(0.18, 14, 12);
-    const boxGeo = new THREE.BoxGeometry(0.32, 0.32, 0.32);
+    // Helper: Build a simplified character silhouette for Pip (round head + sprout + headband)
+    function buildPipSilhouette(color) {
+      const grp = new THREE.Group();
+      const mat = new THREE.MeshLambertMaterial({ color });
+      const bandMat = new THREE.MeshLambertMaterial({ color: 0xc63e38 });
+      const leafMat = new THREE.MeshLambertMaterial({ color: 0x4fb06d });
+
+      // Head sphere
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 14, 12), mat);
+      grp.add(head);
+
+      // Headband ring
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.182, 0.02, 8, 20), bandMat);
+      band.rotation.x = Math.PI / 2;
+      band.position.y = 0.04;
+      grp.add(band);
+
+      // Sprout on top
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.015, 0.06, 6), leafMat);
+      stem.position.set(0, 0.20, 0);
+      stem.rotation.z = 0.15;
+      const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), leafMat);
+      leaf.scale.set(1.5, 0.5, 0.8);
+      leaf.position.set(0.035, 0.23, 0);
+      leaf.rotation.z = -0.4;
+      grp.add(stem, leaf);
+
+      return grp;
+    }
+
+    // Helper: Build a simplified character silhouette for Blocky (cube head + flat-top haircut + headband)
+    function buildBlockySilhouette(color) {
+      const grp = new THREE.Group();
+      const mat = new THREE.MeshLambertMaterial({ color });
+      const hairMat = new THREE.MeshLambertMaterial({ color: 0x2b2118 });
+      const bandMat = new THREE.MeshLambertMaterial({ color: 0x337eae });
+
+      // Head box
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.30, 0.30), mat);
+      grp.add(head);
+
+      // Flat-top hair cap
+      const hair = new THREE.Mesh(new THREE.BoxGeometry(0.33, 0.08, 0.31), hairMat);
+      hair.position.y = 0.16;
+      grp.add(hair);
+
+      // Headband strip
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.335, 0.04, 0.315), bandMat);
+      band.position.y = 0.08;
+      grp.add(band);
+
+      return grp;
+    }
 
     let headIdx = 0;
     tiers.forEach(t => {
       for (let z = t.zMin; z <= t.zMax; z += 0.44) {
-        // Left side: Circle heads
+        // Left side: Pip character silhouettes
         const colL = crowdColors[headIdx % crowdColors.length];
-        const matL = new THREE.MeshLambertMaterial({ color: colL });
-        const meshL = new THREE.Mesh(sphereGeo, matL);
-        meshL.position.set(-t.xDist + (Math.random() - 0.5) * 0.10, t.y + 0.16, z + (Math.random() - 0.5) * 0.08);
-        meshL.lookAt(0, 0.5, 0);
-        crowdGroup.add(meshL);
+        const pipHead = buildPipSilhouette(colL);
+        pipHead.position.set(-t.xDist + (Math.random() - 0.5) * 0.10, t.y + 0.16, z + (Math.random() - 0.5) * 0.08);
+        pipHead.lookAt(0, 0.5, 0);
+        crowdGroup.add(pipHead);
         spectators.push({
-          mesh: meshL, y0: meshL.position.y,
+          mesh: pipHead, y0: pipHead.position.y,
           ph: Math.random() * 6.28, sp: 2.2 + Math.random() * 2.0,
           amp: 0.03 + Math.random() * 0.035
         });
 
-        // Right side: Square heads
+        // Right side: Blocky character silhouettes
         const colR = crowdColors[(headIdx + 3) % crowdColors.length];
-        const matR = new THREE.MeshLambertMaterial({ color: colR });
-        const meshR = new THREE.Mesh(boxGeo, matR);
-        meshR.position.set(t.xDist + (Math.random() - 0.5) * 0.10, t.y + 0.16, z + (Math.random() - 0.5) * 0.08);
-        meshR.lookAt(0, 0.5, 0);
-        crowdGroup.add(meshR);
+        const blockyHead = buildBlockySilhouette(colR);
+        blockyHead.position.set(t.xDist + (Math.random() - 0.5) * 0.10, t.y + 0.16, z + (Math.random() - 0.5) * 0.08);
+        blockyHead.lookAt(0, 0.5, 0);
+        crowdGroup.add(blockyHead);
         spectators.push({
-          mesh: meshR, y0: meshR.position.y,
+          mesh: blockyHead, y0: blockyHead.position.y,
           ph: Math.random() * 6.28, sp: 2.2 + Math.random() * 2.2,
           amp: 0.03 + Math.random() * 0.035
         });
