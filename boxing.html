@@ -55,6 +55,16 @@
     transform-origin: left; transition: transform .18s cubic-bezier(.34,1.56,.64,1); }
   .nameplate .bar i.ghost { margin-top: -12px; background: rgba(255,248,236,.55);
     transition: transform .6s ease .25s; }
+  /* PIP's legs: the thin sliver under the hp bar. It visibly drains on the
+     3-punch flurry and glows amber-hot when the next one is loaded — the
+     cue to finish your guard-up before the windup. */
+  .nameplate .stam { height: 5px; margin: 3px 14px 0; border: 1.5px solid var(--ink);
+    border-radius: 5px; background: rgba(43,33,24,.35); overflow: hidden; }
+  .nameplate .stam i { display: block; height: 100%; background: var(--sun);
+    transform-origin: left; transition: transform .3s ease; }
+  .nameplate .stam.on { border-color: var(--sun);
+    box-shadow: 0 0 8px rgba(255,190,60,.8); animation: stamhot .55s ease-in-out infinite alternate; }
+  @keyframes stamhot { to { box-shadow: 0 0 14px rgba(255,190,60,1); } }
   .hp-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
   .hp-row .lbl { width: 44px; font-size: 10px; font-weight: 700; letter-spacing: .18em;
     text-transform: uppercase; }
@@ -232,6 +242,7 @@
   <div class="nameplate off" data-plate>
     <div><span class="nm"><span data-npclbl>PIP</span><span class="gas" data-npcgas>· WINDED</span></span></div>
     <div class="bar"><i class="ghost" data-nhpghost></i><i data-nhp></i></div>
+    <div class="stam" data-nstamwrap><i data-nstam></i></div>
     <div class="tele" data-tele></div>
   </div>
   <div class="tutor" data-tutor></div>
@@ -286,6 +297,7 @@
       endTitle: $('[data-endtitle]'), endSub: $('[data-endsub]'),
       npcName: $('[data-npcname]'), npcLbl: $('[data-npclbl]'), peep: $('[data-peep]'),
       plate: $('[data-plate]'), nhpGhost: $('[data-nhpghost]'), npcGas: $('[data-npcgas]'),
+      nstam: $('[data-nstam]'), nstamW: $('[data-nstamwrap]'),
       countdown: $('[data-countdown]'), cdRound: $('[data-cdround]'), cdN: $('[data-cdn]'),
     };
 
@@ -475,10 +487,10 @@
       plateV.set(n.group.position.x, (n.height || 1.3) + .2, n.group.position.z).project(cam);
       if (plateV.z > 1) return;
       const tx = (plateV.x + 1) * innerWidth / 2;
-      // the plate is anchored by its BOTTOM edge and grows ~71px upward
-      // (name + bar + tele, all always in layout) — clamp low enough that
-      // its top edge can never slide under the timer plate (~bottom 73px)
-      const ty = Math.max(152, (1 - plateV.y) * innerHeight / 2);
+      // the plate is anchored by its BOTTOM edge and grows ~87px upward
+      // (name + bar + stam sliver + tele, all always in layout) — clamp low
+      // enough that its top edge can never slide under the timer (~bottom 73px)
+      const ty = Math.max(164, (1 - plateV.y) * innerHeight / 2);
       if (plate.x < -900) { plate.x = tx; plate.y = ty; }
       plate.x += (tx - plate.x) * .25; plate.y += (ty - plate.y) * .25;
       const pxr = Math.round(plate.x), pyr = Math.round(plate.y);
@@ -497,6 +509,8 @@
       bar('nhp', el.nhp, nf);
       bar('nhpG', el.nhpGhost, nf);                 // lagging white chunk shows the bite
       tog('npcGas', el.npcGas, st.npc.gassed && st.phase === 'fighting');
+      bar('nstam', el.nstam, st.npc.stamina);
+      tog('nstamR', el.nstamW, st.npc.specialReady && st.phase === 'fighting');
       bar('stam', el.stam, st.player.stamina);
       placePlate(st);
       // 3-2-1: the big number pops in fresh every second

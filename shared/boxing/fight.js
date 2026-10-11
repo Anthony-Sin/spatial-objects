@@ -182,7 +182,7 @@ export class Fight {
     Object.assign(s.player, { hp: o.playerHp, maxHp: o.playerHp, stamina: 1, score: 0,
       combo: 0, bestCombo: 0, counterT: 0, status: 'idle', hurtT: 0, gassed: false,
       dodge: { dir: null, t: 9, cd: 0 }, perfects: 0 });
-    Object.assign(s.npc, { hp: o.npcHp, maxHp: o.npcHp, stamina: 1, name: o.npcName, action: 'idle', actionT: 0, telegraph: null, gassed: false });
+    Object.assign(s.npc, { hp: o.npcHp, maxHp: o.npcHp, stamina: 1, name: o.npcName, action: 'idle', actionT: 0, telegraph: null, gassed: false, specialReady: false });
   }
 
   step(dt, inputs = {}) {
@@ -278,6 +278,10 @@ export class Fight {
     // gassedT+gassedHyst, so the HUD lamp and PIP's disengage don't flicker
     p.gassed = p.gassed ? p.stamina < T.gassedT + T.gassedHyst : p.stamina < T.gassedT;
     s.npc.gassed = s.npc.gassed ? s.npc.stamina < T.gassedT + T.gassedHyst : s.npc.stamina < T.gassedT;
+    // the HUD's "armed" glint — the same gate _windup applies, made readable:
+    // three normals banked and the legs under him again → the flurry is loaded
+    s.npc.specialReady = this.ai && !s.npc.gassed
+      && this._normals >= T.specialEvery && s.npc.stamina >= T.specialStam;
     return s;
   }
 
