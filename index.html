@@ -819,30 +819,26 @@
     spot.shadow.bias = -0.001;
     scene.add(spot, spot.target);
 
-    // Overhead theatrical spotlight cone beam
-    const beamGeo = new THREE.CylinderGeometry(0.18, 2.35, 5.75, 64, 1, true);
-    beamGeo.translate(0, -2.875, 0);
+    // Overhead theatrical spotlight cone beam (positioned behind the characters along Z)
+    const beamGeo = new THREE.CylinderGeometry(0.20, 2.60, 5.8, 64, 1, true);
     const beamMat = new THREE.MeshBasicMaterial({
-      color: 0xffdfaa,
+      color: 0xffe2b8,
       transparent: true,
-      opacity: 0.22,
+      opacity: 0.28,
       side: THREE.DoubleSide,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
     const beam = new THREE.Mesh(beamGeo, beamMat);
-    beam.position.copy(spot.position);
-    beam.lookAt(spot.target.position);
-    beam.rotateX(Math.PI / 2);
+    beam.position.set(0, 2.9, -0.45);
     scene.add(beam);
 
     // Inner core cone for smooth volumetric spotlight gradient
-    const coreGeo = new THREE.CylinderGeometry(0.08, 1.45, 5.75, 48, 1, true);
-    coreGeo.translate(0, -2.875, 0);
+    const coreGeo = new THREE.CylinderGeometry(0.10, 1.65, 5.8, 48, 1, true);
     const coreMat = new THREE.MeshBasicMaterial({
-      color: 0xfff0d0,
+      color: 0xfff4db,
       transparent: true,
-      opacity: 0.14,
+      opacity: 0.18,
       side: THREE.DoubleSide,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -857,14 +853,21 @@
     rimR.position.set(2.4, 1.8, -0.6);
     scene.add(rimL, rimR);
 
-    // Dim crowd atmospheric fill: audience bleachers remain moody silhouettes in the dark
-    const crowdFillL = new THREE.PointLight(0x3e5272, 1.0, 7.0);
-    crowdFillL.position.set(-3.8, 2.2, -1.0);
-    const crowdFillR = new THREE.PointLight(0x3e5272, 1.0, 7.0);
-    crowdFillR.position.set(3.8, 2.2, -1.0);
+    // Crowd atmospheric rim lighting: makes the dark audience silhouettes clearly visible and distinct
+    const crowdFillL = new THREE.PointLight(0x8da2be, 3.2, 9.0);
+    crowdFillL.position.set(-3.2, 2.2, 0.5);
+    const crowdFillR = new THREE.PointLight(0x8da2be, 3.2, 9.0);
+    crowdFillR.position.set(3.2, 2.2, 0.5);
     scene.add(crowdFillL, crowdFillR);
 
-    // ---------- Character Silhouette Audience Heads (Monochrome Gray / No Color) ----------
+    // Top crowd kicker light for back-lighting the silhouettes
+    const crowdTopL = new THREE.PointLight(0x6e809c, 2.4, 8.0);
+    crowdTopL.position.set(-4.0, 3.0, -1.5);
+    const crowdTopR = new THREE.PointLight(0x6e809c, 2.4, 8.0);
+    crowdTopR.position.set(4.0, 3.0, -1.5);
+    scene.add(crowdTopL, crowdTopR);
+
+    // ---------- Character Silhouette Audience Heads (Distinct Silhouettes, Dark Palette) ----------
     const crowdGroup = new THREE.Group();
     scene.add(crowdGroup);
 
@@ -887,58 +890,64 @@
       crowdGroup.add(bL, bR);
     });
 
-    // Muted atmospheric gray shades — notable silhouettes without standing out or having vibrant color
-    const grayTones = [0x424957, 0x4d5566, 0x393f4d, 0x545d70, 0x3e4554, 0x485060];
+    // Dark charcoal/slate tones — distinctly visible silhouettes against the dark void
+    const grayTones = [0x5c6577, 0x667084, 0x4e5768, 0x727d94, 0x565e70, 0x626c80];
     const spectators = [];
 
-    // Helper: Build a muted gray silhouette for Pip (round head + sprout + headband)
+    // Helper: Build a distinct dark silhouette for Pip (round head + sprout + headband + dark comic ink outline)
     function buildPipSilhouette(grayColor) {
       const grp = new THREE.Group();
       const headMat = new THREE.MeshLambertMaterial({ color: grayColor });
-      const bandMat = new THREE.MeshLambertMaterial({ color: 0x2e3542 });
-      const leafMat = new THREE.MeshLambertMaterial({ color: 0x586378 });
+      const bandMat = new THREE.MeshLambertMaterial({ color: 0x3d4657 });
+      const leafMat = new THREE.MeshLambertMaterial({ color: 0x7a88a3 });
+      const inkMat = new THREE.MeshBasicMaterial({ color: 0x181f2c, side: THREE.BackSide });
 
-      // Head sphere
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 14, 12), headMat);
+      // Head sphere with outline
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 14, 12), headMat);
+      const headOutline = new THREE.Mesh(new THREE.SphereGeometry(0.208, 14, 12), inkMat);
+      head.add(headOutline);
       grp.add(head);
 
       // Headband ring
-      const band = new THREE.Mesh(new THREE.TorusGeometry(0.182, 0.02, 8, 20), bandMat);
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.194, 0.024, 8, 20), bandMat);
       band.rotation.x = Math.PI / 2;
       band.position.y = 0.04;
       grp.add(band);
 
-      // Sprout on top
-      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.015, 0.06, 6), leafMat);
-      stem.position.set(0, 0.20, 0);
+      // Sprout on top with outline
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.018, 0.07, 6), leafMat);
+      stem.position.set(0, 0.22, 0);
       stem.rotation.z = 0.15;
-      const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), leafMat);
+      const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.042, 8, 6), leafMat);
       leaf.scale.set(1.5, 0.5, 0.8);
-      leaf.position.set(0.035, 0.23, 0);
+      leaf.position.set(0.04, 0.25, 0);
       leaf.rotation.z = -0.4;
       grp.add(stem, leaf);
 
       return grp;
     }
 
-    // Helper: Build a muted gray silhouette for Blocky (cube head + flat-top haircut + headband)
+    // Helper: Build a distinct dark silhouette for Blocky (cube head + flat-top haircut + headband + dark comic ink outline)
     function buildBlockySilhouette(grayColor) {
       const grp = new THREE.Group();
       const headMat = new THREE.MeshLambertMaterial({ color: grayColor });
-      const hairMat = new THREE.MeshLambertMaterial({ color: 0x222730 });
-      const bandMat = new THREE.MeshLambertMaterial({ color: 0x586378 });
+      const hairMat = new THREE.MeshLambertMaterial({ color: 0x2b3342 });
+      const bandMat = new THREE.MeshLambertMaterial({ color: 0x7a88a3 });
+      const inkMat = new THREE.MeshBasicMaterial({ color: 0x181f2c, side: THREE.BackSide });
 
-      // Head box
-      const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.30, 0.30), headMat);
+      // Head box with outline
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.33, 0.31, 0.31), headMat);
+      const headOutline = new THREE.Mesh(new THREE.BoxGeometry(0.355, 0.335, 0.335), inkMat);
+      head.add(headOutline);
       grp.add(head);
 
       // Flat-top hair cap
-      const hair = new THREE.Mesh(new THREE.BoxGeometry(0.33, 0.08, 0.31), hairMat);
-      hair.position.y = 0.16;
+      const hair = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.09, 0.32), hairMat);
+      hair.position.y = 0.17;
       grp.add(hair);
 
       // Headband strip
-      const band = new THREE.Mesh(new THREE.BoxGeometry(0.335, 0.04, 0.315), bandMat);
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.348, 0.045, 0.328), bandMat);
       band.position.y = 0.08;
       grp.add(band);
 
@@ -948,7 +957,7 @@
     let headIdx = 0;
     tiers.forEach(t => {
       for (let z = t.zMin; z <= t.zMax; z += 0.44) {
-        // Left side: Pip character silhouettes (gray monochrome)
+        // Left side: Pip character silhouettes (dark palette, clear outline & shape)
         const colL = grayTones[headIdx % grayTones.length];
         const pipHead = buildPipSilhouette(colL);
         pipHead.position.set(-t.xDist + (Math.random() - 0.5) * 0.10, t.y + 0.16, z + (Math.random() - 0.5) * 0.08);
@@ -960,7 +969,7 @@
           amp: 0.03 + Math.random() * 0.035
         });
 
-        // Right side: Blocky character silhouettes (gray monochrome)
+        // Right side: Blocky character silhouettes (dark palette, clear outline & shape)
         const colR = grayTones[(headIdx + 3) % grayTones.length];
         const blockyHead = buildBlockySilhouette(colR);
         blockyHead.position.set(t.xDist + (Math.random() - 0.5) * 0.10, t.y + 0.16, z + (Math.random() - 0.5) * 0.08);
