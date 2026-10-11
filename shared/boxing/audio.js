@@ -272,13 +272,17 @@ export class BoxingAudio {
     src.start(); lfo.start();
     g.gain.setTargetAtTime?.(.05, this._now(), .3);
     this._lastCrowdG = .05;                     // ramp target just scheduled above
-    this._crowd = { src, gain: g, lfo };
+    this._crowd = { src, gain: g, lfo, filter: f, lg };
   }
 
   _crowdOff() {
     const c = this._crowd; if (!c) return;
     this._crowd = null;
     try { c.src.stop(); c.lfo.stop(); } catch { /* already stopped */ }
+    /* disconnect the whole chain — a stopped-but-connected crowd used to sit
+       on master forever, adding a live input per on/off cycle */
+    for (const n of [c.src, c.lfo, c.lg, c.filter, c.gain])
+      try { n.disconnect?.(); } catch { /* already gone */ }
   }
 
   /* ---------- synth helpers ---------- */
@@ -308,6 +312,9 @@ export class BoxingAudio {
       osc.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
     osc.connect(g);
     osc.start(t); osc.stop(t + dur + .05);
+    // free the env gain's edge into master when the voice ends — otherwise
+    // every SFX permanently chains a gain onto master (graph grows per play)
+    osc.onended = () => { try { g.disconnect(); } catch { /* ok */ } };
   }
 
   _fm(o) {   // 2-op FM "bell/pluck" voice — the cute-arcade flavor
@@ -324,6 +331,7 @@ export class BoxingAudio {
     car.connect(g);
     mod.start(t); car.start(t);
     mod.stop(t + dur + .05); car.stop(t + dur + .05);
+    car.onended = () => { try { g.disconnect(); } catch { /* ok */ } };
   }
 
   _noise(o) {   // filtered noise burst — whooshes, snaps, breaths
@@ -339,5 +347,6 @@ export class BoxingAudio {
     if (o.q != null) f.Q.setValueAtTime(fin(o.q, 1), t);
     src.connect(f); f.connect(g);
     src.start(t); src.stop(t + dur + .05);
+    src.onended = () => { try { g.disconnect(); } catch { /* ok */ } };
   }
 }

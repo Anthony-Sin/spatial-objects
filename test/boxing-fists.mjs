@@ -140,6 +140,54 @@ const settle = (ft, h, f = fc(), n = 30) => { for (let i = 0; i < n; i++) ft.upd
   check('calibrate snaps baseline → reach≈1', Math.abs(r1 - 1) < .03, r1.toFixed(3));
 }
 
+// ---- 5b. chin tilt → pitch (step input — pose, not distance) -----------------
+{
+  /* canonical mid-sagittal mesh: lm[168] between the eyes, lm[1] nose tip,
+     lm[152] chin. nose height inside the eye→chin band is a pose ratio —
+     the same nod at any seat distance gives the same r. */
+  const MESH = (chin, nose = .45, eye = .35, cx = .5) => {
+    const lm = Array.from({ length: 478 }, () => ({ x: .5, y: .5, z: 0 }));
+    lm[168] = { x: cx, y: eye, z: 0 }; lm[1] = { x: cx, y: nose, z: 0 };
+    lm[152] = { x: cx, y: chin, z: 0 };
+    return lm;
+  };
+  const fcP = (chin, opts = {}) => ({ ok: true, found: true,
+    nose: { x: .5, y: opts.nose ?? .45 }, size: opts.size ?? .32,
+    center: { x: .5, y: opts.center ?? .475 }, lm: MESH(chin, opts.nose ?? .45) });
+
+  const ft = new FistTracker();
+  for (let i = 0; i < 25; i++) ft.update(hs(), fcP(.60), DT);        // r = .40 neutral
+  check('level chin → pitch ≈ 0', Math.abs(ft.pitch) < .08, ft.pitch.toFixed(3));
+  for (let i = 0; i < 25; i++) ft.update(hs(), fcP(.50), DT);        // chin tucks up
+  check('chin down → pitch positive (press in)', ft.pitch > .5, ft.pitch.toFixed(2));
+  check('chin down is not a crouch — duck stays low', ft.duck < .25, ft.duck.toFixed(2));
+  for (let i = 0; i < 30; i++) ft.update(hs(), fcP(.72), DT);        // chin stretches away
+  check('chin up → pitch negative (back off)', ft.pitch < -.5, ft.pitch.toFixed(2));
+  for (let i = 0; i < 40; i++) ft.update(hs(), fcP(.60), DT);
+  check('level chin again → pitch ≈ 0', Math.abs(ft.pitch) < .1, ft.pitch.toFixed(2));
+  // a pose held through calibrate becomes the new neutral
+  for (let i = 0; i < 25; i++) ft.update(hs(), fcP(.50), DT);        // nod first…
+  ft.calibrate();                                                  // …re-snap mid-nod
+  check('calibrate zeroes pitch', ft.pitch === 0, ft.pitch);
+  for (let i = 0; i < 25; i++) ft.update(hs(), fcP(.50), DT);        // still nodding
+  check('nod held through calibrate → re-zeroed', Math.abs(ft.pitch) < .08, ft.pitch.toFixed(2));
+  for (let i = 0; i < 30; i++) ft.update(hs(), fcP(.60), DT);        // back to level
+  check('level chin after nod re-snap → reads as chin up', ft.pitch < -.5, ft.pitch.toFixed(2));
+  // BlazeFace-shaped face (no lm) → pitch eases home, never NaN
+  for (let i = 0; i < 25; i++) ft.update(hs(), fcP(.60), DT);        // pitch is clearly held ≠0
+  const held = ft.pitch;
+  for (let i = 0; i < 35; i++) ft.update(hs(), fc(.5, .45), DT);     // mesh gone
+  check('no mesh → pitch decays to 0', held < -.5 && Math.abs(ft.pitch) < .1 && Number.isFinite(ft.pitch),
+    `held=${held.toFixed(2)} now=${ft.pitch.toFixed(2)}`);
+  // corrupt mesh frames never NaN the output
+  const g = fcP(.6); g.lm[152] = { x: NaN, y: NaN }; g.lm[168] = null;
+  for (let i = 0; i < 8; i++) ft.update(hs(), g, DT);
+  check('corrupt mesh → pitch stays finite', Number.isFinite(ft.pitch), String(ft.pitch));
+  const g2 = fcP(.6); g2.lm = 'x';
+  for (let i = 0; i < 4; i++) ft.update(hs(), g2, DT);
+  check('non-array lm → pitch stays finite', Number.isFinite(ft.pitch), String(ft.pitch));
+}
+
 // ---- 6. hand disappears mid-thrust → clean decay -----------------------------
 {
   const ft = new FistTracker();

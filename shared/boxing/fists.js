@@ -6,7 +6,10 @@
                        kind ∈ 'jab'(left) 'cross'(right) 'hook' 'uppercut'
        fists.guard     {left:0..1, right:0..1}  glove-up-ness per side
        fists.sway      -1..1 head lean vs calibrated center (+ = screen right)
-       fists.duck      0..1 head drop below the neutral nose height
+       fists.duck      0..1 head drop below the neutral head height
+       fists.pitch     -1..1 chin tilt vs calibrated pose (+ = chin down
+                       → press in, − = chin up → back off) — needs the
+                       478-pt face mesh; 0 on the BlazeFace fallback
      fists.calibrate() call on a neutral pose ('C' key): re-zeros sway/duck and
                        snaps span baselines so current hand size = reach 1
      fists.debug()     {span, reach, guard, sway, baseline, state}
@@ -63,8 +66,13 @@ export const TUNING = {
   SWAY_RANGE: .13,      // nose-x units of lean that map to ±1
   CENTER_RATE: .35,     // /s — neutral lean centre slowly follows posture drift
   CENTER_ZONE: .3,      // …but only while |lean| is under this (real leans never get eaten)
-  DUCK_LO: .035,        // nose-y drop ignored (posture drift / nodding)
-  DUCK_RANGE: .09,      // further nose-y drop that maps to duck 1
+  DUCK_LO: .035,        // head-height drop ignored (posture drift / nodding)
+  DUCK_RANGE: .09,      // further head-height drop that maps to duck 1
+  // chin tilt (pitch): nose height inside the eye→chin band is a pure pose
+  // ratio — seating distance, screen height and head position all cancel
+  PITCH_SMOOTH: 15,     // /s — pitch EMA (same feel as the sway chain)
+  PITCH_LO: .02,        // ratio dead zone — breathing and micro-nods don't step
+  PITCH_RANGE: .12,     // ratio change past the dead zone that maps to ±1
   DT_MAX: .1,           // s — clamp dt (tab-switch spikes)
 };
 
@@ -76,21 +84,57 @@ const NO_FACE = {};                              // shared — faceState may be 
 export class FistTracker {
   constructor(opts = {}) {
     this.T = { ...TUNING, ...opts };        // per-instance tuning overrides
-    // garbage-in guard: a non-finite override falls back to the TUNING
-    // default — MIN_SPAN:'x' once silently bricked the tracker forever.
-    for (const k in TUNING) if (!Number.isFinite(this.T[k])) this.T[k] = TUNING[k];
+    this._clean();
     this.punches = [];
     this.guard = { left: 0, right: 0 };
     this.reach = { left: 1, right: 1 };     // live view — overlay reads this instead of debug()
     this.sway = 0;
     this.duck = 0;
+    this.pitch = 0;
     this._pick = { left: null, right: null };   // one pick pass instead of find() per side
     this._t = 0;
     this._s = { left: this._blank(), right: this._blank() };
     this._nose = { x: .5, y: .5 };          // smoothed nose (guard band + sway)
+    this._hy = null;                        // smoothed head height (bbox centre) — duck reads this
     this._cx = null;                        // calibrated sway center — first face sighting
-    this._cy = null;                        // neutral nose height — first face sighting
+    this._cy = null;                        // neutral head height — first face sighting
+    this._pr = null;                        // neutral chin-tilt ratio — first mesh sighting
+    this._r = null;                         // latest valid chin-tilt ratio
     this._faceSize = 0;
+  }
+
+  /* tuning sanitize — runs at construct AND atop update() so live mutation of
+     this.T can't wedge the tracker. Two garbage classes:
+       - non-finite → falls back to TUNING (MIN_SPAN:'x' once bricked it)
+       - finite-but-degenerate → a range used as a divisor collapses a clamp
+         to NaN (SWAY_RANGE:0 → NaN sway), a ≤0 MIN_SPAN lets a zero-span hand
+         reach baseline=0 (reach = 0/0 = NaN), and a negative EMA rate turns
+         smoothing into runaway amplification (GUARD_RATE:-8 → guard −1 in
+         6 frames). Floors + band ordering keep every output in contract. */
+  _clean() {
+    const T = this.T;
+    for (const k in TUNING) if (!Number.isFinite(T[k])) T[k] = TUNING[k];
+    // divisors / windows / counts that must stay positive
+    for (const k of ['MIN_SPAN', 'SWAY_RANGE', 'DUCK_RANGE', 'GUARD_NOSE_RANGE',
+      'DT_MAX', 'FIRE_VEL', 'MAX_THROW_T', 'PUNCH_MAX', 'PITCH_RANGE'])
+      if (!(T[k] > 0)) T[k] = TUNING[k];
+    // EMA rates + thresholds that must stay non-negative
+    for (const k of ['BASELINE_RATE', 'VEL_SMOOTH', 'PALM_SMOOTH', 'CALM_RV',
+      'CALM_PV', 'GUARD_RATE', 'GUARD_FALL', 'FACE_SMOOTH', 'SWAY_SMOOTH',
+      'CENTER_RATE', 'CENTER_ZONE', 'DUCK_LO', 'MISS_GRACE', 'RESNAP_MISS',
+      'PITCH_SMOOTH', 'PITCH_LO'])
+      if (!(T[k] >= 0)) T[k] = TUNING[k];
+    // velocities where only absurd negatives brick the machine (retract can
+    // legitimately dip below a small threshold — only unreachable is wrong)
+    if (!(T.EMIT_VEL > -50)) T.EMIT_VEL = TUNING.EMIT_VEL;
+    if (!(T.RESET_VEL > -50)) T.RESET_VEL = TUNING.RESET_VEL;
+    if (!(T.FIRE_FRAMES >= 1)) T.FIRE_FRAMES = TUNING.FIRE_FRAMES;
+    if (!(T.REACH_CAP > 1)) T.REACH_CAP = TUNING.REACH_CAP;   // ÷(REACH_CAP-1)
+    if (!(T.GUARD_Y_ZERO > T.GUARD_Y_FULL)) {                 // ordered band
+      T.GUARD_Y_ZERO = TUNING.GUARD_Y_ZERO; T.GUARD_Y_FULL = TUNING.GUARD_Y_FULL; }
+    if (!(T.GUARD_REACH_HI > T.GUARD_REACH_LO)) {             // ordered band
+      T.GUARD_REACH_HI = TUNING.GUARD_REACH_HI; T.GUARD_REACH_LO = TUNING.GUARD_REACH_LO; }
+    T.POWER_FLOOR = clamp(T.POWER_FLOOR, 0, 1);
   }
 
   _blank() {
@@ -123,6 +167,7 @@ export class FistTracker {
   }
 
   update(handsState, faceState, dt) {
+    this._clean();                        // live tuning mutation can't wedge us
     const T = this.T;
     if (!(dt > 0)) dt = 1 / 60;
     if (dt > T.DT_MAX) dt = T.DT_MAX;
@@ -141,15 +186,43 @@ export class FistTracker {
       // quietly follows slow posture drift so the view never creeps sideways.
       // f.manual (mouse sway) is a synthetic face — never auto-centre on it.
       if (this._cx === null) this._cx = f.manual ? .5 : f.nose.x;
-      if (this._cy === null) this._cy = f.nose.y;
+      /* duck reads head HEIGHT (bbox centre), not the nose: a chin nod drops
+         the nose without dropping the head — pitching must never read as
+         crouching. Falls back to the nose when a face state has no centre. */
+      const hy = Number.isFinite(f.center?.y) ? f.center.y : this._nose.y;
+      this._hy = this._hy === null ? hy : ema(this._hy, hy, T.FACE_SMOOTH, dt);
+      if (this._cy === null) this._cy = hy;
       const lean = clamp((this._nose.x - this._cx) / T.SWAY_RANGE, -1, 1);
       if (!f.manual && Math.abs(lean) < T.CENTER_ZONE) this._cx = ema(this._cx, this._nose.x, T.CENTER_RATE, dt);
       this.sway = ema(this.sway, lean, T.SWAY_SMOOTH, dt);
-      const drop = clamp((this._nose.y - this._cy - T.DUCK_LO) / T.DUCK_RANGE, 0, 1);
+      const drop = clamp((this._hy - this._cy - T.DUCK_LO) / T.DUCK_RANGE, 0, 1);
       this.duck = ema(this.duck, drop, T.SWAY_SMOOTH, dt);
+
+      /* chin tilt (pitch): the nose tip's height inside the eye→chin band
+         (mesh pts 168 / 1 / 152) is a pose ratio — where you sit and how far
+         away you are cancel out of it. + = chin down. _pr walks with slow
+         posture slump like _cx, but only while the tilt itself is small so
+         a held nod is never eaten. */
+      this._r = null;
+      const lm = f.lm;
+      if (Array.isArray(lm) && lm.length > 168) {
+        const e = lm[168], n = lm[1], c = lm[152];
+        if (Number.isFinite(e?.y) && Number.isFinite(n?.y) && Number.isFinite(c?.y)) {
+          const den = c.y - e.y;
+          if (den > .02) this._r = clamp((n.y - e.y) / den, 0, 1);
+        }
+      }
+      if (this._r !== null) {
+        if (this._pr === null) this._pr = this._r;
+        const d = this._r - this._pr;
+        const p = Math.sign(d) * clamp((Math.abs(d) - T.PITCH_LO) / T.PITCH_RANGE, 0, 1);
+        this.pitch = ema(this.pitch, p, T.PITCH_SMOOTH, dt);
+        if (Math.abs(p) < T.CENTER_ZONE) this._pr = ema(this._pr, this._r, T.CENTER_RATE, dt);
+      } else this.pitch = ema(this.pitch, 0, T.PITCH_SMOOTH * .5, dt);
     } else {
       this.sway = ema(this.sway, 0, T.SWAY_SMOOTH * .5, dt);
       this.duck = ema(this.duck, 0, T.SWAY_SMOOTH * .5, dt);
+      this.pitch = ema(this.pitch, 0, T.PITCH_SMOOTH * .5, dt);
     }
 
     // ---- hands ------------------------------------------------------------
@@ -276,10 +349,12 @@ export class FistTracker {
   }
 
   calibrate() {
+    this._clean();
     // neutral pose snapshot: sway re-centers, current span becomes rest size
     if (this._cx !== null) this._cx = this._nose.x;
-    if (this._cy !== null) this._cy = this._nose.y;   // no face yet → keep auto-pick
-    this.sway = 0; this.duck = 0;
+    if (this._cy !== null) this._cy = this._hy ?? this._nose.y;   // no face yet → keep auto-pick
+    if (this._r !== null) this._pr = this._r;
+    this.sway = 0; this.duck = 0; this.pitch = 0;
     for (const side of SIDES) {
       const S = this._s[side];
       if (S.seen && S.lastSpan > this.T.MIN_SPAN) {
@@ -297,6 +372,7 @@ export class FistTracker {
       guard: { ...this.guard },
       sway: this.sway,
       duck: this.duck,
+      pitch: this.pitch,
       baseline: r({ left: this._s.left.baseline, right: this._s.right.baseline }),
       state: r({ left: this._s.left.state, right: this._s.right.state }),
     };

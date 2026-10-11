@@ -174,7 +174,7 @@
 
 <div class="hero" data-pop>
   <div class="eyebrow">tonight's exhibition bout</div>
-  <h1 class="hero-name"><span data-hero-name>BUBBLE</span><span class="hbadge open" data-hero-badge data-cls-open="hbadge open" data-cls-locked="hbadge locked">READY TO SCRAP</span></h1>
+  <h1 class="hero-name"><span data-hero-name>BUBBLE</span></h1>
   <div class="hero-desc" data-hero-desc>sprout crown · springy stance</div>
 </div>
 
@@ -207,17 +207,32 @@
 </div>
 
 <script type="module">
-  import { boot } from './lineup-mockups/_hero/engine.mjs';
-  boot({
-    bg: 0x141008, fogNear: 9, fogFar: 30,
-    hemiSky: 0x9a8a70, hemiGround: 0x14100a, hemiInt: 0.5,
-    floor: 0x231c12, floorRough: 0.8,
-    plinth: 0xf6ecd6, rim: 0xffc53d, rimMetal: 0.55, rimRough: 0.4,
-    spotColor: 0xffd9a0, spotHot: 44, spotDim: 1.4,
-    glowHot: 0.4, glowDim: 0.02,
-    camRad: 5.9, camPhi: 1.16, camTgtY: 1.0,
-    fixedCam: true,
-  });
+  /* The stage engine lives in lineup-mockups/_hero. It's a dynamic import on
+     purpose: if the engine (or one of its deps — protoBoxer, three) fails to
+     load, a static import would kill this module and leave a black stage
+     with no explanation. The static card below still picks a rival and the
+     ENTER link still navigates, so a failed stage degrades to a note. */
+  try {
+    const { boot } = await import('./lineup-mockups/_hero/engine.mjs');
+    boot({
+      bg: 0x141008, fogNear: 9, fogFar: 30,
+      hemiSky: 0x9a8a70, hemiGround: 0x14100a, hemiInt: 0.5,
+      floor: 0x231c12, floorRough: 0.8,
+      plinth: 0xf6ecd6, rim: 0xffc53d, rimMetal: 0.55, rimRough: 0.4,
+      spotColor: 0xffd9a0, spotHot: 44, spotDim: 1.4,
+      glowHot: 0.4, glowDim: 0.02,
+      sideSlot: { x: 2.75, z: -0.65, s: 0.8 },
+      centerSlot: { x: 0, z: 0.1, s: 1.0 },
+    camRad: 9.0, camPhi: 1.42, camTgtY: 1.0,
+      fixedCam: true,
+    });
+  } catch (e) {
+    console.warn('lineup: stage engine unavailable — card below still works:', e);
+    const cv = document.getElementById('webgl-canvas');
+    if (cv) cv.style.visibility = 'hidden';
+    const n = document.querySelector('[data-note]');
+    if (n) n.textContent = 'the stage lights are out — the card below still picks your rival';
+  }
 </script>
 </body>
 </html>

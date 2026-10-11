@@ -354,11 +354,14 @@
     backdrop-filter:blur(4px);
     display:grid; place-items:center;
     padding:16px;
-    opacity:0; pointer-events:none;
-    transition:opacity .2s ease;
+    /* visibility, not just opacity: aria-hidden=false only lands when the JS
+       opens it, and without visibility:hidden the controls inside stay
+       keyboard-tabbable while the overlay is invisible */
+    opacity:0; pointer-events:none; visibility:hidden;
+    transition:opacity .2s ease, visibility .2s;
   }
   .settings-overlay.open {
-    opacity:1; pointer-events:auto;
+    opacity:1; pointer-events:auto; visibility:visible;
   }
   .settings-card {
     position:relative;
@@ -653,9 +656,10 @@
   </div>
 
 <script type="module">
-  import * as THREE from 'three';
-  import { buildBoxer, VARIANTS, VARIANT_INFO } from './shared/boxing/protoBoxer.js';
-  import { buildScene } from './shared/boxing/scene.js';
+  // NOTE: no static imports. The 3D backdrop is decoration — a broken
+  // three.js/protoBoxer/scene file must not take the menu, settings, or
+  // career pills down with it, so everything 3D arrives via dynamic import
+  // inside the init3D try below.
 
   // career record pills — personal best pts, wins, KOs, average KO round
   (function career() {
@@ -766,10 +770,15 @@
     settingTutorial.checked = tutToggle.checked;
   });
 
-  // 3D Animated Ring & Boxing Characters — decorative backdrop: if WebGL or
-  // a scene piece is unavailable the menu must still work, so any failure
-  // here degrades quietly instead of killing the page module
-  try {
+  // 3D Animated Ring & Boxing Characters — decorative backdrop: if WebGL,
+  // a scene piece, or a module file is unavailable the menu must still work,
+  // so any failure here degrades quietly instead of killing the page module.
+  // The imports are dynamic for the same reason — a static import failure
+  // would take the career pills and settings wiring down with it.
+  (async () => { try {
+  const [THREE, { buildBoxer, VARIANTS, VARIANT_INFO }, { buildScene }] =
+    await Promise.all([import('three'), import('./shared/boxing/protoBoxer.js'),
+      import('./shared/boxing/scene.js')]);
   (function init3D() {
     const canvas = document.getElementById('ring-canvas');
     if (!canvas) return;
@@ -1120,7 +1129,9 @@
     // Perspective camera with elevated isometric tilt
     const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 50);
     function updateCamera() {
-      const aspect = window.innerWidth / window.innerHeight;
+      // a 0-width viewport (collapsed iframe) divides to 0 → aspect 0 → an
+      // infinite camera z; floor to square so the math stays finite
+      const aspect = window.innerWidth / window.innerHeight || 1;
       camera.aspect = aspect;
       const zDist = aspect < 1 ? Math.max(5.8, 5.8 / aspect * 0.95) : 5.75;
       const yDist = aspect < 1 ? 3.5 : 3.3;
@@ -1132,6 +1143,18 @@
     }
     updateCamera();
     window.addEventListener('resize', updateCamera);
+    /* A devicePixelRatio change (OS display-scale change, dragging the
+       window between hiDPI/loDPI screens on compositors that don't resize)
+       fires no 'resize' — a re-armed resolution media query catches it so
+       the renderer never keeps a stale pixel ratio. */
+    const watchDpr = () => {
+      try {
+        matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`)
+          .addEventListener('change', () => { updateCamera(); watchDpr(); },
+            { once: true });
+      } catch { /* older engines — resize listener still covers most moves */ }
+    };
+    watchDpr();
 
     // Smooth, seamless sparring choreography loop (continuous 6.8s cycle)
     let t = 0;
@@ -1139,15 +1162,20 @@
     /* A lost GL context (or a driver fault inside render) must not burn the
        menu forever: pause the loop while the context is gone, restart it on
        'webglcontextrestored', and after repeated render faults degrade to
-       UI-only quietly instead of spamming a pageerror every frame. */
-    let dead = false, fails = 0;
+       UI-only quietly instead of spamming a pageerror every frame. The
+       `looping` flag tracks whether a rAF is still pending — if lost→restored
+       fires within one frame, the pending callback survives and restarting
+       unconditionally would double the chain forever. */
+    let dead = false, fails = 0, looping = false;
     canvas.addEventListener('webglcontextlost', () => { dead = true; });
     canvas.addEventListener('webglcontextrestored', () => {
-      if (dead) { dead = false; fails = 0; renderFrame(); } // restart only a stopped loop — never double-schedule
+      fails = 0;
+      if (dead) { dead = false; if (!looping) renderFrame(); } // restart only a stopped loop — never double-schedule
     });
 
     function renderFrame() {
-      if (dead) return;
+      if (dead) { looping = false; return; }
+      looping = true;
       requestAnimationFrame(renderFrame);
       try {
       const dt = 0.016;
@@ -1200,7 +1228,7 @@
   })();
   } catch (e) {
     console.warn('SCRAP! menu 3D unavailable — showing UI only:', e);
-  }
+  } })();
 </script>
 </body>
 </html>

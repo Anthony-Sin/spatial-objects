@@ -41,9 +41,96 @@ const flag = (owned, file, line, msg) =>
 const lineOf = (src, idx) => src.slice(0, idx).split('\n').length;
 /* `try` somewhere in the lookback window = "guarded" (heuristic — a parse
    right after a }catch{ slips through, but unguarded top-level calls are
-   the crash class this targets) */
-const nearTry = (code, i, back = 500) =>
-  /\btry\b/.test(code.slice(Math.max(0, i - back), i));
+   the crash class this targets). Deeper second pass: a long try block can
+   exceed the window — if an open `try` has no `catch` yet between it and
+   the call, the call is inside it ('.catch(' is a promise method, not a
+   catch clause, so it's excluded from the count). */
+const nearTry = (code, i, back = 500) => {
+  if (/\btry\b/.test(code.slice(Math.max(0, i - back), i))) return true;
+  const seg = code.slice(Math.max(0, i - 2400), i);
+  const tries = (seg.match(/\btry\b/g) || []).length;
+  const catches = (seg.match(/(?:^|[}\s])catch\s*[({]/gm) || []).length;
+  return tries > catches;
+};
+
+/* ---- wave-3 generic hardening checks — run over inline module bodies, all
+   page-reachable local files (notes for foreign files), and shared/*.js ---- */
+function hardenChecks(code0, line0, file, owned) {
+  /* blank block comments (index-preserving) so comment text can't trip the
+     source patterns — 'await import()' in a doc comment isn't a call */
+  const code = code0.replace(/\/\*[\s\S]*?\*\//g, m =>
+    m.replace(/[^\n]/g, ' '));
+
+  // localStorage reads outside try — getItem/removeItem throw SecurityError
+  // where storage is blocked (private mode, denied site data)
+  for (const m of code.matchAll(/\blocalStorage\.(?:getItem|removeItem)\s*\(/g))
+    if (!nearTry(code, m.index))
+      flag(owned, file, line0 + lineOf(code, m.index) - 1,
+        `${m[0].replace(/\s*\($/, '')} outside try/catch — throws where storage is blocked`);
+
+  // HTML-string sinks: markup from a variable is the DOM-XSS class.
+  // Quoted-literal RHS (incl. static templates) is fine; interpolation isn't.
+  for (const m of code.matchAll(/\.(?:innerHTML|outerHTML)\s*=\s*/g)) {
+    const after = code.slice(m.index + m[0].length, m.index + m[0].length + 400);
+    if (/^['"]/.test(after)) continue;                                  // quoted literal
+    if (after.startsWith('`') && !after.includes('${')) continue;       // static template
+    flag(owned, file, line0 + lineOf(code, m.index) - 1,
+      'innerHTML/outerHTML assigned a non-literal — storage/user-fed markup is DOM XSS');
+  }
+  for (const m of code.matchAll(/\binsertAdjacentHTML\s*\(|document\.write\s*\(/g))
+    flag(owned, file, line0 + lineOf(code, m.index) - 1,
+      `'${m[0].replace(/\s*\($/, '')}' HTML-string sink — audit the markup source`);
+
+  // 'webglcontextrestored' must not unconditionally restart the render loop:
+  // a rAF scheduled before 'lost' can still be pending → doubled chain forever
+  for (const m of code.matchAll(/addEventListener\(\s*['"]webglcontextrestored['"]/g)) {
+    let body = code.slice(m.index, m.index + 400);
+    const end = body.indexOf('});');                      // bound to the call, not the file
+    if (end >= 0) body = body.slice(0, end);
+    const arg = body.replace(/^[^,]*,/, '');              // just the handler arg
+    if (/^\s*[\w$.]+\s*$/.test(arg)) continue;            // named handler — can't judge statically
+    if (!/\bif\b|\.reload\b/.test(arg))
+      flag(owned, file, line0 + lineOf(code, m.index) - 1,
+        'webglcontextrestored restarts the loop unconditionally — pending rAF → doubled chain');
+  }
+
+  // viewport reads inside a rAF/rVFC-driven render path but no resize /
+  // orientation listener → canvas/camera caches stale sizes on resize,
+  // browser-zoom (DPR change), and device rotation
+  if (/\binnerWidth\b|\binnerHeight\b/.test(code)
+      && /requestAnimationFrame\s*\(|requestVideoFrameCallback\s*\(/.test(code)
+      && !/addEventListener\(\s*['"](?:resize|orientationchange)/.test(code)
+      && !/\bonresize\s*=/.test(code))
+    flag(owned, file, line0,
+      'innerWidth/innerHeight in a render loop but no resize listener — stale-size cache');
+
+  // dynamic imports must be failure-guarded: a failed chunk must degrade,
+  // not kill the module before UI wiring (menu dead-button class)
+  for (const m of code.matchAll(/await\s+(?:Promise\.all\s*\(\[[^\]]*?)?import\s*\(/gs)) {
+    const i = m.index;
+    const guarded = nearTry(code, i) || /\.catch\s*\(/.test(code.slice(i, i + 700));
+    if (!guarded)
+      flag(owned, file, line0 + lineOf(code, i) - 1,
+        'await import() unguarded — a failed chunk kills the module before UI wiring');
+  }
+
+  // raw number parse straight off localStorage — NaN/adversarial-string leak
+  // (the boxing:volume Number(getItem) bug class)
+  for (const m of code.matchAll(/\b(?:Number|parseFloat|parseInt)\s*\(\s*localStorage\.getItem/g))
+    flag(owned, file, line0 + lineOf(code, m.index) - 1,
+      'Number()/parseFloat()/parseInt() directly on getItem — validate, NaN leaks');
+
+  // storage objects mutated in place need shape validation first — a corrupt
+  // JSON value (null/42/"x") then throws on property set (boxing:ko class)
+  for (const m of code.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:[\w.]+\.)?get\s*\(\s*['"]boxing:[\w-]+['"]\s*,\s*\{[\s\S]*?\}\s*\)/g)) {
+    const window_ = code.slice(m.index, m.index + m[0].length + 400);
+    const name = m[1];
+    if (new RegExp(`\\b${name}\\s*\\.\\s*[\\w$]+\\s*(?:[+\\-*/|&^%]?=(?!=)|\\+\\+|--)`).test(window_)
+      && !new RegExp(`typeof\\s+${name}\\s*===\\s*['"]object['"]`).test(window_))
+      flag(owned, file, line0 + lineOf(code, m.index) - 1,
+        `stored object '${name}' mutated without shape check — corrupt value throws`);
+  }
+}
 
 /* ---------- extractors ---------- */
 const SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
@@ -128,8 +215,13 @@ try {
     });
 
     /* crawl module graph: relative imports must exist; bare imports must be
-       covered by THIS page's importmap (the map is what the browser uses) */
+       covered by THIS page's importmap (the map is what the browser uses).
+       Page-reachable local files also get the wave-3 hardening checks as
+       NOTES — foreign files (mockups, shared/* owned elsewhere) can't be
+       fixed here but their bugs are routable. shared/ is skipped — the
+       shared-walk below covers it with proper ownership. */
     const seen = new Set();
+    const crawlFiles = [];
     while (queue.length) {
       const { code, fromDir, fromFile, line } = queue.shift();
       for (const spec of specifiers(code)) {
@@ -142,8 +234,11 @@ try {
           if (!seen.has(abs) && /\.m?js$/.test(abs) && abs.startsWith(ROOT)) {
             seen.add(abs);
             try {
-              queue.push({ code: readFileSync(abs, 'utf8'), fromDir: dirname(abs),
-                fromFile: abs.slice(ROOT.length + 1), line: 1 });
+              const code2 = readFileSync(abs, 'utf8');
+              const rel = abs.slice(ROOT.length + 1);
+              if (!rel.startsWith('shared/')) crawlFiles.push({ rel, code: code2 });
+              queue.push({ code: code2, fromDir: dirname(abs),
+                fromFile: rel, line: 1 });
             } catch { }
           }
         } else if (!/^https?:/i.test(spec)) {
@@ -152,6 +247,7 @@ try {
         }
       }
     }
+    for (const { rel, code } of crawlFiles) hardenChecks(code, 1, rel, false);
 
     /* ---- w9 round-2 bug-class checks (fail on owned pages, note others) */
     const owned = OWNED_PAGES.has(page);
@@ -212,6 +308,18 @@ try {
         if (!existsSync(resolve(pageDir, p)))
           flag(owned, page, line + lineOf(body, m.index) - 1, `'${p}' literal — not on disk`);
       }
+
+      // a STATIC relative import can't be try/caught — if a decorative dep
+      // (3D backdrop, stage engine) fails to load, the whole module dies and
+      // every UI listener it wired dies with it. Modules that wire the DOM
+      // should fetch optional deps via dynamic import() inside try.
+      if (/addEventListener|getElementById|querySelector/.test(body))
+        for (const m of body.matchAll(/^\s*import\s[^;()]*?from\s*['"](\.[^'"]+)['"]/gm))
+          flag(owned, page, line + lineOf(body, m.index) - 1,
+            `static import '${m[1]}' in a DOM-wiring module — a failed dep kills the UI; prefer dynamic import() inside try`);
+
+      // wave-3 generic hardening checks over the inline module body
+      hardenChecks(body, line, page, owned);
     }
   }
 
@@ -242,6 +350,8 @@ try {
           flag(relOwned, rel, lineOf(code, m.index), 'JSON.parse outside try/catch — corrupt storage kills the caller');
       for (const m of code.matchAll(/\b(?:TODO|FIXME|XXX|HACK)\b/g))
         flag(relOwned, rel, lineOf(code, m.index), `leftover '${m[0]}' marker`);
+      // wave-3 generic hardening checks (fail on owned shared files, note otherwise)
+      hardenChecks(code, 1, rel, relOwned);
       // syntax check each shared module too — cheap, catches dead-file rot
       checked++;
       const tf = join(tmp, rel.replace(/[^\w.-]+/g, '_'));

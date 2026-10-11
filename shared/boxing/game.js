@@ -21,7 +21,7 @@
 
 import { RingSim } from './ring.js';
 import { FistTracker } from './fists.js';
-import { Fight, TUNING as FIGHT_TUNING } from './fight.js';
+import { Fight, TUNING as FIGHT_TUNING, VSTATS } from './fight.js';
 import { buildScene } from './scene.js';
 import { createNpc } from './npc.js';
 import { makeFx } from './fx.js';
@@ -34,7 +34,18 @@ export async function createGame(opts = {}) {
   const npc = await createNpc(THREE, {
     scene: world.scene, manifestUrl: opts.manifestUrl, manifest: opts.manifest,
   });
-  const sim = new RingSim(opts.ringOpts || {});
+  /* The rival's frame sets the gap it fights at: VSTATS.range scales its
+     attack distance (a long/big rival swings from farther out), and the
+     ring parks it just inside that reach so it never has to crowd the lens
+     to land. Caller ringOpts still override everything. */
+  const stat = VSTATS[npc.variant] || VSTATS.bubble;
+  const atkRange = FIGHT_TUNING.attackAt * (Number.isFinite(stat?.range) ? stat.range : 1);
+  const sim = new RingSim({
+    punchRange: atkRange - .05,
+    midRange: atkRange + .5,
+    ...(Number.isFinite(stat?.size) && stat.size > 0 ? { npcRadius: stat.size } : {}),
+    ...(opts.ringOpts || {}),
+  });
   const playerAvatar = buildBoxer(THREE, { variant: 'bubble', playerLook: true,
     palette: { skin: 0xeebd91, skinShade: 0xce9673, skinLight: 0xf5cba3,
       shorts: 0x354d7a, trim: 0xffe9b8, leaf: 0xffc53d,
@@ -94,10 +105,8 @@ export async function createGame(opts = {}) {
      walk-on covers the middle of the intro, first-person blend unchanged. */
   const ENTER_AT = .5, ENTER_LEN = .28;
   const entPos = { x: 0, z: -4.6 };               // crowd-side spawn point
-  // the player avatar's 3D gloves — playerLook builds them hidden because the
-  // page draws YOUR tracked hands as 2D mitts at the glove anchors; they're
-  // only unhidden when that overlay renderer isn't available (mittOk false),
-  // so the walk-on/outro shots never show a gloveless — or double-gloved — boxer
+  // Third-person shots use the avatar's own gloves, which are solved to the
+  // arms each frame. The first-person canvas is reserved for visible hands.
   const aGloves = [];
   for (const n of ['gloveL', 'gloveR'])
     playerAvatar.parts?.[n]?.children?.forEach(m => aGloves.push(m));
@@ -109,7 +118,14 @@ export async function createGame(opts = {}) {
     entranceSign: 'idle', entranceWaiting: false, telegraph: null };
 
   function step(dt, hs, fs, controls = {}) {
-    const waiting = fight.state.phase === 'intro' && !!controls.waitForHands && !skipRequested;
+    /* hold the bell while trackers boot: controls.waitForHands means a
+       landmarker is still loading (never true once it resolves or fails,
+       so camera-denied/mouse players are never blocked). Applies in intro
+       AND countdown — skipIntro() jumps straight to countdown and mustn't
+       kill the hold, or a slow boot starts the bout with defenseless
+       gloves (b3-soak: KO'd at ~39s on a slow link). */
+    const waiting = (fight.state.phase === 'intro' || fight.state.phase === 'countdown')
+      && !!controls.waitForHands;
     if (waiting) { tNow = 0; introStartedAt = typeof performance !== 'undefined' ? performance.now() : 0; }
     else tNow += dt;
     /* hit-stop: on impact frames the WORLD freezes for ~70-180ms while
@@ -133,17 +149,20 @@ export async function createGame(opts = {}) {
     if (Math.abs(sw) < .5) dodged = false;
 
     const st = fight.state;
-    // Face bbox size is a stable rough depth signal: step in when closer to
-    // the camera, step back when farther. Neutral is captured on first face
-    // acquisition and with C; a dead zone ignores small tracking changes.
-    let targetStep = 0;
+    // Two head-driven depth signals sum into the step. Face bbox size is a
+    // stable rough depth signal: step in when closer to the camera, step back
+    // when farther (neutral captured on first face acquisition and with C).
+    // tracker.pitch is chin tilt: nod down to press in, tilt back to retreat —
+    // it works seated, no footwork, and a dead zone ignores small changes.
+    let targetStep = tracker.pitch || 0;
     if (fs?.found && Number.isFinite(fs.size) && fs.size > .05) {
       lastFaceSize = fs.size;
       if (!neutralFaceSize) neutralFaceSize = fs.size;
       const delta = fs.size / neutralFaceSize - 1;
-      if (delta > .10) targetStep = Math.min(1, (delta - .10) / .22);
-      else if (delta < -.10) targetStep = Math.max(-1, (delta + .10) / .2);
+      if (delta > .10) targetStep += Math.min(1, (delta - .10) / .22);
+      else if (delta < -.10) targetStep += Math.max(-1, (delta + .10) / .2);
     }
+    targetStep = Math.max(-1, Math.min(1, targetStep));
     if (Number.isFinite(controls.step) && controls.step !== 0)
       targetStep = Math.max(-1, Math.min(1, controls.step));
     if (st.phase !== 'fighting') targetStep = 0;
@@ -177,7 +196,7 @@ export async function createGame(opts = {}) {
     const introU = Math.max(0, Math.min(1, Math.max(tNow / FIGHT_TUNING.introT, wallIntro)));
     const showAv = (st.phase === 'intro' && introU < .82) || (over && outroT > .7);   // once the lens has cleared its head
     playerAvatar.group.visible = showAv;
-    for (const m of aGloves) m.visible = showAv && controls.mittOk !== true;
+    for (const m of aGloves) m.visible = showAv;
     if (showAv) {
       playerAvatar.group.position.set(sim.player.pos.x, 0, sim.player.pos.z);
       // play to the camera — a boxer working the crowd, not swaying at air.
@@ -199,7 +218,9 @@ export async function createGame(opts = {}) {
        crowd edge — sim position is untouched, this is purely the visual. */
     const entryU = st.phase === 'intro'
       ? Math.max(0, Math.min(1, (introU - ENTER_AT) / ENTER_LEN)) : 1;
-    npc.group.visible = entryU > 0;
+    // Keep the result shot on the player's boxer alone. The opponent returns
+    // when a new bout starts and the entrance phase runs again.
+    npc.group.visible = entryU > 0 && !over;
     const events = st.events.length
       ? st.events.splice(0, st.events.length) : NO_PUNCHES;   // single drain — shared below
 

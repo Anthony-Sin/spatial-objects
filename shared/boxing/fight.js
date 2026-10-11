@@ -56,10 +56,10 @@ export const TUNING = {
   rounds: 3,            // judges' decision after this many rounds
   roundHeal: .12,       // fraction of maxHp restored between rounds
 
-  reach: 1.35,          // forgiving contact plane for a planted first-person boxer
+  reach: 1.45,          // forgiving contact plane for a planted first-person boxer
   reachPow: .2,         // power 0..1 stretches reach by up to this fraction
-  attackAt: 1.0,        // npc only starts a windup inside this gap
-  npcReach: 1.35,       // a committed npc swing still connects out to here
+  attackAt: 1.15,       // npc only starts a windup inside this gap (× VSTATS.range)
+  npcReach: 1.45,       // a committed npc swing still connects out to here (× VSTATS.reach)
   guardT: .6,           // guard >= this on the matching side = block
   dodgeT: .6,           // |sway| >= this at impact = clean dodge
   blockMul: .5,         // blocked npc hits deal this fraction of damage
@@ -147,11 +147,33 @@ export const SPECIALS = {
 /* light paper-stats: how each rival's card numbers translate in the ring.
    dmg scales every swing, taken scales hits it absorbs, windup scales all
    its telegraph times. bubble is the baseline — all 1s keeps every fight
-   number identical to the tuned table above. */
+   number identical to the tuned table above.
+   range/reach/size are the frame knobs — they keep bigger rivals dangerous
+   from farther out so a massive frame never has to press into the lens to
+   land: range scales attackAt (where it starts swinging), reach scales
+   npcReach (where its swings still connect), size is its sim body radius
+   (0 = the standard fighter footprint — the RingSim reads it via game.js). */
 export const VSTATS = {
-  bubble: { dmg: 1,    taken: 1,   windup: 1 },
-  bean:   { dmg: 1.15, taken: .9,  windup: 1 },      // the boss hits like a truck
-  sumo:   { dmg: 1.25, taken: .78, windup: 1.12 },
+  bubble: { dmg: 1,    taken: 1,   windup: 1,    range: 1,    reach: 1,    size: 0 },
+  bean:   { dmg: 1.15, taken: .9,  windup: 1,    range: 1.18, reach: 1.15, size: .38 },  // the boss hits like a truck
+  sumo:   { dmg: 1.25, taken: .78, windup: 1.12, range: 1.4,  reach: 1.35, size: .46 },
+};
+
+/* Default tuning/spec snapshots taken at module load. A caller mutating the
+   exported TUNING (the documented "feel knobs") to garbage — or a live edit
+   mid-session — must not bake NaN into a fight: every Fight holds its own
+   sanitized copy, re-taken on reset() so a rematch honors fresh tuning. */
+const _TDEF = JSON.parse(JSON.stringify(TUNING));
+const _SDEF = JSON.parse(JSON.stringify(SPECIALS));
+const _VDEF = JSON.parse(JSON.stringify(VSTATS));
+const saneT = (src, def) => {
+  const out = {};
+  for (const k in def) {
+    const d = def[k], v = src ? src[k] : undefined;
+    out[k] = (d !== null && typeof d === 'object') ? saneT(v, d)
+      : Number.isFinite(+v) ? +v : d;
+  }
+  return out;
 };
 
 // deterministic PRNG — no Math.random anywhere in this file
@@ -170,16 +192,6 @@ export class Fight {
   constructor(opts = {}) {
     this.opts = { playerHp: 100, npcHp: 100, npcName: 'PIP', roundLen: 90, seed: 1,
       ai: true, practice: false, npcVariant: 'bubble', ...opts };
-    /* degenerate opts → sane floors. roundLen NaN/≤0 once produced a clock
-       that never reached zero (rounds never ended); hp ≤ 0 spawned a
-       fighter that was already down. */
-    const o = this.opts;
-    o.playerHp = Math.max(1, num(o.playerHp, 100));
-    o.npcHp    = Math.max(1, num(o.npcHp, 100));
-    o.roundLen = Math.max(1, num(o.roundLen, 90));
-    this._special = SPECIALS[this.opts.npcVariant] || SPECIALS.bubble;
-    this._stat = VSTATS[this.opts.npcVariant] || VSTATS.bubble;
-    this.ai = this.opts.ai !== false;
     this.state = {
       phase: 'intro', round: 0, timeLeft: this.opts.roundLen, countdown: 0,
       player: { hp: 0, maxHp: 0, stamina: 1, score: 0, combo: 0, bestCombo: 0,
@@ -192,8 +204,28 @@ export class Fight {
     this.reset();
   }
 
+  /* ai/practice are read live so a caller can flip the tutorial switches
+     mid-fight (practice→real transitions) without a rebuild. */
+  get ai() { return this.opts.ai !== false; }
+
+  /* effective distance gates — bigger rivals start and land swings from
+     farther out (VSTATS.range/reach scale the base TUNING numbers) */
+  get _atkR() { return this._T.attackAt * (this._stat?.range || 1); }
+  get _npcR() { return this._T.npcReach * (this._stat?.reach || 1); }
+
   reset() {
     const o = this.opts, s = this.state;
+    /* degenerate opts → sane floors — re-applied here (not just in the
+       constructor): opts mutated between bouts once baked 'x'/NaN/-9 into
+       hp and a NaN clock that could never reach a verdict. */
+    o.playerHp = Math.max(1, num(o.playerHp, 100));
+    o.npcHp    = Math.max(1, num(o.npcHp, 100));
+    o.roundLen = Math.max(1, num(o.roundLen, 90));
+    if (typeof o.npcName !== 'string' || !o.npcName) o.npcName = 'PIP';
+    const vk = SPECIALS[o.npcVariant] ? o.npcVariant : 'bubble';
+    this._T = saneT(TUNING, _TDEF);          // fresh sanitized tuning snapshot
+    this._special = saneT(SPECIALS[vk], _SDEF[vk]);
+    this._stat = saneT(VSTATS[vk], _VDEF[vk]);
     this._rng = mulberry32((o.seed | 0) || 1);
     this._phaseT = 0;                 // generic timer for intro/down phases
     this._actFor = .35;               // duration of the current npc action
@@ -208,9 +240,10 @@ export class Fight {
     this._prevSway = 0; this._prevDuck = 0;   // dodge edge detection
     this._aim = 0;                    // what PIP aimed at: -1|1 held lean, 'duck', 0
     this._chain = 0;                  // swings thrown in the current combo
-    this._chainMax = TUNING.comboMax; // how deep this variant's flurry runs
+    this._chainMax = this._T.comboMax; // how deep this variant's flurry runs
     this._wantCombo = false;          // this attack is the multi-hit special
-    this._wantSledge = false;         // this attack is the single haymaker special
+    this._wantSlam = false;           // single haymaker special armed this attack
+    this._wantSledge = false;         // (legacy alias — same gate as _wantSlam)
     this._normals = 0;                // normal attacks since the last special
     this._swing = null;               // how the live swing resolved: hit|blocked|dodged|perfect|whiff
     s.phase = 'intro'; s.round = 0; s.timeLeft = o.roundLen; s.countdown = 0;
@@ -223,7 +256,7 @@ export class Fight {
   }
 
   step(dt, inputs = {}) {
-    const s = this.state, p = s.player, T = TUNING;
+    const s = this.state, p = s.player, T = this._T;
     dt = Math.min(Math.max(+dt || 0, 0), .1);
     s.events.length = 0; s.lastBlow = null;
     if (!inputs || typeof inputs !== 'object') inputs = {};   // step(dt, null) must not crash
@@ -245,7 +278,7 @@ export class Fight {
 
     // dodge move clock: active window → cooldown → ready
     const dg = p.dodge;
-    dg.t += dt;
+    dg.t = Math.min(9, dg.t + dt);   // 9 = "long ago" sentinel — no unbounded clock
     if (dg.dir && dg.t >= T.dodgeWin) { dg.dir = null; dg.cd = T.dodgeCd; }
     else if (!dg.dir && dg.cd > 0) dg.cd = Math.max(0, dg.cd - dt);
     if (s.phase === 'fighting') {
@@ -341,7 +374,7 @@ export class Fight {
   throwPunch(kind = 'jab', side = 'left', windup = null) {
     const s = this.state, n = s.npc;
     if (s.phase !== 'fighting' || ['windup', 'punch', 'down', 'hurt', 'stunned'].includes(n.action)) return false;
-    this._windup(false, { kind: TUNING.windup[kind] ? kind : 'jab',
+    this._windup(false, { kind: this._T.windup[kind] ? kind : 'jab',
       side: side === 'right' ? 'right' : 'left',
       windup: Number.isFinite(+windup) && +windup > 0 ? +windup : null });
     return true;
@@ -357,9 +390,9 @@ export class Fight {
     this._emit('player-dodge');
   }
   _rage() { const n = this.state.npc; return n.maxHp > 0 ? 1 - n.hp / n.maxHp : 0; }
-  _idle() { return (TUNING.idleMin + this._rng() * TUNING.idleVar) * (1 - .4 * this._rage()); }
-  _circle() { return TUNING.circleMin + this._rng() * TUNING.circleVar; }
-  _retreat() { return TUNING.retreatMin + this._rng() * TUNING.retreatVar; }
+  _idle() { return (this._T.idleMin + this._rng() * this._T.idleVar) * (1 - .4 * this._rage()); }
+  _circle() { return this._T.circleMin + this._rng() * this._T.circleVar; }
+  _retreat() { return this._T.retreatMin + this._rng() * this._T.retreatVar; }
   _setAct(a, dur) {
     const n = this.state.npc;
     n.action = a; n.actionT = 0; this._actFor = dur;
@@ -375,7 +408,7 @@ export class Fight {
   }
 
   _roundEnd() {
-    const s = this.state, T = TUNING;
+    const s = this.state, T = this._T;
     if (s.round < T.rounds) {
       for (const f of [s.player, s.npc]) f.hp = Math.min(f.maxHp, f.hp + f.maxHp * T.roundHeal);
       this._startRound();
@@ -407,7 +440,7 @@ export class Fight {
     s.npc.telegraph = null; this._phaseT = 0;
     this._emit('ko');
     if (who === 'npc') {
-      s.player.score += TUNING.score.ko;
+      s.player.score += this._T.score.ko;
       s.npc.action = 'down'; s.npc.actionT = 0;
       s.phase = 'npcdown';
     } else {
@@ -419,7 +452,7 @@ export class Fight {
   /* ---------- player offense ---------- */
 
   _playerPunch(pn, inp) {
-    const s = this.state, T = TUNING, p = s.player, n = s.npc;
+    const s = this.state, T = this._T, p = s.player, n = s.npc;
     this._emit('player-punch');
     const kind = T.dmg[pn.kind] ? pn.kind : 'jab';
     const cost = T.stamCost[kind];
@@ -471,21 +504,23 @@ export class Fight {
   }
 
   _whiff(pn, reason) {
-    const s = this.state;
+    const s = this.state, T = this._T;
     this._emit('player-miss');
-    s.lastBlow = { who: 'player', kind: pn.kind, result: 'miss', reason };
+    // kind sanitized — a garbage pn.kind once leaked into lastBlow/audio
+    s.lastBlow = { who: 'player', kind: T.dmg[pn?.kind] ? pn.kind : 'jab',
+      result: 'miss', reason };
     // PIP loves watching you miss — occasional taunt (only from mobile states)
     if (this.ai && reason !== 'exhausted' && this._celebrateCd <= 0 && this._rng() < .18
         && ['idle', 'circle', 'press', 'retreat'].includes(s.npc.action)) {
-      this._celebrateCd = TUNING.celebrateCd;
-      this._setAct('celebrate', TUNING.celebrateT);
+      this._celebrateCd = T.celebrateCd;
+      this._setAct('celebrate', T.celebrateT);
     }
   }
 
   /* ---------- npc brain ---------- */
 
   _npc(dt, inp) {
-    const s = this.state, T = TUNING, n = s.npc;
+    const s = this.state, T = this._T, n = s.npc;
     n.actionT += dt;
     switch (n.action) {
       case 'idle': case 'circle':
@@ -496,7 +531,7 @@ export class Fight {
         break;
       case 'press':
         if (n.gassed) this._setAct('retreat', this._retreat());   // gassed — fade out
-        else if (inp.distance <= T.attackAt) this.ai ? this._windup() : this._setAct('idle', 1);
+        else if (inp.distance <= this._atkR) this.ai ? this._windup() : this._setAct('idle', 1);
         else if (n.actionT >= T.pressMax) this._setAct('circle', this._circle());
         break;
       case 'block':
@@ -538,20 +573,20 @@ export class Fight {
   _stun() {
     const n = this.state.npc;
     this._chain = 0; this._swing = null;
-    this._setAct('stunned', TUNING.perfectStun);
+    this._setAct('stunned', this._T.perfectStun);
     n.stamina = Math.max(0, n.stamina - .1);
   }
 
   // what the swing did decides PIP's next beat: reel, stumble, chain, or reset
   _afterSwing(inp) {
-    const T = TUNING, n = this.state.npc;
+    const T = this._T, n = this.state.npc;
     const res = this._swing; this._swing = null;
     if (res === 'perfect') return this._stun();
     if (res !== 'hit' && res !== 'blocked') {   // dodged / swung at air
       this._chain = 0;
       return this._setAct('whiff', T.whiffT);   // off-balance — counter window
     }
-    if (this.ai && this._wantCombo && this._chain < this._chainMax - 1 && !n.gassed && inp.distance <= T.npcReach)
+    if (this.ai && this._wantCombo && this._chain < this._chainMax - 1 && !n.gassed && inp.distance <= this._npcR)
       return this._windup(true);   // the flurry is committed — next punch telegraphs
     this._chain = 0;
     if (res === 'hit') this._taunt(.4);        // showboats over a clean shot
@@ -559,7 +594,7 @@ export class Fight {
   }
 
   _windup(combo = false, force = null) {
-    const T = TUNING, n = this.state.npc, rage = this._rage(), inp = this._inp;
+    const T = this._T, n = this.state.npc, rage = this._rage(), inp = this._inp;
     /* fresh attack → special or normal? Each variant's signature special
        needs the stamina floor AND ~specialEvery normals since the last one,
        then burns a chunk up front. Scripted swings are always singles. */
@@ -615,7 +650,7 @@ export class Fight {
 
   // did the player get out of the way? → 'left'|'right'|'duck'|null (+ perfect)
   _dodgeAt(inp) {
-    const T = TUNING, dg = this.state.player.dodge;
+    const T = this._T, dg = this.state.player.dodge;
     if (dg.dir) return { dir: dg.dir, perfect: dg.t <= T.perfectWin };
     if (Math.abs(inp.sway) >= T.dodgeT && Math.sign(inp.sway) !== this._aim)
       return { dir: inp.sway < 0 ? 'left' : 'right', perfect: false };
@@ -624,12 +659,12 @@ export class Fight {
   }
 
   _impact(inp) {
-    const s = this.state, T = TUNING, p = s.player;
+    const s = this.state, T = this._T, p = s.player;
     const { kind, side } = this._pk;
     this._landed = false;
     this._swing = 'whiff';
     s.lastBlow = { who: 'npc', kind, side, result: 'whiff' };
-    if (inp.distance > T.npcReach) return;                    // swung at air
+    if (inp.distance > this._npcR) return;                  // swung at air
     const dz = this._dodgeAt(inp);
     const duckedInto = dz?.dir === 'duck' && kind === 'upper';   // ducked INTO the uppercut
     if (dz && !duckedInto) {                                  // clean dodge
@@ -678,15 +713,15 @@ export class Fight {
   _taunt(chance) {  // showboat tax — celebrates its own work, fully punishable
     if (!this.ai || this._celebrateCd > 0 || this.state.player.hp <= 0) return;
     if (this._rng() < chance) {
-      this._celebrateCd = TUNING.celebrateCd;
-      this._setAct('celebrate', TUNING.celebrateT);
+      this._celebrateCd = this._T.celebrateCd;
+      this._setAct('celebrate', this._T.celebrateT);
     }
   }
 
   _choose(inp) {
-    const T = TUNING, n = this.state.npc, p = this.state.player;
+    const T = this._T, n = this.state.npc, p = this.state.player;
     const rage = this._rage();
-    const inRange = inp.distance <= T.attackAt;
+    const inRange = inp.distance <= this._atkR;
     const gassed = n.gassed;   // tired PIP stops swinging, fades to recover
     const cocky = n.hp > p.hp * 1.15;
     const W = {

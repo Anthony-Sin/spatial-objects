@@ -64,9 +64,13 @@ const server = createServer(async (req, res) => {
     const st0 = await stat(file).catch(() => null);
     if (!st0 || !st0.isFile()) { res.writeHead(404); return res.end('not found'); }
     // symlink escape guard — a link inside the tree pointing outside would
-    // sail past the lexical check above
+    // sail past the lexical check above. realpath FAILING is different: the
+    // path vanished (or is a dangling/looping link) between stat() and here —
+    // that's "not found", not "forbidden" (a delete mid-request was surfacing
+    // as a bogus 403)
     const real = await realpath(file).catch(() => null);
-    if (!real || (real !== ROOT_REAL && !real.startsWith(ROOT_REAL + sep))) {
+    if (!real) { res.writeHead(404); return res.end('not found'); }
+    if (real !== ROOT_REAL && !real.startsWith(ROOT_REAL + sep)) {
       res.writeHead(403); return res.end('no');
     }
     if (real.split(sep).some(s => DENY.has(s))) {
@@ -91,8 +95,18 @@ const server = createServer(async (req, res) => {
       // open(); resolving /proc/self/fd/<n> tells us what we actually opened.
       // Falls back to `real` where /proc doesn't exist (non-Linux).
       const fdReal = await realpath(`/proc/self/fd/${fh.fd}`).catch(() => real);
-      if (fdReal !== ROOT_REAL && !fdReal.startsWith(ROOT_REAL + sep)) {
+      // kernel readlink appends " (deleted)" to the path of an fd whose file
+      // was unlinked after open — strip it, or a denied basename like ".env"
+      // becomes ".env (deleted)" and evades the exact-match denylist below
+      const fdPath = fdReal.endsWith(' (deleted)') ? fdReal.slice(0, -' (deleted)'.length) : fdReal;
+      if (fdPath !== ROOT_REAL && !fdPath.startsWith(ROOT_REAL + sep)) {
         res.writeHead(403); return res.end('no');
+      }
+      // DENY re-checked against the OPENED inode's path, not just `real`: a
+      // dir component of `real` swapped for a symlink between realpath() and
+      // open() could land this fd on a still-in-root denied file (.git/, .env)
+      if (fdPath.split(sep).some(s => DENY.has(s))) {
+        res.writeHead(404); return res.end('not found');
       }
       const st = await fh.stat();
       if (!st.isFile()) { res.writeHead(404); return res.end('not found'); }
@@ -165,6 +179,10 @@ const server = createServer(async (req, res) => {
           return res.end();
         }
         end = Math.min(end, buf.length - 1);
+        // ...and the content-range set from fstat() is now stale: it would
+        // announce a span LONGER than the body on the wire (and a stale
+        // total) — re-derive it from what was actually read
+        hdrs['content-range'] = `bytes ${start}-${end}/${buf.length}`;
       } else if (buf) {
         end = buf.length - 1;                    // 200: deliver what was read
       }

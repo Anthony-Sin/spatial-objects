@@ -93,25 +93,27 @@ const bounce = t => {
 };
 
 // ---- per-variant build knobs ----
+// Head pivots sit just above and ahead of the chest so the chin does not
+// disappear into the torso when a boxer faces the camera.
 // face: ex/ey/ez eye offset in head space, by brow height, my mouth drop,
 // bx/byy blush offset. guard: rest glove positions (body space, +Z = front).
 const CFG = {
   bubble: {
-    headY: .96,
+    headY: 1.02,
     face: { ex: .115, ey: .05, ez: .262, by: .155, my: -.105, bx: .18, byy: -.05 },
     shx: .30, shy: .66, armR: .05, armLen: .18, gloveR: .2,
     guard: { l: [-.27, .70, .27], r: [.28, .68, .23] },
     hipX: .13, hipY: .30, legR: .05, legLen: .12, foot: [.14, .055, .045],
   },
   bean: {   // tall bean · snappy reach
-    headY: 1.06,
+    headY: 1.12,
     face: { ex: .105, ey: .02, ez: .235, by: .12, my: -.115, bx: .17, byy: -.06 },
     shx: .37, shy: .66, armR: .09, armLen: .18, gloveR: .225,
     guard: { l: [-.32, .68, .28], r: [.33, .66, .24] },
     hipX: .15, hipY: .30, legR: .055, legLen: .11, foot: [.15, .052, .05],
   },
   sumo: {   // THE BOSS — massive heavyweight frame, iron stance
-    headY: 1.28,
+    headY: 1.36,
     face: { ex: .15, ey: .02, ez: .34, by: .16, my: -.14, bx: .22, byy: -.07 },
     shx: .48, shy: .82, armR: .125, armLen: .22, gloveR: .29,
     guard: { l: [-.42, .86, .34], r: [.43, .84, .30] },
@@ -450,7 +452,7 @@ export function buildBoxer(THREE, opts = {}) {
       torso.add(bellyLight);
       mark('torso', put(squash, torso));
 
-      const head = grp(0, C.headY, 0);
+      const head = grp(0, C.headY, .06);
       head.add(inked(SPH(.30, 24, 18), P.skin));
       for (const s of [-1, 1]) {
         const ear = inked(SPH(.055, 12, 9), P.skinShade, { hull: .035 });
@@ -530,7 +532,7 @@ export function buildBoxer(THREE, opts = {}) {
       }
       mark('torso', put(squash, torso));
 
-      const head = grp(0, C.headY, 0);
+      const head = grp(0, C.headY, .08);
       const skull = inked(SPH(.35, 24, 18), P.skin);
       skull.scale.set(1.14, 1.04, 1.08);
       head.add(skull);
@@ -610,7 +612,7 @@ export function buildBoxer(THREE, opts = {}) {
       }
       mark('torso', put(squash, torso));
 
-      const head = grp(0, C.headY, 0);             // head cap melts into bean
+      const head = grp(0, C.headY, .06);           // chin sits ahead of the chest
       const cap = inked(SPH(.27, 22, 16), P.skin);
       cap.scale.set(1.02, .95, 1);
       head.add(cap);
@@ -930,7 +932,9 @@ export function buildBoxer(THREE, opts = {}) {
     SZ = Number.isFinite(strike?.reach) ? clamp(strike.reach, 0, 2.5) : null;
     SY = SZ !== null && Number.isFinite(strike?.y) ? clamp(strike.y, 0, 2) : null;
     if (!POSES[name]) {
-      if (!warned.has(name)) {
+      // cap the dedupe set — a hostile/buggy caller streaming unique garbage
+      // names once grew `warned` (and the console) without bound
+      if (!warned.has(name) && warned.size < 64) {
         warned.add(name);
         if (typeof console !== 'undefined') console.warn('protoBoxer: unknown pose', name, '— using idle');
       }
@@ -1128,7 +1132,11 @@ export function buildBoxer(THREE, opts = {}) {
       }
     if (parts.tuft) parts.tuft.rotation.z = Math.sin(time * 3.7) * .12 * (cur === 'celebrate' ? 2.5 : 1);
 
-    if (state && typeof state === 'object') { state.pose = cur; state.k = effK; state.time = time; }
+    // debug echo — wrapped: a frozen/sealed state object used to throw in
+    // strict mode and kill the whole frame
+    if (state && typeof state === 'object') {
+      try { state.pose = cur; state.k = effK; state.time = time; } catch { /* sealed */ }
+    }
   }
 
   function dispose() {

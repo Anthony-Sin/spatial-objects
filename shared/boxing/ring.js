@@ -29,12 +29,15 @@
 export const TUNING = {
   radius: 2.6,           // ring radius to the ropes (world units)
   bodyRadius: 0.34,      // fighter footprint radius (collision + rope clamp)
+  npcRadius: 0,          // npc footprint — 0 = same as bodyRadius; bigger rivals
+                         // keep more separation and clamp to the ropes sooner
   npcSpeed: 1.35,        // unhurried footwork — re-engages without rushing
   playerDrift: 1.0,      // legacy option retained for callers
   accel: 5.5,            // velocity approach rate /s — smooth accel & decel
   stunDamp: 8.0,         // stunned npc velocity decay rate /s (deadened drift)
-  punchRange: 0.9,       // 'press' preferred hold distance, center to center
-  midRange: 1.5,         // 'circle' orbit radius
+  punchRange: 1.1,       // 'press' preferred hold distance, center to center —
+                         // far enough that the rival doesn't crowd the lens
+  midRange: 1.65,        // 'circle' orbit radius
   arriveRadius: 0.5,     // seek-and-hold slowdown radius around a goal point
   avoidPad: 0.22,        // pad beyond punchRange where the route-around flow kicks in
   orbitSpeed: .75,       // tangential npc speed while circling
@@ -69,30 +72,40 @@ function mulberry32(seed) {
 export class RingSim {
   constructor(opts = {}) {
     this.t = { ...TUNING, ...opts };            // every TUNING key overridable
-    /* garbage-in guard: overrides must be finite non-negative numbers, else
-       the default stands — a NaN radius once made every position NaN, and a
-       negative accel inverted the steering feedback into divergence. */
-    for (const k in TUNING) {
-      const v = this.t[k];
-      if (!Number.isFinite(v) || v < 0) this.t[k] = TUNING[k];
-    }
-    this.t.playerPushShare = clamp(this.t.playerPushShare, 0, 1);
-    // the ring must fit both bodies side by side, else separation is impossible
-    this.t.radius = Math.max(this.t.radius, 2 * this.t.bodyRadius + .3);
-    if (this.t.orbitFlipMax < this.t.orbitFlipMin) this.t.orbitFlipMax = this.t.orbitFlipMin;
     this._seed = (opts.seed ?? 1337) >>> 0;
+    this._clean();
     this.reset();
   }
 
+  /* garbage-in guard: overrides must be finite non-negative numbers, else
+     the default stands — a NaN radius once made every position NaN, and a
+     negative accel inverted the steering feedback into divergence. Runs at
+     construct, reset, and atop step(): live mutation of this.t (devtools
+     tweaking) used to slip NaN past the per-key read guards and poison
+     positions permanently. */
+  _clean() {
+    const t = this.t;
+    for (const k in TUNING) {
+      const v = t[k];
+      if (!Number.isFinite(v) || v < 0) t[k] = TUNING[k];
+    }
+    t.playerPushShare = clamp(t.playerPushShare, 0, 1);
+    // the ring must fit both bodies side by side, else separation is impossible
+    t.radius = Math.max(t.radius, t.bodyRadius + (t.npcRadius || t.bodyRadius) + .3);
+    if (t.orbitFlipMax < t.orbitFlipMin) t.orbitFlipMax = t.orbitFlipMin;
+  }
+
   reset() {
+    this._clean();
     const { t } = this;
-    // Spawn: player planted in its corner zone on +Z (camera side),
-    // npc starts at mid range so the opening exchange arrives quickly.
+    // Spawn: player planted in its corner zone on +Z (camera side); the npc
+    // starts just past mid range and walks in — the opening exchange still
+    // arrives in well under a second of footwork.
     // _home stays inside the ropes even when `radius` is shrunk — a corner
     // mark outside the ring had the leash dragging the player out of bounds.
     this._home = { x: 0, z: Math.min(1.5, Math.max(0, (t.radius - t.bodyRadius) * .9)) };
     this.player = { pos: { x: this._home.x, z: this._home.z }, vel: { x: 0, z: 0 }, radius: t.bodyRadius, heading: Math.PI };
-    this.npc    = { pos: { x: 0, z: -0.05 }, vel: { x: 0, z: 0 }, radius: t.bodyRadius, heading: 0 };
+    this.npc    = { pos: { x: 0, z: -0.4 }, vel: { x: 0, z: 0 }, radius: t.npcRadius || t.bodyRadius, heading: 0 };
     this._rng = mulberry32(this._seed);
     this._orbit = 1;                                        // circle direction ±1
     this._flipT = lerp(t.orbitFlipMin, t.orbitFlipMax, this._rng());
@@ -103,6 +116,7 @@ export class RingSim {
   step(dt, input = {}) {
     if (!(dt > 0)) return;                    // ignore 0 / negative / NaN dt
     dt = Math.min(dt, 0.1);                   // stability cap for huge hitches
+    this._clean();                            // live tuning mutation can't NaN us
     if (!input || typeof input !== 'object') input = {};   // step(dt, null) must not crash
     const t = this.t, P = this.player, N = this.npc;
     // Sway and dodge steer the head only. Depth controls footwork.

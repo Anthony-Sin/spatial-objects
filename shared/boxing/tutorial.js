@@ -26,7 +26,8 @@ export const STEPS = [
 export const TOTAL = 30;                        // hard cap, seconds
 const NICE_T = .7;                              // "✓ NICE" beat between steps
 const SWING_GAP = .9;                           // breather between scripted swings
-const SPAR_GAP = 1.0;                           // where PIP stands (centre to centre)
+const SPAR_GAP = 1.1;                           // fallback gap — the sim's own
+                                                // punchRange wins when readable
 
 export class Tutorial {
   constructor(opts) {
@@ -41,11 +42,14 @@ export class Tutorial {
 
   get step() { return STEPS[this.i] || null; }
 
+  // sparring distance follows the rival's reach — a big frame parks farther out
+  _gap() { const g = this.sim?.t?.punchRange; return Number.isFinite(g) && g > 0 ? g : SPAR_GAP; }
+
   // park PIP at sparring distance, straight ahead
   _spar() {
     const P = this.sim?.player?.pos, N = this.sim?.npc;
     if (!P || !N?.pos || !N.vel) return;   // malformed sim → no-op, not a throw
-    N.pos.x = P.x; N.pos.z = P.z - SPAR_GAP; N.vel.x = N.vel.z = 0;
+    N.pos.x = P.x; N.pos.z = P.z - this._gap(); N.vel.x = N.vel.z = 0;
   }
 
   update(out, now) {
@@ -56,9 +60,13 @@ export class Tutorial {
     if (st.phase !== 'fighting') { this._render(st, now); return; }
     if (this.t0 === null) { this.t0 = now; this.stepT0 = now; }
     const s = this.step;
+    /* a clock that jumps BACKWARDS (wall-clock adjust / restarted timer)
+       once made every time box unreachable and stalled the run — elapsed
+       values clamp at 0 so a regression delays, never wedges */
+    const age = Math.max(0, now - this.t0);
     // drifted out of range (player stepped / knockback)? walk PIP back in
     const gd = typeof this.sim?.distance === 'function' ? this.sim.distance() : NaN;
-    if (Number.isFinite(gd) && Math.abs(gd - SPAR_GAP) > .35
+    if (Number.isFinite(gd) && Math.abs(gd - this._gap()) > .35
         && !['windup', 'punch'].includes(st.npc.action)) this._spar();
 
     if (now >= this.niceUntil && this.niceUntil) { this.niceUntil = 0; this._next(now); }
@@ -74,9 +82,10 @@ export class Tutorial {
         this.side = this.side === 'left' ? 'right' : 'left';
       }
       // time box — never stall; and the whole run never passes TOTAL
-      if (!this.niceUntil && (now - this.stepT0 >= s.max || now - this.t0 >= TOTAL)) this._next(now);
+      const stepAge = Math.max(0, now - this.stepT0);
+      if (!this.niceUntil && (stepAge >= s.max || age >= TOTAL)) this._next(now);
     }
-    if (this.t0 !== null && now - this.t0 >= TOTAL) this._finish();
+    if (this.t0 !== null && age >= TOTAL) this._finish();
     this._render(st, now);
   }
 
@@ -107,11 +116,13 @@ export class Tutorial {
     this._els = { n: r.querySelector('.tut-n'), t: r.querySelector('.tut-title'),
       h: r.querySelector('.tut-how'), c: r.querySelector('.tut-cue'),
       w: r.querySelector('.tut-time i') };
-    this._pips = [...r.querySelectorAll('.tut-pips i')];
+    this._pips = [...(r.querySelectorAll('.tut-pips i') || [])];
     this._last = {};
   }
 
-  _set(k, el, v) { if (this._last[k] !== v) { this._last[k] = v; el.textContent = v; } }
+  _set(k, el, v) {   // el may be null on a stub/partial root — never throw
+    if (el && this._last[k] !== v) { this._last[k] = v; el.textContent = v; }
+  }
 
   _render(st, now) {
     if (!this.root || !st || !st.npc) return;
@@ -139,8 +150,8 @@ export class Tutorial {
       this._last.pips = pk;
       this._pips.forEach((p, k) => { p.className = k < this.i || (k === this.i && nice) ? 'ok' : k === this.i ? 'cur' : ''; });
     }
-    const used = this.t0 === null ? 0 : Math.min(1, (now - this.t0) / TOTAL);
+    const used = this.t0 === null ? 0 : Math.min(1, Math.max(0, now - this.t0) / TOTAL);
     const w = Math.round((1 - used) * 1000) / 1000;
-    if (this._last.w !== w) { this._last.w = w; this._els.w.style.transform = `scaleX(${w})`; }
+    if (this._els.w && this._last.w !== w) { this._last.w = w; this._els.w.style.transform = `scaleX(${w})`; }
   }
 }

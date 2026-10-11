@@ -16,6 +16,7 @@
    worker 'ready' always adopts the pump.
 */
 const BOOT_MS = 30000;
+const STUCK_MS = 5000;    // an infer this long with no result/error = hung worker
 /* a glove passed in front of the camera occludes the face for a moment —
    'found' only concedes the face is gone after this much CONTINUOUS loss,
    so a punch flurry never makes the nose dot / head tracking blink out */
@@ -34,6 +35,7 @@ export class Face {
     this._t = -1; this._tick = 0; this._rate = 2;
     this._vendorUrl = null; this._video = null; this._onNew = null;
     this._retryT = null; this._initLocalP = null; this._stopped = false;
+    this._sentAt = 0;
   }
   static async create(video, vendorUrl = './vendor/mediapipe', opts = {}) {
     const f = new Face();
@@ -42,7 +44,13 @@ export class Face {
     // face infer is light enough that CPU-first is the right default — the
     // GPU stays reserved for render + hands. opt out with preferCpu:false
     f._preferCpu = opts.preferCpu !== false;
-    const which = await Promise.race([f._spawn(), sleep(BOOT_MS).then(() => 'slow')]);
+    const spawnP = f._spawn();
+    let which = await Promise.race([spawnP, sleep(BOOT_MS).then(() => 'slow')]);
+    // 'slow' = model download still in flight — don't race it with a second
+    // inline fetch; extend the worker one grace window before covering (see
+    // hands.js — same duplicate-download fix)
+    if (which === 'slow')
+      which = await Promise.race([spawnP, sleep(BOOT_MS).then(() => 'slow')]);
     // a stop() during the boot race must not resurrect an inline landmarker
     if (f._stopped) return f;
     if (which !== 'ok') await f._initLocal();   // 'fail' or 'slow' → cover the gap
@@ -68,16 +76,10 @@ export class Face {
           f._ingest(d); f._onNew?.();
         }
         else if (d.type === 'fatal') {
-          try { w.terminate(); } catch {}
-          if (f._worker === w) { f._worker = null; f.delegate = 'none';
-            f._inFlight = false; f._initLocal().catch(() => {}); }
+          f._workerDied(w, false);       // no respawn — the delegate itself is bad
         }
       };
-      w.onerror = () => {
-        try { w.terminate(); } catch {}   // an errored worker may stay alive and keep posting — reap it
-        if (f._worker === w) { f._worker = null; f._inFlight = false; f._initLocal().catch(() => {}); }
-        res('fail');
-      };
+      w.onerror = () => { f._workerDied(w); res('fail'); };
       try { w.postMessage({ type: 'init', kind: 'face', vendorUrl: f._vendorUrl,
         preferCpu: f._preferCpu }); }
       catch { res('fail'); }
@@ -93,15 +95,21 @@ export class Face {
     this.delegate = `${delegate}-worker`;
     this._rate = 1;   // offer every camera frame — _inFlight gates the pace
     this.landmarker?.close?.(); this.landmarker = null;
-    w.onerror = () => {                                  // mid-game death → inline + one respawn
-      try { w.terminate(); } catch {}
-      if (this._worker !== w) return;                    // already replaced — don't touch the new worker's flight state
-      this._worker = null; this.delegate = 'none';
-      this._inFlight = false;
-      this._initLocal().catch(() => {});
-      clearTimeout(this._retryT);
-      this._retryT = setTimeout(() => { if (!this._worker) this._spawn(); }, 3000);
-    };
+    w.onerror = () => this._workerDied(w);               // mid-game death → inline + one respawn
+  }
+  /* One place a worker goes to die. Idempotent: a zombie that already lost
+     its slot is reaped but touches nothing else — only the CURRENT worker
+     gets the flight gate cleared, the inline fallback and the respawn. */
+  _workerDied(w, respawn = true) {
+    try { w.terminate(); } catch {}                      // terminate() is safe to repeat
+    if (this._worker !== w) return;                      // already replaced
+    this._worker = null; this.delegate = 'none';
+    this._inFlight = false;
+    this._initLocal().catch(() => {});
+    clearTimeout(this._retryT);
+    if (respawn) this._retryT = setTimeout(() => {
+      if (!this._worker && !this._stopped) this._spawn();
+    }, 3000);
   }
   /* concurrent callers (fatal + onerror can fire together) must share ONE
      boot — two inline landmarkers meant leaked GPU/CPU graphs */
@@ -113,22 +121,24 @@ export class Face {
   }
   async _initLocalOnce() {
     if (this.landmarker || this._stopped) return;
-    const { FilesetResolver, FaceLandmarker } = await import(`${this._vendorUrl}/vision_bundle.mjs`);
-    const fileset = await FilesetResolver.forVisionTasks(`${this._vendorUrl}/wasm`);
-    const order = this._preferCpu ? ['CPU', 'GPU'] : ['GPU', 'CPU'];
-    for (const delegate of order) {
-      try {
-        const lm = await FaceLandmarker.createFromOptions(fileset, {
-          baseOptions: { modelAssetPath: `${this._vendorUrl}/face_landmarker.task`, delegate },
-          runningMode: 'VIDEO', numFaces: 1,
-          minFaceDetectionConfidence: .35, minFacePresenceConfidence: .35, minTrackingConfidence: .25 });
-        if (this._worker || this._stopped) { try { lm.close(); } catch {} return; }  // worker adopted / tracker stopped meanwhile
-        this.landmarker = lm;
-        this.delegate = delegate.toLowerCase();
-        this._rate = 3;                                  // inline blocks the thread — third-rate
-        return;
-      } catch { /* try next delegate */ }
-    }
+    try {
+      const { FilesetResolver, FaceLandmarker } = await import(`${this._vendorUrl}/vision_bundle.mjs`);
+      const fileset = await FilesetResolver.forVisionTasks(`${this._vendorUrl}/wasm`);
+      const order = this._preferCpu ? ['CPU', 'GPU'] : ['GPU', 'CPU'];
+      for (const delegate of order) {
+        try {
+          const lm = await FaceLandmarker.createFromOptions(fileset, {
+            baseOptions: { modelAssetPath: `${this._vendorUrl}/face_landmarker.task`, delegate },
+            runningMode: 'VIDEO', numFaces: 1,
+            minFaceDetectionConfidence: .35, minFacePresenceConfidence: .35, minTrackingConfidence: .25 });
+          if (this._worker || this._stopped) { try { lm.close(); } catch {} return; }  // worker adopted / tracker stopped meanwhile
+          this.landmarker = lm;
+          this.delegate = delegate.toLowerCase();
+          this._rate = 3;                                // inline blocks the thread — third-rate
+          return;
+        } catch { /* try next delegate */ }
+      }
+    } catch { /* bundle/wasm failed to load — stay on 'none', never reject */ }
     if (!this._worker) this.delegate = 'none';
   }
   /* One camera frame in flight, downscaled like hands.js — 'ideal' camera
@@ -136,20 +146,25 @@ export class Face {
      video elements; createImageBitmap honours it. */
   _send(v) {
     this._inFlight = true;
+    this._sentAt = performance.now();                    // watchdog baseline
     const vw = v.videoWidth || 0, vh = v.videoHeight || 0;
     const post = (frame) => {
       try { this._worker.postMessage({ type: 'frame', frame }, [frame]); }
       catch { frame.close?.(); this._inFlight = false; }
     };
-    // createImageBitmap itself may not exist (or may reject) — the throw must
-    // land here, not in the rVFC callback where it's a pageerror
-    const bmp = (opts) => (typeof createImageBitmap === 'function'
-      ? createImageBitmap(v, opts || {})
-      : Promise.reject(new Error('no createImageBitmap')))
-      .then(post).catch(() => {
-        let f; try { f = new VideoFrame(v); } catch {}
-        if (f) post(f); else this._inFlight = false;
-      });
+    // createImageBitmap itself may not exist, may reject, or may throw
+    // SYNCHRONOUSLY — every path must land here, not in the rVFC callback
+    // where an exception kills the pump chain
+    const bmp = (opts) => {
+      let p = null;
+      try { p = typeof createImageBitmap === 'function' ? createImageBitmap(v, opts || {}) : null; }
+      catch {}
+      return (p || Promise.reject(new Error('no createImageBitmap')))
+        .then(post).catch(() => {
+          let f; try { f = new VideoFrame(v); } catch {}
+          if (f) post(f); else this._inFlight = false;
+        });
+    };
     if (vw > INFER_W) return void bmp({
       resizeWidth: INFER_W,
       resizeHeight: Math.max(2, Math.round(INFER_W * vh / vw / 2) * 2),
@@ -164,7 +179,15 @@ export class Face {
       if (v.readyState >= 2 && v.currentTime !== this._t) {
         this._t = v.currentTime;
         if (++this._tick % this._rate) return true;
-        if (this._worker) { if (!this._inFlight) this._send(v); }
+        if (this._worker) {
+          if (!this._inFlight) this._send(v);
+          /* the worker took the frame but never answered and never errored
+             (hung infer — a GPU deadlock fires no onerror): _inFlight would
+             latch forever and tracking silently stops. The warm-up proved a
+             detect CAN complete, so past the watchdog window it's dead. */
+          else if (this._sentAt && performance.now() - this._sentAt > STUCK_MS)
+            this._workerDied(this._worker);
+        }
         else if (this.landmarker) {
           try { this._ingest({ landmarks: this.landmarker.detectForVideo(v, performance.now()).faceLandmarks?.[0] }); } catch {}
         }
@@ -172,15 +195,18 @@ export class Face {
       return true;
     };
     this._onNew = onNew;   // worker results re-dispatch here — no rVFC bubble
+    // an exception inside onNew must never kill the chain — re-scheduling is
+    // unconditional so one bad frame can't end tracking for the session
     if (v.requestVideoFrameCallback) {
       const again = () => v.requestVideoFrameCallback(() => {
         if (this._stopped) return;              // stop() must kill the chain, not just idle it
-        if (this._worker || this.landmarker) onNew(); again(); });
+        try { if (this._worker || this.landmarker) onNew(); } catch {} again(); });
       again();
     } else {
       const again = () => {
         if (this._stopped) return;
-        if (this._worker || this.landmarker) onNew(); requestAnimationFrame(again); };
+        try { if (this._worker || this.landmarker) onNew(); } catch {}
+        requestAnimationFrame(again); };
       again();
     }
   }

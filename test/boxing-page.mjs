@@ -142,6 +142,39 @@ if (booted) {
   const returned = await pg.evaluate(() => window.__boxing.sim.player.pos.z);
   check('returning to neutral restores the corner stance', Math.abs(returned - home) < .12,
     `home=${home.toFixed(2)} returned=${returned.toFixed(2)}`);
+
+  /* chin-tilt step: the nose's height inside the eye→chin band is a pose
+     ratio — the head never travels, only the chin tucks or stretches. */
+  await pg.evaluate(() => {
+    const B = window.__boxing, empty = { hands: [] };
+    window.__fm = chin => {
+      const lm = Array.from({ length: 478 }, () => ({ x: .5, y: .5, z: 0 }));
+      lm[168] = { x: .5, y: .35, z: 0 };        // between the eyes
+      lm[1]   = { x: .5, y: .45, z: 0 };        // nose tip
+      lm[152] = { x: .5, y: chin, z: 0 };       // chin
+      return lm;
+    };
+    window.__forceFace = { found: true, nose: { x: .5, y: .45 }, size: .3,
+      center: { x: .5, y: .475 }, lm: window.__fm(.60) };   // level chin — latch neutral
+    for (let i = 0; i < 30; i++) B.game.step(1 / 60, empty, window.__forceFace);
+  });
+  const level = await pg.evaluate(() => window.__boxing.sim.player.pos.z);
+  await pg.evaluate(() => {
+    const B = window.__boxing;
+    window.__forceFace.lm = window.__fm(.48);               // chin tucks up = nod down
+    for (let i = 0; i < 70; i++) B.game.step(1 / 60, { hands: [] }, window.__forceFace);
+  });
+  const nodIn = await pg.evaluate(() => window.__boxing.sim.player.pos.z);
+  check('chin down steps into range', nodIn < level - .2,
+    `level=${level.toFixed(2)} nodIn=${nodIn.toFixed(2)}`);
+  await pg.evaluate(() => {
+    const B = window.__boxing;
+    window.__forceFace.lm = window.__fm(.76);               // chin stretches = tilt back
+    for (let i = 0; i < 80; i++) B.game.step(1 / 60, { hands: [] }, window.__forceFace);
+  });
+  const nodOut = await pg.evaluate(() => window.__boxing.sim.player.pos.z);
+  check('chin up backs off', nodOut > level + .1,
+    `level=${level.toFixed(2)} nodOut=${nodOut.toFixed(2)}`);
   await pg.evaluate(() => { window.__forceFace = null; });
   await pg.keyboard.down('s');
   const { back, keyHeld } = await pg.evaluate(() => {
@@ -204,6 +237,24 @@ check('mobile HUD: bout card docks clear of score and webcam peep',
     && mobile.cardBottom <= mobile.vh + 1,
   JSON.stringify(mobile));
 await pg.screenshot({ path: '/tmp/boxing-mobile.png' });
+for (const phase of ['win', 'lose']) {
+  await pg.evaluate(p => { window.__forceHands = { hands: [] }; window.__boxing.state.phase = p; }, phase);
+  await pg.waitForFunction(() => window.__boxing.game.playerAvatar.group.visible, { timeout: 3000 });
+  const shot = await pg.evaluate(() => {
+    const avatar = window.__boxing.game.playerAvatar;
+    const canvas = document.querySelector('#hands');
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    let overlayPixels = 0;
+    for (let i = 3; i < pixels.length; i += 4) if (pixels[i]) overlayPixels++;
+    return {
+      gloves: ['gloveL', 'gloveR'].every(n => avatar.parts[n].children.some(m => m.visible)),
+      opponentHidden: !window.__boxing.game.npc.group.visible,
+      overlayPixels,
+    };
+  });
+  check(`${phase} pose shows only the player's attached gloves and avatar`,
+    shot.gloves && shot.opponentHidden && shot.overlayPixels === 0, JSON.stringify(shot));
+}
 await b.close();
 srv?.kill();
 

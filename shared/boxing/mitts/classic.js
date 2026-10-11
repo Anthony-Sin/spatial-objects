@@ -169,7 +169,10 @@ export function draw(ctx, pos, o = {}) {
   ctx.translate(pos.x, pos.y);
   // The landmarks already contain the hand's angle. The generated fallback
   // needs the pose angle because it has no tracked orientation of its own.
-  if (!tracked) ctx.rotate((pos.ang || 0) * .35);
+  // `(ang || 0)` lets truthy garbage through — Infinity/'x' puts NaN into
+  // rotate(), which poisons the canvas transform and blanks every draw
+  // until the restore (mitt gone for the frame — A7 violation).
+  if (!tracked) ctx.rotate(Number.isFinite(pos.ang) ? pos.ang * .35 : 0);
   ctx.translate(-pos.x, -pos.y);
   if (sq > 0) {                            // punch smear along the thrust
     ctx.translate(0, -size * .3 * sq);

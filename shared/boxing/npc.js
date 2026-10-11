@@ -52,9 +52,15 @@ const fetchManifest = async (opts) => {
     const r = await fetch(url);
     if (!r.ok) return { candidates: [] };
     const j = await r.json();
-    return { candidates: j.candidates || [] };
+    // a well-formed json body with the wrong shape (candidates:'oops') used to
+    // sail through here and explode later on manifest.candidates.find
+    return { candidates: Array.isArray(j?.candidates) ? j.candidates : [] };
   } catch { return { candidates: [] }; }
 };
+
+/* garbage-in guard — one shared number sanitizer for the whole adapter:
+   NaN/±Infinity land in a caller-supplied default instead of a matrix */
+const fnum = (v, d = 0) => Number.isFinite(+v) ? +v : d;
 
 const pretty = (s) => String(s || 'bubble').replace(/^proto:/, '')
   .replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -86,9 +92,19 @@ function makeRig(THREE, inner) {
   return {
     group: rig,
     parts: {},
-    pose(n, t01 = 0) { if (POSES[n]) { name = n; Object.assign(tgt, POSES[n]); } },
+    pose(n, t01 = 0) {
+      // unknown poses fall back to idle like protoBoxer does — before, a
+      // typo'd pose name left the fighter frozen on whatever came last
+      const P = POSES[n] || POSES.idle;
+      name = POSES[n] ? n : 'idle';
+      Object.assign(tgt, P);
+    },
     tick(dt) {
-      t += dt;
+      /* a non-finite/absurd dt once pushed t to Infinity and pinned
+         rig.position.y at NaN forever — same guard protoBoxer.tick uses,
+         plus a modulo so months-long sessions can't lose sin() precision */
+      dt = Number.isFinite(+dt) && dt > 0 ? Math.min(+dt, .5) : 0;
+      t = (t + dt) % 1e6;
       const k = Math.min(1, dt * 8);
       for (const f of FIELDS) cur[f] = lerp(cur[f], tgt[f], k);
       const bounce = name === 'celebrate' ? Math.abs(Math.sin(t * 7)) * .16
@@ -129,10 +145,10 @@ const ONCE = new Set(['jab', 'cross', 'hook', 'upper', 'down', 'hurt', 'celebrat
   'jabL', 'crossL', 'hookL', 'upperL', 'whiff']);
 const pickClip = (clips, pose) => {
   for (const kw of CLIP_FOR[pose] || CLIP_FOR.idle) {
-    const c = clips.find(c => c.name.toLowerCase().includes(kw));
+    const c = clips.find(c => String(c.name || '').toLowerCase().includes(kw));
     if (c) return c;
   }
-  return clips.find(c => c.name.toLowerCase().includes('idle')) || clips[0];
+  return clips.find(c => String(c.name || '').toLowerCase().includes('idle')) || clips[0];
 };
 
 async function tryGlb(THREE, cand) {
@@ -142,17 +158,21 @@ async function tryGlb(THREE, cand) {
     new GLTFLoader().load(url, res, undefined, rej));
   const obj = gltf.scene || gltf.scenes?.[0];
   if (!obj) throw new Error('empty glb');
-  if (cand.scale) obj.scale.setScalar(cand.scale);
+  const sc = +cand.scale;
+  if (Number.isFinite(sc) && sc > 0) obj.scale.setScalar(sc);
   else {   // auto-fit to chibi height when the manifest doesn't pin a scale
     const b = new THREE.Box3().setFromObject(obj);
     const h = b.max.y - b.min.y || 1;
     obj.scale.setScalar(1.3 / h);
   }
   {   // manifest yOffset is the world lift that grounds the feet (scout-tuned);
-    const b = new THREE.Box3().setFromObject(obj);   // absent → auto-rest on 0
-    obj.position.y += cand.yOffset ?? -b.min.y;
+    const b = new THREE.Box3().setFromObject(obj);   // absent/bogus → auto-rest on 0
+    const yOff = cand.yOffset == null ? -b.min.y : +cand.yOffset;
+    obj.position.y += Number.isFinite(yOff) ? yOff : -b.min.y;
   }
-  obj.rotation.y = cand.yaw || cand.yawOffset || 0;
+  // unary + coerces numeric strings and drops NaN/'abc' to the next fallback —
+  // a junk yaw in the manifest used to write NaN straight into the rotation
+  obj.rotation.y = +cand.yaw || +cand.yawOffset || 0;
   obj.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
 
   const rig = makeRig(THREE, obj);
@@ -233,21 +253,22 @@ const ACT = { name: 'idle', t01: 0 };
 const punchPose = npc => PUNCH_POSE[npc._seenKind]?.[npc._seenSide] || 'jab';
 function mapAction(npc, striking) {
   const A = ACT;
-  if (!npc) { A.name = 'idle'; A.t01 = 0; return A; }
-  const t = Math.min(1, (npc.actionT || 0) / .45);
+  if (!npc || typeof npc !== 'object') { A.name = 'idle'; A.t01 = 0; return A; }
+  const t = Math.min(1, Math.max(0, fnum(npc.actionT) / .45));
   // a glove still planted on the lens / sailing past it holds the punch pose
   if (striking && npc.action !== 'punch' && npc.action !== 'hurt' && npc.action !== 'down') {
     A.name = punchPose(npc); A.t01 = .5; return A;
   }
   switch (npc.action) {
     case 'windup':    A.name = npc.telegraph?.side === 'right' ? 'windupL' : 'windup';
-      A.t01 = npc.telegraph?.t01 ?? t; break;
+      A.t01 = Number.isFinite(+npc.telegraph?.t01)
+        ? Math.min(1, Math.max(0, +npc.telegraph.t01)) : t; break;
     case 'punch':     A.name = punchPose(npc); A.t01 = t; break;
     case 'block':     A.name = 'block';     A.t01 = t; break;
     case 'hurt':      A.name = 'hurt';      A.t01 = t; break;
-    case 'down':      A.name = 'down';      A.t01 = Math.min(1, (npc.actionT || 0) / .6); break;
+    case 'down':      A.name = 'down';      A.t01 = Math.min(1, Math.max(0, fnum(npc.actionT) / .6)); break;
     case 'celebrate': A.name = 'celebrate'; A.t01 = t; break;
-    case 'stunned':   A.name = 'stunned';   A.t01 = npc.actionT || 0; break;   // cyclic wobble
+    case 'stunned':   A.name = 'stunned';   A.t01 = Math.max(0, fnum(npc.actionT)); break;   // cyclic wobble
     case 'whiff':     A.name = 'whiff';     A.t01 = t; break;
     default:          A.name = 'idle';      A.t01 = 0;
   }
@@ -315,7 +336,10 @@ export async function createNpc(THREE, opts = {}) {
   // shiner/lump/bandage carry the story; GLBs get the full bruise wash
   const wash = impl.setDamage ? .45 : 1;
   function setDamage(frac) {                      // frac 0..1 = hp fraction lost
-    frac = Math.min(1, frac);
+    /* a non-finite frac once slipped the monotone gate (NaN <= x is false),
+       latched dmgCur=NaN and lerped EVERY material colour to NaN — the whole
+       fighter went black/invisible until a rebuild. Sanitize before compare. */
+    frac = Number.isFinite(+frac) ? Math.min(1, Math.max(0, +frac)) : 0;
     if (frac <= dmgCur) return;                   // monotone — no-op when not worsening
     dmgCur = frac;                                // wounds persist between rounds
     impl.setDamage?.(dmgCur);
@@ -332,6 +356,7 @@ export async function createNpc(THREE, opts = {}) {
      (cheap: no fetches, the module is already loaded). GLB / emergency
      rigs carry no wounds: the baseline restore is the whole job there. */
   function resetDamage() {
+    if (dead) return;
     dmgCur = 0;
     api.kick.x = api.kick.y = api.kick.z = 0;
     if (kind === 'proto' && protoMod?.buildBoxer && impl.setDamage) {
@@ -385,7 +410,13 @@ export async function createNpc(THREE, opts = {}) {
   }
 
   const STRIKE = { kind: null, reach: null, y: null };   // shared — no per-frame alloc
-  const gc = impl.gloveColor ?? 0xe0341f;
+  /* impl.gloveColor should be a hex int, but a string/THREE.Color/NaN used to
+     flow straight into '#' + gc.toString(16) — malformed CSS for the smash
+     overlay ('#NaN', '##ff0000', '#[object Object]'). Coerce or default. */
+  const gcv = impl.gloveColor;
+  const ghex = gcv?.isColor ? gcv.getHex() : +gcv;
+  const gc = Number.isFinite(ghex) ? Math.min(0xffffff, Math.max(0, Math.round(ghex))) : 0xe0341f;
+  let dead = false;                                // dispose() must be idempotent
   const api = {
     group, id, name, kind,
     eyeY, headY: baseY + H * .8, height: H, bbox: bb,
@@ -394,16 +425,24 @@ export async function createNpc(THREE, opts = {}) {
     setDamage, resetDamage,
     get variant() { return impl.variant || id; },
     update(dt, ctx = {}) {
+      if (dead) return;
+      ctx = ctx || {};                             // update(dt, null) must not throw
       const { pos, target, npc } = ctx;
-      if (!(dt > 0)) dt = 0;          // NaN/negative dt must not poison the springs
+      /* dt extremes: NaN/negative → 0; ±Infinity/huge → capped. An unclamped
+         Infinity once parked makeRig's clock at Infinity → position.y NaN
+         forever (protoBoxer guards itself; rigs/emergency don't). */
+      dt = Number.isFinite(+dt) && dt > 0 ? Math.min(+dt, .5) : 0;
       const k = api.kick;
       for (const a of 'xyz') if (!Number.isFinite(k[a])) k[a] = 0;   // un-poison
-      if (pos) {
-        api.kick.x *= Math.exp(-dt * 7); api.kick.z *= Math.exp(-dt * 7);
-        api.kick.y *= Math.exp(-dt * 9);                               // uppercut launch lands fast
-        group.position.set(pos.x + api.kick.x, api.kick.y, pos.z + api.kick.z);
+      if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.z)) {
+        k.x *= Math.exp(-dt * 7); k.z *= Math.exp(-dt * 7);
+        k.y *= Math.exp(-dt * 9);                                    // uppercut launch lands fast
+        group.position.set(pos.x + k.x, k.y, pos.z + k.z);
       }
-      if (pos && target) group.rotation.y = Math.atan2(target.x - pos.x, target.z - pos.z);
+      if (pos && target) {
+        const ry = Math.atan2(target.x - pos.x, target.z - pos.z);
+        if (Number.isFinite(ry)) group.rotation.y = ry;              // NaN yaw = invisible fighter
+      }
       if (npc?.telegraph?.kind) {                                    // punch loses telegraph — stash it
         npc._seenKind = npc.telegraph.kind; npc._seenSide = npc.telegraph.side;
       }
@@ -411,19 +450,23 @@ export async function createNpc(THREE, opts = {}) {
       const p = mapAction(npc, striking);
       STRIKE.kind = npc?.telegraph?.kind ?? npc?._seenKind ?? null;
       STRIKE.reach = striking ? ctx.strike.reach : null;
-      STRIKE.y = striking ? ctx.strike.y : null;
+      STRIKE.y = striking && Number.isFinite(ctx.strike.y) ? ctx.strike.y : null;
       impl.pose(p.name, p.t01, STRIKE);
-      impl.tick(dt, npc || {}, Math.hypot(ctx.vel?.x || 0, ctx.vel?.z || 0));
+      const msp = Math.hypot(fnum(ctx.vel?.x), fnum(ctx.vel?.z));
+      impl.tick(dt, npc || {}, Number.isFinite(msp) ? Math.min(msp, 12) : 0);
       // telegraph marker over the cocked glove — 'left'/'right' name PIP's
       // anatomical glove; the proto rig faces +Z so its left glove is gloveR
       // (the part names follow the screen side). Faster flicker near release.
       const tg = npc?.telegraph;
-      if (tel && tg) {
+      if (tel && tg && typeof tg === 'object') {
         telT += dt;
-        const u = tg.t01 || 0;
+        const u = Number.isFinite(+tg.t01) ? Math.min(1, Math.max(0, +tg.t01)) : 0;
         const part = impl.parts?.[tg.side === 'left' ? 'gloveR' : 'gloveL'];
-        if (part) { part.getWorldPosition(telV); group.worldToLocal(telV); }
-        else telV.set(tg.side === 'left' ? .34 : -.34, api.headY + .18, .2);
+        if (part?.getWorldPosition) {
+          part.getWorldPosition(telV); group.worldToLocal(telV);
+          if (!Number.isFinite(telV.x + telV.y + telV.z))            // NaN part transform
+            telV.set(tg.side === 'left' ? .34 : -.34, api.headY + .18, .2);
+        } else telV.set(tg.side === 'left' ? .34 : -.34, api.headY + .18, .2);
         tel.position.set(telV.x, telV.y + .16, telV.z);
         tel.scale.setScalar(.3 + u * .14 + Math.sin(telT * (7 + u * 26)) * .045);
         tel.material.color.setRGB(1, 1 - u * .5, 1 - u * .75);   // heats to orange
@@ -431,8 +474,9 @@ export async function createNpc(THREE, opts = {}) {
         tel.visible = true;
       } else if (tel) tel.visible = false;
     },
-    pose(n, t01) { impl.pose(n, t01); },
+    pose(n, t01) { if (!dead) impl.pose(n, fnum(t01)); },
     dispose() {
+      if (dead) return; dead = true;
       impl.dispose?.();
       if (tel) { tel.material.map?.dispose(); tel.material.dispose(); }
       group.parent?.remove(group);

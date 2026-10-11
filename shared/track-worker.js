@@ -23,7 +23,8 @@
                  {type:'result', face:{nose:{x,y},box:{x,y,w,h}}|null}  (face·detector,
                     all normalized 0–1, NOT selfie-mirrored — page handles that)
 */
-let landmarker = null, kind = null, model = null, lastTs = -1, warned = false, failN = 0;
+let landmarker = null, kind = null, model = null, lastTs = -1, warned = false,
+  failN = 0, tsOff = null;
 
 /* init/close are async (they await import() + createFromOptions) — if two
    inits, or an init and a close, interleave at those awaits, the loser's
@@ -38,6 +39,7 @@ async function doInit(m) {
     // re-init must not leak the previous graph or carry a half-spent failN
     try { landmarker?.close?.(); } catch {}
     landmarker = null; model = null; lastTs = -1; warned = false; failN = 0;
+    tsOff = null;
     if (!kind) {
       self.postMessage({ type: 'ready', error: `unknown landmarker kind '${m.kind}'` });
       return;
@@ -96,10 +98,21 @@ function handleFrame(m) {
     frame?.close?.(); return;
   }
   try {
-    // VIDEO mode wants strictly increasing ms — the frame's own capture
-    // timestamp is the truest source; perf clock is the fallback
+    // VIDEO mode wants strictly increasing ms — the frame's own media
+    // timestamp is the truest source, perf clock the fallback. The two clocks
+    // have different origins, so the media clock is anchored ONCE into the
+    // local scale: a first frame stamped 0 falls back to perf.now (~seconds),
+    // and a later 40ms media stamp must map to ~perf-time too — the bare
+    // Math.max() this replaced would clamp it to +1ms/frame forever, making
+    // the graph's temporal filters see a nearly-frozen stream. The offset
+    // preserves real inter-frame deltas; the lastTs floor keeps ordering
+    // through seeks/underruns; untimestamped frames (ImageBitmap) just take
+    // perf time, which already sits on the anchored scale.
+    const raw = frame.timestamp > 0 ? frame.timestamp / 1e3 : null;
+    if (raw != null && tsOff == null)
+      tsOff = Math.max(lastTs + 1, performance.now()) - raw;
     const ts = Math.max(lastTs + 1,
-      frame.timestamp > 0 ? frame.timestamp / 1e3 : performance.now());
+      raw != null ? raw + tsOff : performance.now());
     lastTs = ts;
     const inferStart = performance.now();
     const res = landmarker.detectForVideo(frame, ts);

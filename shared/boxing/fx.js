@@ -27,6 +27,10 @@ function dotTex(THREE, inner, outer) {
 }
 
 const POOL_N = 72, STAIN_N = 24;
+/* mat half-extent — scene.js's platform box is RING*2+.3 across (half 3.1);
+   droplets only splat where canvas actually is. A stain past the edge
+   floats on thin air next to the ring. */
+const MAT_HALF = 3.05;
 
 export function makeFx(THREE, scene, cam) {
   const BLOOD = dotTex(THREE, 'rgba(190,30,20,1)', 'rgba(140,10,8,.55)');
@@ -67,13 +71,18 @@ export function makeFx(THREE, scene, cam) {
        immortal sprite stealing a pool slot on every burst. NaN size/speed
        writes NaN into the sprite matrix, which can poison the whole batch. */
     life = Number.isFinite(life) ? Math.max(.01, life) : .8;
-    size = Number.isFinite(size) ? size : .085;
+    size = Number.isFinite(size) ? Math.max(0, size) : .085;    // negative mirrors the sprite
     speed = Number.isFinite(speed) ? speed : 1.5;
     up = Number.isFinite(up) ? up : 1.3;
     spread = Number.isFinite(spread) ? spread : .9;
     if (dir && (!Number.isFinite(dir.x) || !Number.isFinite(dir.z))) dir = null;  // bad bias → omni
     if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)
       || !Number.isFinite(pos.z)) return;                        // no sane origin — no burst
+    /* n drives the loop trip count: Infinity/1e9 hangs the frame outright
+       (i < n never ends), NaN/≤0 spawns nothing, and more spawns than the
+       pool holds just re-steal the same slots — clamp before the ring walk. */
+    if (!(n > 0)) return;
+    n = Math.min(n, POOL_N);
     for (let i = 0; i < n; i++) {
       const p = pool[poolAt]; poolAt = (poolAt + 1) % POOL_N;   // steal oldest
       p.s.material.map = tex;
@@ -95,7 +104,7 @@ export function makeFx(THREE, scene, cam) {
     const zi = stainAt;                              // capture BEFORE the steal advances it
     const s = stainPool[zi]; stainAt = (stainAt + 1) % STAIN_N;
     life = Number.isFinite(life) ? Math.max(.1, life) : 7;   // NaN life → never fades out
-    s.m.material.color.set(color);
+    s.m.material.color.set(typeof color === 'number' && !Number.isFinite(color) ? 0x8c1a12 : color);
     s.m.scale.setScalar(Number.isFinite(r) ? Math.max(.005, r) : .16);
     s.m.position.set(pos.x + (Math.random() - .5) * .12, .012 + zi * .0004,
                      pos.z + (Math.random() - .5) * .12);
@@ -115,15 +124,20 @@ export function makeFx(THREE, scene, cam) {
       p.v.y -= 4.5 * dt;
       p.s.position.addScaledVector(p.v, dt);
       p.s.material.opacity = Math.max(0, 1 - p.t / p.life);
-      if (p.s.position.y <= .02 && p.v.y < 0) {
-        stain(p.s.position, { r: p.base * 1.5 });
+      /* splat only where canvas actually is: a droplet that sailed past the
+         mat edge keeps falling to the arena floor instead of leaving a
+         floating decal beside the ring. */
+      const onMat = Math.abs(p.s.position.x) <= MAT_HALF && Math.abs(p.s.position.z) <= MAT_HALF;
+      if (p.v.y < 0 && p.s.position.y <= (onMat ? .02 : -.82)) {
+        if (onMat) stain(p.s.position, { r: p.base * 1.5 });
         p.t = p.life;
       }
       if (cam) {
         // fill-rate guard: a sprite hugging the lens covers half the screen —
-        // shrink it a little; still reads as a face-full of sweat
+        // shrink it a little; still reads as a face-full of sweat. A NaN cam
+        // position (upstream tracking poison) must not NaN the sprite scale.
         const d = Math.sqrt(p.s.position.distanceToSquared(cam.position));
-        p.s.scale.setScalar(p.base * Math.min(1, .5 + d * 1.1));
+        p.s.scale.setScalar(p.base * (Number.isFinite(d) ? Math.min(1, .5 + d * 1.1) : 1));
       }
       if (p.t >= p.life) { p.on = false; p.s.visible = false; }
     }

@@ -1,5 +1,5 @@
 /* test/qe-fuzz.mjs — deterministic seeded fuzz + property checks for the
-   pure game-logic modules. QE round 2 (worker w4-qe-fuzz).
+   pure game-logic modules. QE rounds 2 (w4-qe-fuzz) + 3 (b3-fuzz).
 
    Coverage: shared/boxing/{fight,fists,ring,tutorial,audio,protoBoxer}.js
      - malformed inputs: null/undefined/NaN states, non-array hands,
@@ -7,9 +7,20 @@
      - degenerate constructor opts (non-finite TUNING overrides)
      - state-machine fuzz: random input streams → phase/hp/stamina/round
        invariants hold every single step
+     - state-machine legality (w3): enumerated phase pairs + npc.action
+       pairs + per-action duration ceilings while 'fighting'
+     - full fights (w3): decision WIN/LOSE, single-shot KOs, roundLen=1,
+       constructor extremes, rage scaling, heal between rounds
+     - boundary values (w3): sway/duck/guard/distance at exact thresholds ±1e-9
+     - reset() mid-windup/punch/down/win/countdown + deterministic replay,
+       mutated opts re-flooring, live practice/ai flips, TUNING garbage (w3)
+     - fists: 24 degenerate finite tuning overrides + live ft.T mutation (w3)
+     - audio: strict mock ctx (throws on non-finite, like Chrome), event-order
+       permutations, mute flips, voice/crowd edge-release leak check (w3)
      - soak: 60k update ticks → no unbounded module-state growth
-     - audio: strict mock AudioContext (throws on non-finite params, like
-       real Chrome) under garbage event names/opts
+     - proto: unknown-pose warn dedup cap, sealed state, double dispose (w3)
+     - tutorial: abandoned mid-step, -120s clock regression, fight.reset
+       mid-run, partial fake-DOM root (w3)
      - integration: fists→fight→ring wired like game.js under chaos input
 
    Deterministic: one seeded mulberry32 drives every random stream — same
@@ -86,8 +97,16 @@ function chaosFaceState() {
   const r = rnd();
   if (r < .12) return pick([null, undefined, 5, 'x']);
   if (r < .2) return { found: false };
-  return { found: true, nose: { x: rnd() < .12 ? gnum() : rnd(), y: rnd() < .12 ? gnum() : rnd() },
+  const f = { found: true, nose: { x: rnd() < .12 ? gnum() : rnd(), y: rnd() < .12 ? gnum() : rnd() },
     size: rnd() < .1 ? gnum() : .1 + rnd() * .4 };
+  if (rnd() < .4) f.center = { x: rnd() < .12 ? gnum() : rnd(), y: rnd() < .12 ? gnum() : rnd() };
+  if (rnd() < .35) {
+    const n = rnd() < .2 ? rnd() * 300 | 0 : 478;                      // real mesh is 478-pt
+    f.lm = Array.from({ length: n }, () => rnd() < .15
+      ? pick([null, undefined, { x: gnum(), y: gnum() }, 5, 'x'])
+      : { x: rnd(), y: rnd() });
+  } else if (rnd() < .1) f.lm = pick([{}, 'x', 5, null]);
+  return f;
 }
 const chaosDt = () => pick([DT, DT, DT, DT, 0, -1, 1e-6, .5, 10, NaN, Infinity, -Infinity, 'x', .033]);
 
@@ -141,7 +160,7 @@ const RESULTS = new Set(['hit', 'miss', 'blocked', 'dodged', 'whiff']);
 function fightInvariant(f, tag) {
   const s = f.state;
   if (!PHASES.has(s.phase)) return `${tag}: bad phase '${s.phase}'`;
-  if (!(s.round >= 0 && s.round <= FT.rounds)) return `${tag}: round=${s.round}`;
+  if (!(s.round >= 0 && s.round <= (f._T?.rounds ?? FT.rounds))) return `${tag}: round=${s.round}`;
   if (!(Number.isFinite(s.timeLeft) && s.timeLeft >= 0)) return `${tag}: timeLeft=${s.timeLeft}`;
   for (const [w, fg] of [['player', s.player], ['npc', s.npc]]) {
     if (!(Number.isFinite(fg.hp) && fg.hp >= 0 && fg.hp <= fg.maxHp + 1e-9))
@@ -190,6 +209,7 @@ reseed(0xF157);
       // outputs must stay finite / in-range every single frame
       if (!Number.isFinite(ft.sway) || Math.abs(ft.sway) > 1.0001) { err = `sway=${ft.sway} @${i}`; break; }
       if (!Number.isFinite(ft.duck) || ft.duck < -1e-9 || ft.duck > 1.0001) { err = `duck=${ft.duck} @${i}`; break; }
+      if (!Number.isFinite(ft.pitch) || Math.abs(ft.pitch) > 1.0001) { err = `pitch=${ft.pitch} @${i}`; break; }
       for (const s of ['left', 'right']) {
         if (!Number.isFinite(ft.guard[s]) || ft.guard[s] < -1e-9 || ft.guard[s] > 1.0001) { err = `guard.${s}=${ft.guard[s]} @${i}`; break; }
         if (!Number.isFinite(ft.reach[s])) { err = `reach.${s}=${ft.reach[s]} @${i}`; break; }
@@ -205,7 +225,7 @@ reseed(0xF157);
     }
     const d = ft.debug();
     if (!err && ![d.span.left, d.span.right, d.reach.left, d.reach.right,
-      d.baseline.left, d.baseline.right, d.sway, d.duck].every(Number.isFinite))
+      d.baseline.left, d.baseline.right, d.sway, d.duck, d.pitch].every(Number.isFinite))
       err = 'debug() non-finite: ' + JSON.stringify(d);
   } catch (e) { err = `threw @frame ${n}: ${e.message}`; }
   check('fists: 2500 chaos frames — no throw, outputs in range', !err, err);
@@ -759,6 +779,559 @@ reseed(0x1A7E);
     if (!err) err = fightInvariant(f, 'integ-final') || ringLegality(sim, 'integ-final');
   } catch (e) { err = `threw: ${e.message}`; }
   check('integration: 12k-tick wired chaos fight — invariants hold', !err, err);
+}
+
+/* ============ 8. state-machine transition legality (wave 3) ============ */
+reseed(0x7EA2);
+{
+  const LEGAL_PH = {   // every phase pair the machine may take
+    intro: new Set(['intro', 'countdown']),
+    countdown: new Set(['countdown', 'fighting']),
+    fighting: new Set(['fighting', 'countdown', 'npcdown', 'playerdown', 'win', 'lose']),
+    playerdown: new Set(['playerdown', 'lose']),
+    npcdown: new Set(['npcdown', 'win']),
+    win: new Set(['win']), lose: new Set(['lose']),
+  };
+  const LEGAL_ACT = {  // npc.action pairs reachable while phase stays 'fighting'
+    idle: new Set(['press', 'circle', 'retreat', 'block', 'celebrate', 'windup', 'hurt', 'down']),
+    circle: new Set(['press', 'circle', 'retreat', 'block', 'celebrate', 'windup', 'hurt', 'down', 'idle']),
+    press: new Set(['retreat', 'windup', 'circle', 'idle', 'hurt', 'down', 'celebrate']),
+    retreat: new Set(['idle', 'windup', 'hurt', 'down', 'celebrate']),
+    block: new Set(['idle', 'windup', 'hurt', 'down', 'celebrate']),
+    windup: new Set(['punch', 'hurt', 'down', 'celebrate', 'idle']),
+    punch: new Set(['stunned', 'whiff', 'windup', 'idle', 'celebrate', 'hurt', 'down']),
+    hurt: new Set(['retreat', 'idle', 'down', 'celebrate']),
+    whiff: new Set(['idle', 'hurt', 'down', 'celebrate', 'windup']),
+    stunned: new Set(['idle', 'down', 'celebrate']),
+    celebrate: new Set(['idle', 'hurt', 'down', 'windup']),
+    down: new Set(),
+  };
+  // per-action continuous-time ceiling while 'fighting' — the wedge detector
+  const actBound = (f, a) => f.ai ? ({
+    windup: f._windupFor, punch: f._T.punchDur, hurt: f._T.npcHurtT,
+    block: f._T.blockT, whiff: f._T.whiffT, stunned: f._actFor,
+    celebrate: f._T.celebrateT, press: f._T.pressMax,
+    retreat: f._actFor, idle: f._actFor, circle: f._actFor })[a] : undefined;
+  let phErr = null, actErr = null, noVerdict = null;
+  const seenPh = new Set(), seenAct = new Set();
+  for (const seed of [11, 29, 71]) {
+    for (const variant of VARIANTS) {
+      const f = new Fight({ seed, npcVariant: variant });
+      let prevPh = f.state.phase, prevAct = f.state.npc.action;
+      for (let i = 0; i < 60 * 320; i++) {
+        const inp = rnd() < .3 ? chaosFightInputs()
+          : { punches: rnd() < .25 ? [{ kind: pick(['jab', 'cross', 'hook', 'uppercut']), side: pick(['left', 'right']), power: rnd() }] : [],
+            guard: { left: rnd() < .5 ? rnd() : 0, right: rnd() < .5 ? rnd() : 0 },
+            sway: rnd() < .3 ? rnd() * 2 - 1 : 0, duck: rnd() < .15 ? rnd() : 0,
+            distance: .5 + rnd() * 2 };
+        f.step(DT, inp);
+        const s = f.state, ph = s.phase;
+        if (ph !== prevPh) {
+          seenPh.add(prevPh + '→' + ph);
+          if (!phErr && !LEGAL_PH[prevPh]?.has(ph))
+            phErr = `illegal phase ${prevPh}→${ph} (seed ${seed} ${variant} @${i})`;
+        }
+        if (!actErr && s.npc.action !== prevAct && prevPh === 'fighting' && ph === 'fighting') {
+          seenAct.add(prevAct + '→' + s.npc.action);
+          if (!LEGAL_ACT[prevAct]?.has(s.npc.action))
+            actErr = `illegal action ${prevAct}→${s.npc.action} (seed ${seed} ${variant} @${i})`;
+        }
+        prevPh = ph; prevAct = s.npc.action;
+        if (!actErr && ph === 'fighting') {
+          const b = actBound(f, s.npc.action);
+          if (b !== undefined && s.npc.actionT > b + 3 * DT)
+            actErr = `'${s.npc.action}' overstayed actionT=${s.npc.actionT.toFixed(3)} > bound=${b.toFixed(3)} (seed ${seed} ${variant} @${i})`;
+        }
+        if (!phErr && !actErr && (phErr = fightInvariant(f, `trans ${seed} ${variant} @${i}`))) { /* fallthrough */ }
+        if (phErr || actErr) break;
+        if (ph === 'win' || ph === 'lose') {
+          const term = ph;
+          for (let k = 0; k < 30; k++) f.step(DT, {});   // terminal must be sticky
+          if (f.state.phase !== term) { phErr = `terminal ${term} left for ${f.state.phase}`; }
+          break;
+        }
+      }
+      if (phErr || actErr) break;
+      if (!['win', 'lose'].includes(f.state.phase))
+        { noVerdict = `seed ${seed} ${variant}: no verdict in 320s (phase=${f.state.phase})`; break; }
+    }
+    if (phErr || actErr || noVerdict) break;
+  }
+  check('fight: phase transitions always legal + terminal sticky', !phErr, `${phErr} | seen: ${[...seenPh].join(',')}`);
+  check('fight: npc action transitions legal + durations bounded', !actErr, `${actErr} | seen: ${[...seenAct].join(',')}`);
+  check('fight: every seed/variant reaches a verdict inside budget', !noVerdict, noVerdict);
+}
+
+/* ============ 9. full-fight sims — decision paths + ctor extremes ============ */
+reseed(0xDE21);
+{
+  // decision LOSE: unkillable but passive — judges give it to untouched PIP
+  const f = new Fight({ seed: 4, playerHp: 1e6 });
+  let roundStarts = 0;
+  for (let i = 0; i < 60 * 320 && !['win', 'lose'].includes(f.state.phase); i++) {
+    f.step(DT, { distance: .8 });            // eats swings, never throws back
+    if (f.state.events.includes('round-start')) {
+      roundStarts++;
+      if (f.state.timeLeft !== f.opts.roundLen) break;    // clock re-armed per round
+    }
+  }
+  check('fight: passive giant → judges\' decision LOSE after full 3 rounds',
+    f.state.phase === 'lose' && f.state.round === f._T.rounds && roundStarts === f._T.rounds,
+    `phase=${f.state.phase} round=${f.state.round} bells=${roundStarts}`);
+}
+{
+  // decision WIN: out-box, don't finish — higher hp fraction takes the card.
+  // round-1 jabs build the hp lead, then pure guard for the distance.
+  const w = new Fight({ seed: 6, playerHp: 1000, npcHp: 40 });
+  for (let i = 0; i < 60 * 320 && !['win', 'lose'].includes(w.state.phase); i++) {
+    const jab = w.state.round === 1 && w.state.npc.hp / w.state.npc.maxHp > .25;
+    w.step(DT, { punches: jab && i % 45 === 0 ? [{ kind: 'jab', side: 'left', power: .6 }] : [],
+      guard: { left: .8, right: .8 }, distance: .7 });
+  }
+  check('fight: out-boxed rival → decision WIN by hp fraction',
+    w.state.phase === 'win' && w.state.round === w._T.rounds && w.state.player.score >= w._T.score.decision,
+    `phase=${w.state.phase} round=${w.state.round} score=${w.state.player.score}`);
+}
+{
+  // single-shot KO each way + fast roundLen decision + heal between rounds
+  const k = new Fight({ seed: 8, npcHp: 1 });
+  let sawKo = false;
+  for (let i = 0; i < 60 * 30 && !['win', 'lose'].includes(k.state.phase); i++) {
+    k.step(DT, { punches: k.state.phase === 'fighting' ? [{ kind: 'jab', side: 'left', power: .8 }] : [], distance: .5 });
+    if (k.state.events.includes('ko')) sawKo = true;
+  }
+  check('fight: npcHp=1 → one glove ends it (ko → win)', k.state.phase === 'win' && sawKo, `${k.state.phase}`);
+
+  const l = new Fight({ seed: 8, playerHp: 1 });
+  for (let i = 0; i < 60 * 60 && !['win', 'lose'].includes(l.state.phase); i++)
+    l.step(DT, { distance: .6 });
+  check('fight: playerHp=1 → first landed swing ends it (lose)', l.state.phase === 'lose', `${l.state.phase}`);
+
+  const q = new Fight({ seed: 12, roundLen: 1, playerHp: 1e6 });
+  let bells = 0, badClock = false, healed = false, prevHp = -1;
+  for (let i = 0; i < 60 * 30 && !['win', 'lose'].includes(q.state.phase); i++) {
+    const hpBefore = q.state.npc.hp;
+    q.step(DT, { distance: .8 });
+    if (q.state.events.includes('round-start')) {
+      bells++;
+      if (q.state.timeLeft !== 1) badClock = true;
+      if (prevHp >= 0 && q.state.npc.hp > prevHp) healed = true;
+    }
+    if (q.state.phase === 'fighting' && q.state.round >= 1) prevHp = hpBefore;
+  }
+  check('fight: roundLen=1 → decision inside 30s, clock re-arms each round',
+    ['win', 'lose'].includes(q.state.phase) && q.state.round === 3 && !badClock,
+    `phase=${q.state.phase} round=${q.state.round} bells=${bells} badClock=${badClock}`);
+}
+{
+  // constructor tuning combo matrix — every combo stays legal
+  let err = null;
+  for (const o of [
+    { npcHp: 1, roundLen: 1 }, { playerHp: 1, npcHp: 1e9 }, { playerHp: 1e9, npcHp: 1, roundLen: 1 },
+    { roundLen: 1 }, { playerHp: 1 }, { npcHp: .01 }, { playerHp: .5, npcHp: .5, roundLen: 2 },
+    { npcVariant: 'bogus' }, { npcName: null }, { npcName: 5 }, { npcName: '' }, { seed: 0 }, { seed: -1 },
+  ]) {
+    const c = new Fight(o);
+    try {
+      for (let i = 0; i < 60 * 60; i++) {
+        c.step(DT, chaosFightInputs());
+        if ((err = fightInvariant(c, JSON.stringify(o)))) break;
+      }
+      if (!err && ['npcName', 'playerHp'].every(k => !(k in o))) { /* noop */ }
+      if (!err && 'npcName' in o && c.state.npc.name !== 'PIP')
+        err = `${JSON.stringify(o)} → npc.name=${JSON.stringify(c.state.npc.name)}`;
+      if (!err && 'npcHp' in o && c.state.npc.maxHp !== Math.max(1, +o.npcHp || 1) && o.npcHp !== 1e9)
+        err = `${JSON.stringify(o)} → npc.maxHp=${c.state.npc.maxHp}`;
+    } catch (e) { err = `${JSON.stringify(o)} threw: ${e.message}`; }
+    if (err) break;
+  }
+  check('fight: constructor tuning combos — name/hp floors + invariants', !err, err);
+}
+{
+  // rage scaling is real: same seed/kind → a hurt PIP telegraphs faster
+  const a = new Fight({ seed: 42 }), b = new Fight({ seed: 42 });
+  for (let i = 0; i < 700 && a.state.phase !== 'fighting'; i++) { a.step(DT, {}); b.step(DT, {}); }
+  b.state.npc.hp = b.state.npc.maxHp * .3;              // wounded → rage kicks in
+  a._windup(); const fullWu = a._windupFor;
+  b._windup(); const hurtWu = b._windupFor;
+  check('fight: rage scaling — wounded PIP telegraphs measurably faster',
+    hurtWu < fullWu, `full=${fullWu.toFixed(3)} hurt=${hurtWu.toFixed(3)}`);
+}
+
+/* ============ 10. boundary values — exact thresholds ± epsilon ============ */
+reseed(0xB0D2);
+{
+  // helper: park the AI, script one swing, feed fixed inputs, catch the impact
+  const bout = seed => { const f = new Fight({ seed, ai: false }); f.startNow();
+    for (let i = 0; i < 60 * 6 && f.state.phase !== 'fighting'; i++) f.step(DT, {}); return f; };
+  const impactOf = (f, mkInp) => {   // → lastBlow at the swing's impact step
+    for (let i = 0; i < 60 * 4; i++) {
+      f.step(DT, mkInp(i));
+      if (f.state.lastBlow?.who === 'npc') return f.state.lastBlow;
+    }
+    return null;
+  };
+  const T = new Fight()._T;
+  const GT = T.guardT, DT_ = T.dodgeT, NR = T.npcReach;
+  let fails = [];
+  // sway: held lean AT ±dodgeT gets AIMED — contract says holding gets you tagged
+  for (const s of [DT_, -DT_, DT_ - 1e-9]) {
+    const f = bout(3); f.step(DT, { sway: s, distance: .8 });          // aim samples _inp
+    f.throwPunch('jab', 'left', .5);
+    const lb = impactOf(f, () => ({ sway: s, distance: .8 }));
+    if (lb?.result !== 'hit') fails.push(`sway=${s} → ${lb?.result}, want hit (held lean is aimed)`);
+  }
+  // a FRESH lean to dodgeT committed just before impact → dodged
+  {
+    const f = bout(3); f.step(DT, { sway: 0, distance: .8 });
+    f.throwPunch('jab', 'left', .5);
+    const lb = impactOf(f, i => ({ sway: i * DT > .45 ? -DT_ : 0, distance: .8 }));
+    if (lb?.result !== 'dodged') fails.push(`fresh lean → ${lb?.result}, want dodged`);
+  }
+  // duck: held at dodgeT → aim 'duck' → jab still lands (duck only dodges if not aimed there)
+  {
+    const f = bout(3); f.step(DT, { duck: DT_, distance: .8 });
+    f.throwPunch('jab', 'left', .5);
+    const lb = impactOf(f, () => ({ duck: DT_, distance: .8 }));
+    if (lb?.result !== 'hit') fails.push(`held duck → ${lb?.result}, want hit (duck was aimed)`);
+    // a duck COMMITTED inside dodgeWin of impact counts as ducked-into on an 'upper'
+    const g = bout(3); g.step(DT, { duck: 0, distance: .8 });
+    g.throwPunch('upper', 'right', .5);
+    const lb2 = impactOf(g, i => ({ duck: i * DT >= .5 ? DT_ : 0, distance: .8 }));
+    const want = T.npcDmg.upper * T.duckUpperMul;
+    if (lb2?.result !== 'hit' || !(lb2.dmg > T.npcDmg.upper * 1.2))
+      fails.push(`ducked-into-upper → ${JSON.stringify(lb2)}, want hit ×${T.duckUpperMul} (≈${want.toFixed(1)})`);
+  }
+  // guard: exactly guardT blocks (mirrored: 'left' telegraph → guard.right); 1e-9 under → full hit
+  for (const [g, want] of [[GT, 'blocked'], [GT - 1e-9, 'hit'], [GT + .2, 'blocked']]) {
+    const f = bout(3); f.step(DT, { distance: .8 });
+    f.throwPunch('jab', 'left', .5);
+    const lb = impactOf(f, () => ({ guard: { left: 0, right: g }, distance: .8 }));
+    if (lb?.result !== want) fails.push(`guard.right=${g} → ${lb?.result}, want ${want}`);
+    if (want === 'blocked' && !(lb.dmg < T.npcDmg.jab)) fails.push(`blocked dmg ${lb?.dmg} not < ${T.npcDmg.jab}`);
+  }
+  // gassed guard: full guard can't block (gasGuard < guardT)
+  {
+    const f = bout(3); f.step(DT, { distance: .8 });
+    f.state.player.stamina = T.gassedT - .1; f.state.player.gassed = true;
+    f.throwPunch('jab', 'left', .5);
+    const lb = impactOf(f, () => ({ guard: { left: 1, right: 1 }, distance: .8 }));
+    if (lb?.result !== 'hit') fails.push(`gassed full guard → ${lb?.result}, want hit`);
+  }
+  // distance: exactly npcReach lands; +1e-9 whiffs into air
+  for (const [d, want] of [[NR, 'hit'], [NR + 1e-9, 'whiff'], [NR - .01, 'hit']]) {
+    const f = bout(3); f.step(DT, { distance: d });
+    f.throwPunch('jab', 'left', .5);
+    const lb = impactOf(f, () => ({ distance: d }));
+    if (lb?.result !== want) fails.push(`distance=${d} → ${lb?.result}, want ${want}`);
+  }
+  // player reach: exactly reach×(1+reachPow·power) connects; +1e-9 is a 'range' miss
+  {
+    const edge = T.reach * (1 + T.reachPow * .5);
+    const h = bout(3); const hp0 = h.state.npc.hp;
+    h.step(DT, { punches: [{ kind: 'jab', side: 'left', power: .5 }], distance: edge });
+    if (h.state.lastBlow?.result !== 'hit' || h.state.npc.hp >= hp0)
+      fails.push(`edge distance → ${h.state.lastBlow?.result}, want hit`);
+    const m = bout(3);
+    m.step(DT, { punches: [{ kind: 'jab', side: 'left', power: .5 }], distance: edge + 1e-9 });
+    if (m.state.lastBlow?.result !== 'miss' || m.state.lastBlow?.reason !== 'range')
+      fails.push(`edge+ε → ${JSON.stringify(m.state.lastBlow)}, want miss/range`);
+  }
+  check('fight: sway/duck/guard/distance at exact thresholds', fails.length === 0, fails.join(' | '));
+}
+
+/* ============ 11. reset mid-anything + live flips + TUNING garbage ============ */
+reseed(0xE55E7);
+{
+  let err = null;
+  for (const target of ['windup', 'punch', 'playerdown', 'win', 'countdown']) {
+    const f = new Fight({ seed: 14, npcVariant: pick(VARIANTS) });
+    try {
+      for (let i = 0; i < 60 * 200; i++) {
+        const ph = f.state.phase, act = f.state.npc.action;
+        if ((target === 'windup' && act === 'windup') || (target === 'punch' && act === 'punch')
+          || (target === 'playerdown' && (ph === 'playerdown' || ph === 'npcdown'))
+          || (target === 'win' && ['win', 'lose'].includes(ph))
+          || (target === 'countdown' && ph === 'countdown')) {
+          f.reset();
+          if (f._wantSlam || f._wantSledge) { err = `reset@${target}: special flag survived`; }
+          break;
+        }
+        f.step(DT, { punches: i % 25 === 0 ? [{ kind: 'hook', side: 'left', power: 1 }] : [], distance: .6 });
+        if ((err = fightInvariant(f, `reset@${target}`))) break;
+      }
+      let i = 0;
+      for (; i < 60 * 320 && !['win', 'lose'].includes(f.state.phase); i++)
+        f.step(DT, { punches: i % 25 === 0 ? [{ kind: 'hook', side: 'left', power: 1 }] : [], distance: .6 });
+      if (!['win', 'lose'].includes(f.state.phase)) err = `reset@${target}: no verdict after reset`;
+    } catch (e) { err = `reset@${target} threw: ${e.message}`; }
+    if (err) break;
+  }
+  check('fight: reset() mid-windup/punch/down/win/countdown → recovers + finishes', !err, err);
+}
+{
+  // opts mutated between bouts → reset() re-floors (regression: 'x' hp, NaN clock)
+  const f = new Fight({ seed: 1 });
+  f.opts.playerHp = 'x'; f.opts.npcHp = -9; f.opts.roundLen = NaN; f.opts.npcName = 5;
+  f.reset();
+  check('fight: mutated opts re-floored on reset',
+    f.state.player.hp === 100 && f.state.npc.hp === 1 && f.state.npc.maxHp === 1
+      && f.state.timeLeft === 90 && f.state.npc.name === 'PIP',
+    JSON.stringify({ hp: f.state.player.hp, nh: f.state.npc.hp, t: f.state.timeLeft, n: f.state.npc.name }));
+
+  const g = new Fight({ seed: 5, npcVariant: 'sumo' });
+  g._wantSlam = true; g._wantSledge = true; g.reset();
+  check('fight: _wantSlam/_wantSledge cleared by reset', !g._wantSlam && !g._wantSledge);
+
+  // reset() restores the seeded stream — deterministic replay
+  const sig = f => { let h = 0;
+    for (let i = 0; i < 400; i++) { f.step(DT, { distance: .6 + Math.sin(i / 7), sway: Math.sin(i / 11) });
+      h += f.state.npc.hp * (i + 1) + f.state.player.score; } return h; };
+  const a = new Fight({ seed: 33 }), b = new Fight({ seed: 33 });
+  sig(a); a.reset();
+  check('fight: reset() replays deterministically', sig(a) === sig(b));
+}
+{
+  // practice→real and ai on/off flips are LIVE (getter + direct opts reads)
+  const p = new Fight({ seed: 9, ai: false, practice: true });
+  for (let i = 0; i < 700 && p.state.phase !== 'fighting'; i++) p.step(DT, {});
+  for (let i = 0; i < 60; i++) p.step(DT, {});
+  const clock0 = p.state.timeLeft;
+  p.opts.practice = false;
+  for (let i = 0; i < 60; i++) p.step(DT, {});
+  check('fight: practice→real flip starts the clock', p.state.timeLeft < clock0, `${p.state.timeLeft} !< ${clock0}`);
+  const saw = new Set();
+  for (let i = 0; i < 60 * 20; i++) { p.step(DT, { distance: .7 }); saw.add(p.state.npc.action); }
+  check('fight: ai:false keeps PIP parked (no windup/punch)',
+    !saw.has('windup') && !saw.has('punch'), [...saw].join(','));
+  p.opts.ai = true;
+  for (let i = 0; i < 60 * 30 && !saw.has('windup'); i++) { p.step(DT, { distance: .7 }); saw.add(p.state.npc.action); }
+  check('fight: ai flip mid-fight resumes decisions', saw.has('windup') || saw.has('punch'), [...saw].join(','));
+}
+{
+  // module TUNING garbage → new fight sanitizes; in-flight fight unaffected
+  const snap = JSON.parse(JSON.stringify(FT));
+  let err = null;
+  try {
+    FT.dmg.jab = NaN; FT.windup.jab = NaN; FT.rounds = 'x'; FT.guardT = NaN; FT.npcDmg.jab = NaN;
+    const clean = new Fight({ seed: 2 });
+    for (let i = 0; i < 700 && clean.state.phase !== 'fighting'; i++) clean.step(DT, {});
+    clean.step(DT, { punches: [{ kind: 'jab', side: 'left', power: .8 }], distance: .5 });
+    clean.throwPunch('jab', 'left');
+    for (let i = 0; i < 120; i++) clean.step(DT, { distance: .5 });
+    err = fightInvariant(clean, 'garbage-TUNING new fight');
+    if (!err && clean.state.npc.action === 'windup')
+      err = 'garbage TUNING wedged the windup anyway';
+    const live = new Fight({ seed: 3 });      // snapshot taken before mutation
+    for (let i = 0; i < 700 && live.state.phase !== 'fighting'; i++) live.step(DT, {});
+    FT.dmg.cross = Infinity; FT.npcDmg.hook = -1e9;
+    for (let i = 0; i < 60 * 30 && !err; i++) {
+      live.step(DT, { punches: i % 20 === 0 ? [{ kind: 'cross', side: 'right', power: 1 }] : [], distance: .6 });
+      err = fightInvariant(live, 'live-TUNING');
+      if (err) break;
+    }
+  } finally { for (const k in snap) FT[k] = snap[k]; }
+  check('fight: module TUNING garbage — fights stay legal', !err, err);
+}
+
+/* ============ 12. fists — degenerate finite tuning battery ============ */
+reseed(0xF1575);
+{
+  const cases = [
+    { MIN_SPAN: -1 }, { MIN_SPAN: 0 }, { SWAY_RANGE: 0 }, { DUCK_RANGE: 0 },
+    { GUARD_NOSE_RANGE: 0 }, { GUARD_Y_ZERO: .36, GUARD_Y_FULL: .58 },
+    { GUARD_REACH_HI: .85, GUARD_REACH_LO: 1.02 },
+    { REACH_CAP: 1 }, { REACH_CAP: .5 },
+    { GUARD_RATE: -8 }, { BASELINE_RATE: -1 }, { VEL_SMOOTH: -5 },
+    { FACE_SMOOTH: -3 }, { SWAY_SMOOTH: -1 }, { CENTER_RATE: -2 },
+    { RESET_VEL: -1e9 }, { EMIT_VEL: -1e9 }, { FIRE_FRAMES: 0 }, { DT_MAX: -1 },
+    { POWER_FLOOR: -2 }, { POWER_FLOOR: 5 }, { CALM_RV: -1 }, { MISS_GRACE: -3 },
+  ];
+  let err = null, dead = null;
+  for (const o of cases) {
+    const ft = new FistTracker(o);
+    try {
+      for (let i = 0; i < 40; i++) ft.update(hs(hand('left', .4, .55, 1.6), hand('right', .6, .6, 1.4)), fc(), DT);
+      for (const s of [1.8, 2.1, 2.4, 2.7, 2.5, 2.2, 2.0])
+        ft.update(hs(hand('left', .4, .55, s), hand('right', .6, .6, 1.4)), fc(), DT);
+      for (let i = 0; i < 40; i++) ft.update(hs(hand('left', .4, .55, 1.6)), null, DT);
+      for (const [k, v] of [['sway', ft.sway], ['duck', ft.duck], ['guardL', ft.guard.left],
+        ['guardR', ft.guard.right], ['reachL', ft.reach.left], ['reachR', ft.reach.right]])
+        if (!Number.isFinite(v)) { err = `${JSON.stringify(o)} → ${k}=${v}`; break; }
+      if (!err && (Math.abs(ft.sway) > 1.0001 || ft.duck < -1e-9 || ft.duck > 1.0001
+        || ft.guard.left < -1e-9 || ft.guard.left > 1.0001
+        || ft.guard.right < -1e-9 || ft.guard.right > 1.0001))
+        err = `${JSON.stringify(o)} → out-of-contract sway/duck/guard`;
+      for (const p of ft.punches)
+        if (!(p.power >= 0 && p.power <= 1)) { err = `${JSON.stringify(o)} → punch.power=${p.power}`; break; }
+      if (!err && ft.punches.length === 0) dead = `${JSON.stringify(o)} → dead tracker (no punch)`;
+    } catch (e) { err = `${JSON.stringify(o)} threw: ${e.message}`; }
+    if (err || dead) break;
+  }
+  check('fists: 24 degenerate finite tunings → outputs in contract', !err, err);
+  check('fists: degenerate finite tunings → tracker still punches', !dead, dead);
+}
+{
+  // live tuning mutation mid-stream → next update re-cleans
+  const ft = new FistTracker();
+  for (let i = 0; i < 30; i++) ft.update(hs(hand('left', .4, .4)), fc(), DT);
+  ft.T.GUARD_RATE = -8; ft.T.SWAY_RANGE = 0; ft.T.MIN_SPAN = -1; ft.T.REACH_CAP = 1;
+  let err = null;
+  for (let i = 0; i < 60; i++) {
+    ft.update(hs(hand('left', .4 + i * .001, .4)), fc(), DT);
+    if (ft.guard.left < -1e-9 || ft.guard.left > 1.0001
+      || !Number.isFinite(ft.sway + ft.guard.left + ft.reach.left)) { err = `poisoned @${i}`; break; }
+  }
+  check('fists: live ft.T mutation → cleaned, outputs finite/in-range', !err, err);
+}
+
+/* ============ 13. audio — event order + graph hygiene ============ */
+reseed(0xAD02);
+{
+  // strict ctx + input-edge counting + deferred onended (real WebAudio fires
+  // it asynchronously when the scheduled stop time passes)
+  const nodes = [];
+  const val = x => { if (!Number.isFinite(x)) throw new RangeError(`non-finite audio param ${x}`); return true; };
+  const param = v => ({ value: v,
+    setValueAtTime(x) { val(x); this.value = x; }, linearRampToValueAtTime(x) { val(x); this.value = x; },
+    exponentialRampToValueAtTime(x) { val(x); this.value = x; }, setTargetAtTime(x) { val(x); this.value = x; },
+    cancelScheduledValues() {} });
+  const mk = type => {
+    const n = { type, frequency: param(440), Q: param(1), gain: param(1), buffer: null,
+      loop: false, _d: null, _ins: 0, _stopAt: Infinity, onended: null,
+      connect(d) { this._d = d; if (d && Number.isFinite(d._ins)) d._ins++; },
+      disconnect() { const d = this._d; this._d = null; if (d && Number.isFinite(d._ins)) d._ins--; },
+      start() {}, stop(t) { this._stopAt = Number.isFinite(t) ? t : 0; } };
+    nodes.push(n); return n;
+  };
+  const ctx = { nodes, currentTime: 0, sampleRate: 44100, destination: mk('dest'), resume() {},
+    createOscillator: () => mk('osc'), createGain: () => mk('gain'),
+    createBiquadFilter: () => mk('filter'), createDynamicsCompressor: () => mk('comp'),
+    createBufferSource: () => mk('src'),
+    createBuffer: (ch, len) => ({ getChannelData: () => new Float32Array(len) }),
+    _flush() { for (const n of nodes) if (n._stopAt <= this.currentTime) { n._stopAt = Infinity; n.onended?.(); } } };
+  const a = new BoxingAudio(); a.unlock(ctx);
+  const ins = () => a.master._ins;
+  let err = null;
+  try {
+    const evts = Object.keys(EVENT_SFX);
+    for (let i = 0; i < 400; i++) {
+      // deterministic scramble — 'ko' lands before 'round-start', 'win' mid-fight, etc.
+      const r = a.handleEvent(evts[(i * 7 + (i % 3)) % evts.length],
+        { lastBlow: { kind: pick(['jab', 'hook', 'upper']), dmg: 8 + i % 20 }, countdown: (i % 3) + 1,
+          phase: i % 2 ? 'fighting' : 'win' });
+      if (typeof r !== 'boolean') { err = `non-boolean return @${i}`; break; }
+      if (i % 11 === 0) a.muted = !(i % 22);          // rapid mute/unmute mid-storm
+      a.update(DT, { phase: i % 2 ? 'fighting' : 'win', player: { stamina: .2 } });
+      ctx.currentTime += DT; ctx._flush();
+    }
+    a.muted = false;
+    for (let i = 0; i < 40; i++) {                    // crowd on/off hammer
+      a.update(DT, { phase: i % 2 ? 'fighting' : 'win', player: { stamina: 1 } });
+      ctx.currentTime += DT; ctx._flush();
+    }
+  } catch (e) { err = e.message; }
+  check('audio: 400 out-of-order events + mute flips on strict ctx — no throw', !err, err);
+  // leak check: drain every scheduled voice, drop the crowd bed → master must
+  // be back to zero inputs (a leaked edge can never reach 0)
+  ctx.currentTime += 5; ctx._flush();
+  a.update(DT, { phase: 'win', player: { stamina: 1 } });
+  check('audio: ended voices + crowd beds release their edge into master', ins() === 0, `master inputs=${ins()}`);
+}
+{
+  // every fight-vocab event maps to a real SFX + returns true post-unlock
+  const a = new BoxingAudio(); a.unlock(strictCtx());
+  const missing = [...EVENT_VOCAB].filter(e => a.handleEvent(e, { lastBlow: { kind: 'jab', dmg: 5 }, countdown: 2 }) !== true);
+  check('audio: every fight event produces a scheduled SFX', missing.length === 0, missing.join(','));
+}
+
+/* ============ 14. protoBoxer — warn cap + sealed state + ring/fists resets ============ */
+reseed(0x9B0C);
+{
+  let warns = 0; const origWarn = console.warn; console.warn = () => warns++;
+  const b = buildBoxer(THREE, {});
+  for (let i = 0; i < 300; i++) b.pose('bogus-' + i, 0);
+  console.warn = origWarn;
+  check('proto: unknown-pose warns dedup-bounded (no console flood)', warns > 0 && warns <= 64, `warns=${warns}`);
+  let threw = null;
+  try {
+    b.tick(DT, Object.freeze({ gassed: true }));
+    b.tick(DT, Object.seal({}));
+    b.dispose(); b.dispose();                          // idempotent
+  } catch (e) { threw = e.message; }
+  check('proto: sealed/frozen state + double dispose — never throws', !threw, threw);
+}
+{
+  // ring reset mid-motion → legal positions + deterministic re-trajectory
+  const sim = new RingSim({ seed: 77 });
+  let err = null;
+  for (let i = 0; i < 400; i++) sim.step(DT, { npcDir: pick(['press', 'circle', 'retreat']) });
+  sim.reset();
+  const twin = new RingSim({ seed: 77 });
+  let diff = 0;
+  for (let i = 0; i < 300; i++) {
+    const inp = { npcDir: ['press', 'circle', 'hold'][i % 3], playerStep: Math.sin(i / 8) };
+    sim.step(DT, inp); twin.step(DT, inp);
+    diff = Math.max(diff, Math.abs(sim.npc.pos.x - twin.npc.pos.x));
+    if ((err = ringLegality(sim, `post-reset ${i}`))) break;
+  }
+  check('ring: reset() mid-motion → legal + replays the seeded trajectory',
+    !err && diff === 0, `${err} diff=${diff}`);
+}
+
+/* ============ 15. tutorial — abandon mid-step + clock regressions ============ */
+reseed(0x70715);
+const tutDrive = (t, fight, sim, secs, now, skipUpdate = false) => {
+  for (let i = 0; i < secs * 60 && !t.done; i++) {
+    fight.step(DT, { distance: sim.distance() });
+    if (!skipUpdate) t.update({ events: fight.state.events, state: fight.state }, now);
+    now += DT;
+  }
+  return now;
+};
+{
+  // caller stops calling update() for ~40s mid-run, then resumes
+  const fight = new Fight({ seed: 3, ai: false, practice: true });
+  const sim = new RingSim({ seed: 3 });
+  const t = new Tutorial({ fight, sim });
+  fight.startNow();
+  let now = tutDrive(t, fight, sim, 10, 0);
+  now = tutDrive(t, fight, sim, 40, now, true);        // abandoned stretch
+  now = tutDrive(t, fight, sim, 40, now);
+  check('tutorial: abandoned ~40s mid-run → resumes + finishes', t.done, `i=${t.i}`);
+}
+{
+  // clock jumps backwards once → timeboxes pause, then still reach TOTAL
+  const fight = new Fight({ seed: 3, ai: false, practice: true });
+  const sim = new RingSim({ seed: 3 });
+  const t = new Tutorial({ fight, sim });
+  fight.startNow();
+  let now = tutDrive(t, fight, sim, 10, 0);
+  now = tutDrive(t, fight, sim, 160, now - 120);       // -120s wall-clock adjust
+  check('tutorial: single -120s clock regression → still finishes', t.done, `i=${t.i}`);
+}
+{
+  // fight.reset() mid-tutorial → waits through re-intro, still terminates
+  const fight = new Fight({ seed: 3, ai: false, practice: true });
+  const sim = new RingSim({ seed: 3 });
+  const t = new Tutorial({ fight, sim });
+  fight.startNow();
+  let now = tutDrive(t, fight, sim, 8, 0);
+  fight.reset(); fight.startNow();
+  now = tutDrive(t, fight, sim, 60, now);
+  check('tutorial: fight.reset() mid-run → still terminates inside cap', t.done, `i=${t.i}`);
+}
+{
+  // fake-DOM root (querySelector→null) — render path must not throw
+  const fake = { innerHTML: '', classList: { toggle() {} },
+    querySelector: () => null, querySelectorAll: () => null };
+  let threw = null;
+  try {
+    const t = new Tutorial({ fight: new Fight({ seed: 1, ai: false, practice: true }), root: fake });
+    for (let i = 0; i < 10; i++)
+      t.update({ events: [], state: { phase: 'fighting', npc: { action: 'idle' } } }, i / 60);
+  } catch (e) { threw = e.message; }
+  check('tutorial: partial fake-DOM root — render never throws', !threw, threw);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

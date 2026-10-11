@@ -18,8 +18,21 @@
         ?tutorial=1 engages the same mode.
      D  lineup → boxing hand-off: localStorage['boxing:npc'] → chosen NPC
         spawns; locked/stale/prop picks can't be smuggled in.
-     E  malformed __forceHands edges — no pageerror; gloves never leave the
-        screen (A7: drift to neutral guard, dimmed).
+     E  tracking-loss overlay: gloves clear on dropout, return on recovery
+        (post-A7 contract — dropped hands leave the canvas, no dimmed ghost).
+     F  dropout edges — partial drop clears only the missing glove; a drop
+        mid-swing cancels past MISS_GRACE, emits ≤1 inside grace; re-entry
+        snaps to the hand (no cross-screen glide).
+     G  rapid reset spam ×20 + resets mid-telegraph / mid-down-count /
+        between countdown ticks — clean phases, no leaked scene children.
+     H  corrupt localStorage ('boxing:npc' junk/huge/bogus + bad stats keys)
+        — boxing + lineup boot clean with fallback fighter.
+     I  hidden-tab mid-fight — Debugger.pause rAF stall can't poison dt,
+        fight clock doesn't jump, visibilitychange listener survives flips.
+     J  npc.js torture live — makeRig dt extremes + unknown-pose fallback,
+        telegraph sprite sans glove parts, idempotent dispose, NaN damage,
+        css gloveColor, null update ctx.
+     K  multi-round — round-start each round, clock resets, late KO → win.
 
    NOTE on event draining: fight.state.events is single-consumer — whoever
    calls game.step gets that frame's events. Manual step bursts are used for
@@ -123,6 +136,25 @@ const DRIVER = `(() => {
     },
     hands(v) { window.__forceHands = v; },
     face(v) { window.__forceFace = v; },
+    /* normalized-region alpha probe — lit pixels in a box of the #hands
+       overlay (fractions of canvas W/H). Lets tests ask "is the LEFT glove
+       drawn but the RIGHT one gone" instead of only whole-canvas counts. */
+    box(fx, fy, w = .1, h = .12) {
+      const cv = document.querySelector('#hands');
+      const x2 = cv.getContext('2d');
+      const W = Math.max(1, Math.round(w * cv.width)), H = Math.max(1, Math.round(h * cv.height));
+      const X = Math.max(0, Math.min(cv.width - 1, Math.round((fx - w / 2) * cv.width)));
+      const Y = Math.max(0, Math.min(cv.height - 1, Math.round((fy - h / 2) * cv.height)));
+      const d = x2.getImageData(X, Y, Math.min(W, cv.width - X), Math.min(H, cv.height - Y)).data;
+      let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 30) n++;
+      return n;
+    },
+    /* count an event since a mark across BOTH drains — my steps collect into
+       got, the page rAF collects into __boxing.log */
+    count(ev, m = 0, ml = 0) {
+      return this.got.slice(m).filter(e => e === ev).length
+        + (window.__boxing.log || []).slice(ml).filter(e => e === ev).length;
+    },
     /* one scripted punch (~0.7s): fast span ramp → hot reachVel, hold to
        emit, retract to re-arm — same shape boxing-page.mjs uses */
     punch(side = 'left', cy = .55) {
@@ -190,7 +222,7 @@ try {
       const Q = window.__qe, B = window.__boxing, hp0 = B.state.npc.hp, m = Q.mark();
       let swings = 0;
       while (swings < 8 && B.state.npc.hp >= hp0 && B.state.phase === 'fighting') {
-        if (Q.dist() > 1.28) { Q.step(8, { step: 1 }); continue; }
+        if (Q.dist() > 1.5) { Q.step(8, { step: 1 }); continue; }
         Q.punch(swings++ % 2 ? 'right' : 'left');
       }
       return { swings, hp0, hp: B.state.npc.hp, lastBlow: Q.lastBlow, ev: Q.got.slice(m) };
@@ -216,7 +248,7 @@ try {
         settle();
         let tel = null;
         for (let i = 0; i < 2400 && !tel; i++) {
-          Q.step(1, { step: Q.dist() > 1.05 ? 1 : 0 });
+          Q.step(1, { step: Q.dist() > 1.4 ? 1 : 0 });
           if (B.state.phase !== 'fighting') return { res: 'phase-left', tries };
           tel = B.state.npc.telegraph;
         }
@@ -248,7 +280,7 @@ try {
       while (swings < 48 && B.state.phase === 'fighting' && B.state.player.hp > 0) {
         const st = B.state, d = Q.dist();
         if (st.npc.action === 'hurt' || st.npc.action === 'down') { Q.step(18); continue; }
-        if (d > 1.28) { Q.step(8, { step: 1 }); continue; }
+        if (d > 1.5) { Q.step(8, { step: 1 }); continue; }
         if (st.player.hp < 40 && (st.npc.action === 'windup' || st.npc.action === 'punch')) {
           Q.step(14, { guard: true }); continue;
         }
@@ -305,7 +337,7 @@ try {
         ended: document.body.classList.contains('ended') };
       let swings = 0;
       while (swings++ < 10 && st.npc.hp >= st.npc.maxHp && B.state.phase === 'fighting') {
-        if (Q.dist() > 1.28) { Q.step(8, { step: 1 }); continue; }
+        if (Q.dist() > 1.5) { Q.step(8, { step: 1 }); continue; }
         Q.punch(swings % 2 ? 'right' : 'left');
       }
       return { ...snap, hitAgain: st.npc.hp < st.npc.maxHp, afterHp: st.npc.hp };
@@ -323,7 +355,7 @@ try {
       const npcHash = window.__npcHash;
       let swings = 0;
       while (swings++ < 12 && B.state.npc.hp >= B.state.npc.maxHp * .8 && B.state.phase === 'fighting') {
-        if (Q.dist() > 1.28) { Q.step(8, { step: 1 }); continue; }
+        if (Q.dist() > 1.5) { Q.step(8, { step: 1 }); continue; }
         Q.punch(swings % 2 ? 'right' : 'left');
       }
       const before = { nhp: B.state.npc.hp, score: B.state.player.score,
@@ -339,7 +371,7 @@ try {
       for (let i = 0; i < 40 && B.state.phase !== 'fighting'; i++) Q.step(10);
       let sw2 = 0;
       while (sw2++ < 10 && B.state.npc.hp >= B.state.npc.maxHp && B.state.phase === 'fighting') {
-        if (Q.dist() > 1.28) { Q.step(8, { step: 1 }); continue; }
+        if (Q.dist() > 1.5) { Q.step(8, { step: 1 }); continue; }
         Q.punch(sw2 % 2 ? 'right' : 'left');
       }
       return { before, clean0, phase: B.state.phase, hitAgain: B.state.npc.hp < B.state.npc.maxHp,
@@ -365,7 +397,7 @@ try {
       B.state.player.hp = 12;
       const m = Q.mark();
       for (let i = 0; i < 3600 && B.state.phase === 'fighting'; i++)
-        Q.step(1, { step: Q.dist() > 1.1 ? 1 : 0 });
+        Q.step(1, { step: Q.dist() > 1.4 ? 1 : 0 });
       return { phase: B.state.phase, ko: Q.saw('ko', m), php: B.state.player.hp };
     });
     check("A: defenceless player gets KO'd → 'playerdown'",
@@ -415,7 +447,7 @@ try {
       const t0 = B.state.timeLeft;
       let swings = 0;
       for (let k = 0; k < 80 && B.state.phase === 'fighting'; k++) {
-        if (Q.dist() > 1.1) { Q.step(6, { step: 1 }); continue; }
+        if (Q.dist() > 1.4) { Q.step(6, { step: 1 }); continue; }
         Q.punch(swings++ % 2 ? 'right' : 'left');
       }
       return { practice: B.fight.opts.practice, ai: B.fight.ai,
@@ -459,7 +491,7 @@ try {
         const tg = st.npc.telegraph, a = st.npc.action;
         B.moveKeys.guard = s.id === 'block';          // real F-key path for rAF frames
         if (s.id === 'punch') {
-          if (Q.dist() > 1.1) Q.step(6, { step: 1 }); else Q.punch(side++ % 2 ? 'right' : 'left');
+          if (Q.dist() > 1.4) Q.step(6, { step: 1 }); else Q.punch(side++ % 2 ? 'right' : 'left');
         } else if (s.id === 'block') {
           /* scripted jab — gloves up through the whole telegraph + swing */
           if (a === 'windup' || a === 'punch') Q.step(4, { guard: true });
@@ -474,7 +506,7 @@ try {
           /* scripted hook — dodge must START inside the .24s perfect window:
              lean as the swing launches AND commit the slip via controls.dodge
              (the A/D key path) on the release frame; then punch the reel */
-          if (a === 'stunned') { await settle(); if (Q.dist() > 1.1) Q.step(6, { step: 1 }); else Q.punch(side++ % 2 ? 'right' : 'left'); }
+          if (a === 'stunned') { await settle(); if (Q.dist() > 1.4) Q.step(6, { step: 1 }); else Q.punch(side++ % 2 ? 'right' : 'left'); }
           else if (a === 'punch' && st.npc.actionT < .08) { Q.face(Q.FACE(.12, .45)); Q.step(1, { dodge: 1 }); }
           else if (tg && tg.t01 >= .9) Q.face(Q.FACE(.12, .45));
           else if (a === 'whiff' || (a === 'idle' && !tg)) await settle();
@@ -600,10 +632,10 @@ try {
       ['hands = string', `{hands:'abc'}`, false],
       ['forceHands = number', `42`, false],
       ['forceHands = string', `'just text'`, false],
-      ['forceHands = bare array', `(Q=>[Q.hand('left',.3,.6,.05)])(window.__qe)`, true],
+      ['forceHands = bare array', `(Q=>[Q.hand('left',.3,.6,.05)])(window.__qe)`, false],   // no {hands:[…]} wrapper → malformed, not drawable
       ['one hand', `(Q=>Q.HS([Q.hand('left',.3,.6,.05)]))(window.__qe)`, true],
       ['five hands', `(Q=>Q.HS(['left','right','left','right','left'].map((s,i)=>Q.hand(s,.2+i*.15,.6,.05))))(window.__qe)`, true],
-      ['bogus side', `(Q=>Q.HS([{...Q.hand('middle',.3,.6,.05)}]))(window.__qe)`, true],
+      ['bogus side', `(Q=>Q.HS([{...Q.hand('middle',.3,.6,.05)}]))(window.__qe)`, false],
     ];
     const edgeRes = [];
     for (const [nm, src, tracked] of cases) {
@@ -614,20 +646,471 @@ try {
       edgeRes.push({ nm, tracked, px });
       if (errs.length) break;
     }
-    /* tracking drops for good → gloves drift home dimmed, still drawn */
-    await pg.evaluate(() => { window.__forceHands = { hands: [] }; window.__qe.step(90); });
-    await delay(900);                         // past the .45s holdover
-    const pxLost = await pg.evaluate(gloveProbe);
-    const bad = edgeRes.filter(r => r.px.total < 150);
-    const badGuard = edgeRes.filter(r => !r.tracked && r.px.guard < 60);
+    /* tracking drops for good → the GLOVE pixels leave with the hands
+       (post-A7 contract: no guard-pose holdover, no ghost gloves frozen
+       mid-drop). Whole-canvas alpha is the wrong ruler — telegraph chevrons
+       and impact FX legitimately paint with zero tracked hands (fight-cue
+       timing is NPC luck), so measure inside ±24px boxes at the two glove
+       spots and first drain any active telegraph. */
+    const spotProbe = `(() => {
+      const cv = document.querySelector('#hands');
+      const x2 = cv.getContext('2d');
+      const box = (fx, fy) => {
+        const cx = Math.round(fx * cv.width), cy = Math.round(fy * cv.height);
+        const d = x2.getImageData(Math.max(0, cx - 24), Math.max(0, cy - 24), 48, 48).data;
+        let n = 0;
+        for (let i = 3; i < d.length; i += 4) if (d[i] > 30) n++;
+        return n;
+      };
+      return { l: box(.3, .6), r: box(.7, .6) };
+    })()`;
+    /* real gloves at known spots first — pxOn proves the boxes had mitts */
+    await pg.evaluate(`window.__forceHands = ((Q)=>Q.HS([Q.hand('left',.3,.6,.05),Q.hand('right',.7,.6,.05)]))(window.__qe)`);
+    await pg.evaluate(() => window.__qe.step(12));
+    await delay(320);
+    const pxOn = await pg.evaluate(spotProbe);
+    await pg.evaluate(() => { window.__forceHands = { hands: [] }; });
+    await pg.evaluate(() => {
+      const Q = window.__qe, B = window.__boxing;
+      for (let i = 0; i < 300 && B.state.npc?.telegraph; i++) Q.step(10);
+      Q.step(90);
+    });
+    await delay(900);
+    const pxLost = await pg.evaluate(spotProbe);
+    /* and recovery: a tracked hand after the dropout must draw again */
+    await pg.evaluate(`window.__forceHands = ((Q)=>Q.HS([Q.hand('left',.3,.6,.05),Q.hand('right',.7,.6,.05)]))(window.__qe)`);
+    await pg.evaluate(() => window.__qe.step(12));
+    await delay(320);
+    const pxBack = await pg.evaluate(gloveProbe);
+    const bad = edgeRes.filter(r => r.tracked && r.px.total < 150);
     check('E: malformed __forceHands — zero pageerrors', errs.length === 0,
       errs.slice(0, 3).join(' | ') || `${edgeRes.length}/${cases.length} inputs ran clean`);
-    check('E: gloves never disappear — overlay has pixels for every input',
+    check('E: tracked hands always draw gloves',
       bad.length === 0,
-      bad.length ? JSON.stringify(bad.map(b => [b.nm, b.px.total])) : `min total=${Math.min(...edgeRes.map(r => r.px.total))}`);
-    check('E: lost tracking drifts gloves to the neutral guard pose (A7)',
-      badGuard.length === 0 && pxLost.guard > 100,
-      JSON.stringify({ pxLost, weak: badGuard.map(b => [b.nm, b.px.guard]) }));
+      bad.length ? JSON.stringify(bad.map(b => [b.nm, b.px.total])) : `tracked min total=${Math.min(...edgeRes.filter(r => r.tracked).map(r => r.px.total))}`);
+    check('E: tracking loss leaves no ghost gloves (glove spots clear)',
+      pxOn.l >= 60 && pxOn.r >= 60 && pxLost.l < 60 && pxLost.r < 60,
+      JSON.stringify({ pxOn, pxLost }));
+    check('E: gloves return when tracking recovers',
+      pxBack.total >= 150, JSON.stringify({ pxBack }));
+    detach();
+  }
+
+  /* ================= F. dropout edges (post-A7 contract) =================
+     the canvas clears for missing hands — but what about PARTIAL drops,
+     drops mid-swing, and where the glove re-appears? */
+  {
+    const { errs, detach } = await boot(pg, `${base}/boxing.html?notrack=1`);
+    await pg.evaluate(() => {
+      const Q = window.__qe, B = window.__boxing;
+      for (let i = 0; i < 40 && B.state.phase !== 'fighting'; i++) Q.step(10);
+      /* park the NPC brain for the overlay-pixel probes: no telegraphs, no
+         incoming punches — nothing else on the canvas but the mitts. Same
+         _npc park boxing-page.mjs uses. */
+      B.fight._npc = () => {};
+    });
+
+    /* F1 — partial dropout: right hand vanishes, left stays. The dropped
+       glove must leave the canvas while the tracked one stays drawn. */
+    const p1 = await pg.evaluate(() => new Promise(res => {
+      const Q = window.__qe;
+      Q.hands(Q.HS([Q.hand('left', .3, .55, .05), Q.hand('right', .7, .55, .05)]));
+      Q.step(12);
+      setTimeout(() => {
+        const both = { l: Q.box(.3, .55), r: Q.box(.7, .55) };
+        Q.hands(Q.HS([Q.hand('left', .3, .55, .05)]));
+        Q.step(30);
+        setTimeout(() => res({ both, l: Q.box(.3, .55), r: Q.box(.7, .55) }), 450);
+      }, 450);
+    }));
+    check('F1: partial dropout — dropped glove clears, tracked glove stays',
+      p1.both.l > 60 && p1.both.r > 60 && p1.l > 60 && p1.r < 30,
+      JSON.stringify(p1));
+    const p1b = await pg.evaluate(() => new Promise(res => {
+      const Q = window.__qe;
+      Q.hands(Q.HS([Q.hand('left', .3, .55, .05), Q.hand('right', .7, .55, .05)]));
+      Q.step(12);
+      setTimeout(() => res({ l: Q.box(.3, .55), r: Q.box(.7, .55) }), 450);
+    }));
+    check('F1: returning glove redraws beside the surviving one',
+      p1b.l > 60 && p1b.r > 60, JSON.stringify(p1b));
+
+    /* F2 — dropout MID-SWING: a throw in flight whose hand vanishes must
+       cancel (MISS_GRACE), never emit on stale data past the grace window. */
+    const p2 = await pg.evaluate(() => {
+      const Q = window.__qe, B = window.__boxing;
+      for (const s of [.04, .055, .07]) { Q.hands(Q.HS([Q.hand('left', .38, .55, s)])); Q.step(6); }
+      const mid = B.tracker.debug().state.left;      // should be mid-'throw'
+      const m = Q.got.length, ml = B.log.length;
+      Q.hands(Q.EMPTY); Q.step(60);                   // > MISS_GRACE (5)
+      return { mid, stateAfter: B.tracker.debug().state.left,
+        newPunches: Q.count('player-punch', m, ml) + Q.count('player-hit', m, ml) };
+    });
+    check('F2: dropout mid-swing cancels the throw (no stale emit)',
+      p2.newPunches === 0 && p2.stateAfter === 'idle',
+      JSON.stringify(p2));
+    /* …but a drop INSIDE the grace window resolves the throw once on return —
+       the measured peak is real data, the stall emits it, then it re-arms. */
+    const p2b = await pg.evaluate(() => {
+      const Q = window.__qe, B = window.__boxing;
+      for (const s of [.04, .055, .07]) { Q.hands(Q.HS([Q.hand('left', .38, .55, s)])); Q.step(6); }
+      const mid = B.tracker.debug().state.left;
+      const m = Q.got.length, ml = B.log.length;
+      Q.hands(Q.EMPTY); Q.step(3);                     // inside grace
+      Q.hands(Q.HS([Q.hand('left', .38, .55, .075)])); Q.step(30);
+      return { mid, emitted: Q.count('player-punch', m, ml),
+        state: B.tracker.debug().state.left };
+    });
+    check('F2: in-grace re-entry emits the swing at most once, then re-arms',
+      p2b.emitted <= 1 && p2b.state !== 'throw',
+      JSON.stringify(p2b));
+
+    /* F3 — re-entry position: drop for a while, come back on the far side of
+       the screen. The glove must SNAP to the hand — never glide a mitt across
+       mid-canvas on the way over. */
+    const p3 = await pg.evaluate(() => new Promise(res => {
+      const Q = window.__qe;
+      Q.hands(Q.HS([Q.hand('left', .15, .5, .05)]));
+      Q.step(12);
+      setTimeout(() => {
+        const before = Q.box(.15, .5);
+        Q.hands(Q.EMPTY); Q.step(60);
+        setTimeout(() => {
+          const cleared = Q.box(.15, .5);
+          Q.hands(Q.HS([Q.hand('left', .85, .5, .05)]));
+          Q.step(8);
+          setTimeout(() => res({ before, cleared,
+            mid: Q.box(.5, .52, .14, .16), spot: Q.box(.85, .5, .12, .14) }), 350);
+        }, 500);
+      }, 400);
+    }));
+    check('F3: glove re-entry snaps to the hand — no cross-screen glide',
+      p3.before > 60 && p3.cleared < 30 && p3.spot > 40 && p3.mid < 25,
+      JSON.stringify(p3));
+    check('F: zero page errors through dropout edges',
+      errs.length === 0, errs.slice(0, 3).join(' | '));
+    detach();
+  }
+
+  /* ================= G. rapid reset spam ============================== */
+  {
+    const { errs, detach } = await boot(pg, `${base}/boxing.html?notrack=1`);
+    const g = await pg.evaluate(() => {
+      const Q = window.__qe, B = window.__boxing, out = {};
+      for (let i = 0; i < 40 && B.state.phase !== 'fighting'; i++) Q.step(10);
+      delete B.fight._npc;                                 // real AI for windup/KO probes
+
+      /* 20 back-to-back resets — rebuild spam (proto rematch rebuilds the
+         boxer) must not leak scene children or corrupt the next bout */
+      for (let i = 0; i < 20; i++) B.game.reset();
+      out.children = B.npc.group.children.length;          // impl.group + tel sprite
+      const m = Q.got.length, ml = B.log.length;
+      B.game.skipIntro();
+      for (let i = 0; i < 60 && B.state.phase !== 'fighting'; i++) Q.step(10);
+      out.afterSpam = { phase: B.state.phase, round: B.state.round,
+        events: B.state.events.length, punches: B.tracker.punches.length,
+        roundStarts: Q.count('round-start', m, ml),
+        endOn: document.querySelector('[data-end]').classList.contains('on') };
+
+      /* reset mid-telegraph: a windup must die with the bout, not release a
+         phantom swing into the fresh one */
+      let tel = null;
+      for (let i = 0; i < 2400 && !tel; i++) {
+        Q.step(1, { step: Q.dist() > 1.4 ? 1 : 0 });
+        if (B.state.phase !== 'fighting') break;
+        tel = B.state.npc.telegraph;
+      }
+      out.sawWindup = !!tel;
+      if (tel) {
+        B.game.reset();
+        out.afterTelReset = { phase: B.state.phase, tel: B.state.npc.telegraph,
+          act: B.state.npc.action };
+        B.game.skipIntro();
+        for (let i = 0; i < 60 && B.state.phase !== 'fighting'; i++) Q.step(10);
+        out.telPhase2 = B.state.phase;
+      }
+      return out;
+    });
+    check('G: reset spam ×20 — no leaked scene children, clean fresh bout',
+      g.children <= 3 && g.afterSpam.phase === 'fighting' && g.afterSpam.round === 1
+        && g.afterSpam.events === 0 && g.afterSpam.punches === 0
+        && g.afterSpam.roundStarts === 1 && !g.afterSpam.endOn,
+      JSON.stringify(g));
+    check('G: reset mid-telegraph kills the windup cleanly',
+      !g.sawWindup || (g.afterTelReset.phase === 'intro'
+        && g.afterTelReset.tel === null && g.afterTelReset.act === 'idle'
+        && g.telPhase2 === 'fighting'),
+      JSON.stringify({ saw: g.sawWindup, after: g.afterTelReset, p2: g.telPhase2 }));
+
+    /* reset during the down/KO count and between countdown ticks */
+    const g2 = await pg.evaluate(() => {
+      const Q = window.__qe, B = window.__boxing, out = {};
+      B.state.player.hp = 12;
+      for (let i = 0; i < 3600 && B.state.phase === 'fighting'; i++)
+        Q.step(1, { step: Q.dist() > 1.4 ? 1 : 0 });
+      out.downPhase = B.state.phase;                       // playerdown expected
+      B.game.reset();                                      // reset mid-count
+      out.afterDownReset = { phase: B.state.phase, php: B.state.player.hp };
+      B.game.skipIntro();
+      /* and once more between countdown ticks */
+      let sawCd = false;
+      for (let i = 0; i < 30; i++) {
+        Q.step(10);
+        if (B.state.phase === 'countdown') { sawCd = true; B.game.reset(); break; }
+      }
+      out.sawCountdown = sawCd;
+      B.game.skipIntro();
+      for (let i = 0; i < 60 && B.state.phase !== 'fighting'; i++) Q.step(10);
+      out.final = { phase: B.state.phase, round: B.state.round,
+        countOn: document.querySelector('[data-count]').classList.contains('on'),
+        endOn: document.querySelector('[data-end]').classList.contains('on') };
+      /* post-spam bout still works: land a real hit */
+      let sw = 0;
+      while (sw++ < 10 && B.state.npc.hp >= B.state.npc.maxHp && B.state.phase === 'fighting') {
+        if (Q.dist() > 1.5) { Q.step(8, { step: 1 }); continue; }
+        Q.punch(sw % 2 ? 'right' : 'left');
+      }
+      out.hitAgain = B.state.npc.hp < B.state.npc.maxHp;
+      return out;
+    });
+    check('G: reset during down-count + mid-countdown — phases stay sane',
+      g2.downPhase === 'playerdown' && g2.afterDownReset.phase === 'intro'
+        && g2.afterDownReset.php === 100 && g2.final.phase === 'fighting'
+        && !g2.final.countOn && !g2.final.endOn,
+      JSON.stringify(g2));
+    check('G: post-spam bout lands a real hit', g2.hitAgain, `hit=${g2.hitAgain}`);
+    check('G: zero page errors through reset spam',
+      errs.length === 0, errs.slice(0, 3).join(' | '));
+    detach();
+  }
+
+  /* ================= H. localStorage corruption ======================= */
+  {
+    /* corrupt boxing:npc picks — every one must fall back to a real fighter */
+    const npcPicks = ['{}', '"proto:bogus"', '\u0000\u0000junk\ufffd', 'x'.repeat(200000)];
+    const pickRes = [];
+    for (const pick of npcPicks) {
+      await pg.evaluate(v => localStorage.setItem('boxing:npc', v), pick);
+      const b = await boot(pg, `${base}/boxing.html?notrack=1`,
+        { wait: 'window.__boxing && window.__boxing.fight' });
+      const r = await pg.evaluate(() => ({ v: window.__boxing.npc?.variant,
+        kind: window.__boxing.npc?.kind, name: window.__boxing.state.npc.name }));
+      pickRes.push({ pick: pick.slice(0, 18) + (pick.length > 18 ? '…' : ''), r, errs: b.errs.length });
+      b.detach();
+    }
+    const picksOk = pickRes.every(p => p.errs === 0 && p.r.v === 'bubble');
+    check('H: corrupt boxing:npc values all fall back to BUBBLE, zero errors',
+      picksOk, JSON.stringify(pickRes));
+
+    /* corrupt stats/settings keys — read at boot (sound/volume) and at
+       bout-end (ko/best/wins); boot + reach 'fighting' must not throw */
+    await pg.evaluate(() => {
+      localStorage.setItem('boxing:ko', '{bad');
+      localStorage.setItem('boxing:best', '[]');
+      localStorage.setItem('boxing:wins', '"x"');
+      localStorage.setItem('boxing:sound', 'loud');
+      localStorage.setItem('boxing:volume', 'abc');
+    });
+    const hb = await boot(pg, `${base}/boxing.html?notrack=1`);
+    const hfig = await pg.evaluate(() => {
+      const Q = window.__qe;
+      for (let i = 0; i < 40 && window.__boxing.state.phase !== 'fighting'; i++) Q.step(10);
+      return { phase: window.__boxing.state.phase };
+    });
+    check('H: corrupt stats/settings keys — boots + reaches fighting clean',
+      hfig.phase === 'fighting' && hb.errs.length === 0,
+      JSON.stringify({ phase: hfig.phase, errs: hb.errs.slice(0, 2) }));
+    hb.detach();
+
+    /* same corruption facing the lineup page */
+    const lb = await boot(pg, `${base}/lineup.html`,
+      { wait: 'document.querySelectorAll(".cell").length >= 3', driver: false, settleMs: 2500 });
+    const lres = await pg.evaluate(() => ({
+      cells: document.querySelectorAll('.cell').length,
+      pick: document.querySelector('[data-pick]')?.textContent }));
+    check('H: lineup renders with corrupt stats/pick storage',
+      lres.cells >= 3 && !!lres.pick && lb.errs.length === 0,
+      JSON.stringify({ lres, errs: lb.errs.slice(0, 2) }));
+    lb.detach();
+    await pg.evaluate(() => {   // leave storage clean for later sections
+      for (const k of ['boxing:npc', 'boxing:ko', 'boxing:best', 'boxing:wins',
+        'boxing:sound', 'boxing:volume']) localStorage.removeItem(k);
+    });
+  }
+
+  /* ================= I. hidden-tab mid-fight ==========================
+     Page.setWebLifecycleState 'hidden' is unimplemented in this Chromium —
+     use Debugger.pause/resume for a REAL rAF stall (the dt-spike path), and
+     a JS visibility override for the page's visibilitychange listener. */
+  {
+    const { errs, detach } = await boot(pg, `${base}/boxing.html?notrack=1`);
+    const cdp = await pg.createCDPSession();
+    const pre = await pg.evaluate(() => {
+      const Q = window.__qe, B = window.__boxing;
+      for (let i = 0; i < 40 && B.state.phase !== 'fighting'; i++) Q.step(10);
+      B.fight._npc = () => {};                       // pure clock — nobody swings
+      window.__rafN = 0;
+      const f = () => { window.__rafN++; requestAnimationFrame(f); };
+      requestAnimationFrame(f);
+      return { tl: B.state.timeLeft, phase: B.state.phase };
+    });
+    await delay(600);
+    await cdp.send('Debugger.enable');
+    await cdp.send('Debugger.pause');
+    await delay(3500);                               // the "hidden tab" window
+    await cdp.send('Debugger.resume');
+    const n1 = await pg.evaluate(() => window.__rafN).catch(() => -1);
+    await delay(1400);
+    const post = await pg.evaluate(() => ({
+      tl: window.__boxing.state.timeLeft, phase: window.__boxing.state.phase,
+      raf: window.__rafN,
+      npcY: window.__boxing.npc.group.position.y }));
+    check('I: rAF stalled during the freeze and resumed after',
+      n1 >= 0 && post.raf > n1 + 3, JSON.stringify({ n1, raf: post.raf }));
+    check('I: 3.5s stall did not drain the fight clock (dt clamped)',
+      pre.phase === 'fighting' && post.phase === 'fighting'
+        && (pre.tl - post.tl) > 0 && (pre.tl - post.tl) < 2.3,
+      JSON.stringify({ before: pre.tl, after: post.tl, phase: post.phase }));
+    check('I: npc transform stayed finite through the stall',
+      Number.isFinite(post.npcY), `npcY=${post.npcY}`);
+
+    /* the visibilitychange listener path (video track toggling) must not
+       throw when the state flips either way */
+    const vis = await pg.evaluate(() => {
+      const out = {};
+      try {
+        Object.defineProperty(document, 'hidden', { get: () => true, configurable: true });
+        Object.defineProperty(document, 'visibilityState', { get: () => 'hidden', configurable: true });
+        document.dispatchEvent(new Event('visibilitychange'));
+        Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+        Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+        document.dispatchEvent(new Event('visibilitychange'));
+        out.ok = true;
+      } catch (e) { out.ok = false; out.err = String(e); }
+      return out;
+    });
+    check('I: visibilitychange listener survives hidden↔visible flips',
+      vis.ok === true, JSON.stringify(vis));
+    check('I: zero page errors through the hidden-tab drill',
+      errs.length === 0, errs.slice(0, 3).join(' | '));
+    detach();
+  }
+
+  /* ================= J. npc.js torture (live impls) =================== */
+  {
+    const { errs, detach } = await boot(pg, `${base}/boxing.html?notrack=1`);
+    const tort = await pg.evaluate(async () => {
+      const B = window.__boxing, T = B.THREE, out = {};
+      const { createNpc } = await import('./shared/boxing/npc.js');
+      /* a real GLB over HTTP → kind:'glb' → the makeRig squash rig — the
+         Infinity-dt / unknown-pose paths a proto impl covers for itself */
+      const bag = await createNpc(T, { manifest: { candidates: [
+        { id: 'qe-bag', type: 'glb', name: 'QE BAG',
+          path: 'vendor/models/glb/boxing/punching-bag.glb', scale: 1 }] },
+        id: 'qe-bag' });
+      out.glbKind = bag.kind;
+      const rig = bag.group.children[0];                     // makeRig's group
+      for (const dt of [Infinity, -1, NaN, 1e9]) bag.update(dt, { pos: { x: 0, z: 0 } });
+      bag.update(.016, { pos: { x: 0, z: 0 }, npc: { action: 'idle' } });
+      out.rigFinite = Number.isFinite(rig.position.y) && Number.isFinite(rig.rotation.x);
+      /* unknown pose → idle fallback (was: froze on the previous pose) */
+      bag.update(.016, { pos: { x: 0, z: 0 }, npc: { action: 'down', actionT: 1 } });
+      for (let i = 0; i < 40; i++) bag.update(.05, { pos: { x: 0, z: 0 }, npc: { action: 'bogusAction' } });
+      out.poseFallbackRx = rig.rotation.x;                   // ≈0 idle, ≈-1.35 if frozen on 'down'
+      /* malformed strike ctx + telegraph with missing parts → fallback spot */
+      bag.update(.016, { pos: { x: 0, z: 0 }, strike: { reach: 'x', y: NaN },
+        npc: { action: 'windup', actionT: .1, telegraph: { kind: 'jab', side: 'middle', t01: NaN } } });
+      const sprite = bag.group.children.find(o => o.isSprite);
+      out.telShown = !!(sprite && sprite.visible);
+      out.telFinite = sprite ? Number.isFinite(sprite.position.y + sprite.scale.x) : null;
+      bag.update(.016, { pos: { x: 0, z: 0 }, strike: { reach: .9, y: NaN },   // reach ok, y NaN
+        npc: { action: 'punch', actionT: .2 } });
+      out.strikeFinite = Number.isFinite(rig.rotation.x + rig.position.y);
+      bag.update(.016, { pos: { x: 0, z: 0 }, npc: { action: 'idle' } });
+      bag.dispose(); bag.dispose();                          // idempotent
+      out.glbGone = bag.group.parent === null;
+      /* proto impl on the live npc — same torture through the real adapter */
+      out.gc = B.npc.gloveColor;
+      for (const dt of [Infinity, -1, NaN, 1e9]) B.npc.update(dt, { pos: { x: 0, z: 0 } });
+      B.npc.update(.016, { pos: { x: 0, z: 0 }, npc: { action: 'idle' } });
+      out.protoFinite = Number.isFinite(B.npc.group.position.y);
+      /* finite reach + NaN strike.y used to flow into the pose strike ctx */
+      B.npc.update(.016, { pos: { x: 0, z: 0 }, strike: { reach: .9, y: NaN },
+        npc: { action: 'punch', actionT: .2 } });
+      out.strikeFinite = Number.isFinite(B.npc.group.rotation.y
+        + B.npc.group.position.x + B.npc.group.position.y);
+      B.npc.update(.016, { pos: { x: 0, z: 0 }, npc: { action: 'idle' } });
+      B.npc.setDamage(NaN); B.npc.setDamage(-2); B.npc.setDamage(.6);
+      let badMats = 0;
+      B.npc.group.traverse(o => {
+        if (o.isMesh && o.material && !Array.isArray(o.material) && o.material.color)
+          for (const c of [o.material.color.r, o.material.color.g, o.material.color.b])
+            if (!Number.isFinite(c)) badMats++;
+      });
+      out.badMats = badMats;
+      B.npc.resetDamage();
+      B.npc.update(.016, { pos: { x: 0, z: 0 }, npc: {} });   // empty fight ctx → idle
+      out.updateNullCtx = (() => { try { B.npc.update(.016, null); return true; } catch { return false; } })();
+      return out;
+    });
+    check('J: glb rig survives dt torture + unknown-pose fallback',
+      tort.glbKind === 'glb' && tort.rigFinite && Math.abs(tort.poseFallbackRx) < .3,
+      JSON.stringify({ kind: tort.glbKind, finite: tort.rigFinite, rx: tort.poseFallbackRx }));
+    check('J: telegraph sprite falls back when glove parts are missing',
+      tort.telShown && tort.telFinite,
+      JSON.stringify({ shown: tort.telShown, finite: tort.telFinite }));
+    check('J: dispose() is idempotent + update(null ctx) does not throw',
+      tort.glbGone === true && tort.updateNullCtx === true,
+      JSON.stringify({ gone: tort.glbGone, nullCtx: tort.updateNullCtx }));
+    check('J: live npc — gloveColor css, dt torture, NaN setDamage safe',
+      /^#[0-9a-f]{6}$/.test(tort.gc) && tort.protoFinite && tort.strikeFinite
+        && tort.badMats === 0,
+      JSON.stringify({ gc: tort.gc, finite: tort.protoFinite,
+        strike: tort.strikeFinite, badMats: tort.badMats }));
+    check('J: zero page errors through npc torture',
+      errs.length === 0, errs.slice(0, 3).join(' | '));
+    detach();
+  }
+
+  /* ================= K. multi-round / multi-KO ======================= */
+  {
+    const { errs, detach } = await boot(pg, `${base}/boxing.html?notrack=1`);
+    const mr = await pg.evaluate(() => {
+      const Q = window.__qe, B = window.__boxing, out = {};
+      for (let i = 0; i < 40 && B.state.phase !== 'fighting'; i++) Q.step(10);
+      const rs0 = Q.count('round-start');
+      /* ride round 1 → round 2: shorten the clock, sit through the countdown */
+      B.state.timeLeft = .05; B.state.npc.hp = B.state.npc.maxHp;
+      for (let i = 0; i < 60 && B.state.phase === 'fighting'; i++) Q.step(10);
+      out.between = { phase: B.state.phase, round: B.state.round };
+      for (let i = 0; i < 60 && B.state.phase === 'countdown'; i++) Q.step(10);
+      out.r2 = { phase: B.state.phase, round: B.state.round, tl: B.state.timeLeft,
+        rs: Q.count('round-start') - rs0 };
+      /* KO in round 2 still ends the bout properly */
+      B.state.npc.hp = 6;
+      let sw = 0;
+      while (sw++ < 14 && B.state.phase === 'fighting') {
+        if (Q.dist() > 1.5) { Q.step(8, { step: 1 }); continue; }
+        Q.punch(sw % 2 ? 'right' : 'left');
+      }
+      out.koPhase = B.state.phase;
+      out.sawKo = Q.saw('ko');
+      return out;
+    });
+    check('K: round transition — countdown then round 2, bell + clock reset',
+      mr.between.phase === 'countdown' && mr.r2.phase === 'fighting'
+        && mr.r2.round === 2 && mr.r2.tl > 60 && mr.r2.rs === 1,
+      JSON.stringify(mr));
+    check('K: KO in round 2 → npcdown', mr.sawKo && mr.koPhase === 'npcdown',
+      JSON.stringify({ ko: mr.sawKo, phase: mr.koPhase }));
+    let win2 = { phase: 'timeout' };
+    try {
+      await pg.waitForFunction(() => window.__boxing.state.phase === 'win', { timeout: 30000 });
+      win2 = await pg.evaluate(() => ({ phase: window.__boxing.state.phase }));
+    } catch { }
+    check('K: round-2 KO resolves to win', win2.phase === 'win', JSON.stringify(win2));
+    check('K: zero page errors through multi-round',
+      errs.length === 0, errs.slice(0, 3).join(' | '));
     detach();
   }
 } catch (e) {

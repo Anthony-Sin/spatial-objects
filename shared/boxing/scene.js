@@ -180,7 +180,7 @@ export function buildScene(THREE, renderer, opts = {}) {
   };
 
   /* ---------- per-frame animation ---------- */
-  let t = 0, excite = 0, jolt = 0, tel = 0, crowdFrame = 0;
+  let t = 0, excite = 0, jolt = 0, tel = 0, crowdFrame = 0, prevPhase = null;
   const spotWarm = new THREE.Color(0xffe9b8), spotHot = new THREE.Color(C.coral);
 
   function update(dt, state = {}) {
@@ -188,9 +188,26 @@ export function buildScene(THREE, renderer, opts = {}) {
        every sin()/matrix/light driven by it, and t never recovers. Events
        still process below — they're drained once per step, never replayed. */
     if (!Number.isFinite(dt) || dt < 0) dt = 0;
+    if (!state || typeof state !== 'object') state = {};   // null/primitive → empty frame
     t += dt;
-    const ev = state.events || [];
+    /* events is contractually the drained fight array — but a truthy
+       non-iterable (number, object) makes for..of throw, which would kill
+       the whole render frame from inside game.step. */
+    const ev = Array.isArray(state.events) ? state.events : [];
     const npcAction = state.fight?.npc?.action;
+    /* Rematch: fight.reset() drops phase back to 'intro' — the ONLY way a
+       live bout returns to intro (rounds pass through 'countdown', verdicts
+       through win/lose). A transition into it means the world is showing a
+       NEW bout while holding the old one's payoff: KO confetti, crowd hype
+       and rope jolt belong to the fight that ended — raining confetti on
+       the new walk-in reads as stale render state, not celebration. */
+    const ph = state.fight?.phase;
+    if (ph === 'intro' && prevPhase && prevPhase !== 'intro') {
+      confetti.visible = false;
+      for (const c of cf) c.life = 0;
+      excite = 0; jolt = 0;
+    }
+    if (ph) prevPhase = ph;
     for (const e of ev) {
       if (e === 'npc-hit' || e === 'player-hit' || e === 'player-hit-taken') { excite = Math.min(1.6, excite + .55); jolt = Math.min(1.4, jolt + 1); }
       else if (e === 'ko') { excite = 1.8; jolt = 1.6; burst(); }

@@ -15,11 +15,16 @@
    Verbatim-path probes go through http.request's `path` (fetch/URL would
    normalize ../ and %2e%2e client-side); truly malformed bytes go through
    node:net raw sockets. Prints PASS/FAIL lines then a markdown probe matrix.
-   Exit 1 on any FAIL. Zero deps. */
+   Exit 1 on any FAIL. Zero deps.
+
+   Section J (added wave 3) is the CONCURRENCY/TIME matrix: parallel range
+   storms, delete/truncate mid-flight, trickle readers, abort storms,
+   keep-alive + pipelining, Expect:100-continue, slow-loris, fd exhaustion.
+   Scratch-server only — it would hammer the live instance. */
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile, symlink, rm, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, symlink, rm, readFile, open } from 'node:fs/promises';
 import { request } from 'node:http';
 import { connect } from 'node:net';
 import { join } from 'node:path';
@@ -72,6 +77,107 @@ const raw = bytes => new Promise(resolve => {
   s.setTimeout(2000, fin);
 });
 const statusOf = resp => +(String(resp).match(/^HTTP\/\d\.\d (\d+)/)?.[1] || 0);
+
+/* scratch child's RSS in KB via /proc (linux-only, like the server's own
+   /proc/self/fd check); 0 = unavailable — RSS checks then just record 0 */
+const rssKB = async () => {
+  try {
+    const s = await readFile(`/proc/${child.pid}/status`, 'utf8');
+    return +(/VmRSS:\s*(\d+)/.exec(s)?.[1] || 0);
+  } catch { return 0; }
+};
+
+/* persistent-connection wrapper: buffers the socket, hands out parsed
+   responses one at a time in wire order. Used for keep-alive reuse,
+   pipelining, interim 1xx and Expect:100-continue probes — things the
+   one-shot http.request helper can't express. */
+const conn = () => {
+  const s = connect(PORT, '127.0.0.1');
+  s.on('error', () => {});
+  let buf = Buffer.alloc(0), closed = false;
+  const waiters = [];
+  const pump = () => { while (waiters.length && waiters[0]()) waiters.shift(); };
+  s.on('data', d => { buf = Buffer.concat([buf, d]); pump(); });
+  s.on('close', () => { closed = true; pump(); });
+  const take = n => new Promise(resolve => {
+    waiters.push(() => {
+      if (buf.length >= n) { const out = buf.subarray(0, n); buf = buf.subarray(n); resolve(out); return true; }
+      if (closed) { resolve(null); return true; }
+      return false;
+    });
+    pump();   // the bytes may already be buffered — don't wait for a new 'data'
+  });
+  const takeHead = () => new Promise(resolve => {
+    waiters.push(() => {
+      const i = buf.indexOf('\r\n\r\n');
+      if (i >= 0) { const out = buf.subarray(0, i); buf = buf.subarray(i + 4); resolve(out); return true; }
+      if (closed) { resolve(null); return true; }
+      return false;
+    });
+    pump();
+  });
+  const rest = () => new Promise(resolve => {
+    waiters.push(() => {
+      if (!closed) return false;
+      const out = buf; buf = Buffer.alloc(0); resolve(out); return true;
+    });
+    pump();
+  });
+  // error-path responses (writeHead + end('msg')) come back CHUNKED —
+  // node only auto-adds content-length on an un-headered single end()
+  const takeChunked = () => new Promise(resolve => {
+    waiters.push(() => {
+      const chunks = [];
+      let pos = 0;
+      for (;;) {
+        const le = buf.indexOf('\r\n', pos);
+        if (le < 0) return closed ? (resolve(Buffer.concat(chunks)), true) : false;
+        const sz = parseInt(buf.subarray(pos, le).toString('latin1').split(';')[0], 16);
+        if (!Number.isFinite(sz)) { resolve(Buffer.concat(chunks)); return true; }
+        if (sz === 0) {
+          let end = -1;
+          if (buf.subarray(le + 2, le + 4).toString('latin1') === '\r\n') end = le + 4;   // no trailers
+          else {
+            const t = buf.indexOf('\r\n\r\n', le + 2);                                  // trailers → empty line
+            if (t >= 0) end = t + 4;
+          }
+          if (end < 0) return closed ? (resolve(Buffer.concat(chunks)), true) : false;
+          buf = buf.subarray(end); resolve(Buffer.concat(chunks)); return true;
+        }
+        if (buf.length < le + 2 + sz + 2) return closed ? (resolve(Buffer.concat(chunks)), true) : false;
+        chunks.push(buf.subarray(le + 2, le + 2 + sz));
+        pos = le + 2 + sz + 2;
+      }
+    });
+    pump();
+  });
+  const readResp = async (method = 'GET') => {
+    const headBuf = await takeHead();
+    if (!headBuf) return { status: 0, headers: {}, body: Buffer.alloc(0) };
+    const head = headBuf.toString('latin1');
+    const status = +(/^HTTP\/\d\.\d (\d+)/.exec(head)?.[1] || 0);
+    const headers = {};
+    for (const line of head.split('\r\n').slice(1)) {
+      const i = line.indexOf(':');
+      if (i > 0) headers[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+    }
+    let body = Buffer.alloc(0);
+    const noBody = method === 'HEAD' || status === 204 || status === 304 || (status >= 100 && status < 200);
+    if (!noBody) {
+      if ((headers['transfer-encoding'] || '').includes('chunked')) body = (await takeChunked()) || Buffer.alloc(0);
+      else if (headers['content-length'] !== undefined) body = (await take(+headers['content-length'])) || Buffer.alloc(0);
+      else body = (await rest()) || Buffer.alloc(0);   // close-delimited fallback
+    }
+    return { status, headers, body };
+  };
+  return {
+    s,
+    readResp,
+    write: d => s.write(d),
+    ready: new Promise(r => s.once('connect', r)),
+    close: () => s.destroy(),
+  };
+};
 
 const spawnServer = port => new Promise(resolve => {
   const child = spawn(process.execPath, [join(ROOT, 'server.mjs')],
@@ -479,6 +585,358 @@ try {
     check('>16KB request line refused by parser', '4xx or closed', `${statusOf(resp) || 'closed'}`,
       statusOf(resp) === 0 || (statusOf(resp) >= 400 && statusOf(resp) < 600));
     await alive('oversized request line');
+  }
+
+  /* ================ J. concurrency + load (scratch only — would DoS live) ================ */
+  if (!LIVE) {
+    const mp4 = await readFile(join(ROOT, 'test-input.mp4'));
+    const alive = async () => (await req('/')).status === 200;
+    const rss0 = await rssKB();
+
+    /* ---- J1. 50 parallel disjoint ranged GETs on the 2.6MB mp4 ---- */
+    {
+      const N = 50, CH = Math.ceil(mp4.length / N);
+      const t0 = Date.now();
+      const rs = await Promise.all(Array.from({ length: N }, (_, i) =>
+        req('/test-input.mp4', { headers: { range: `bytes=${i * CH}-${Math.min(mp4.length - 1, (i + 1) * CH - 1)}` } })));
+      const dt = Date.now() - t0;
+      let okAll = true, bad = '';
+      for (let i = 0; i < N; i++) {
+        const lo = i * CH, hi = Math.min(mp4.length - 1, (i + 1) * CH - 1);
+        const r = rs[i];
+        if (r.status !== 206 || !r.body.equals(mp4.subarray(lo, hi + 1))
+            || r.headers['content-range'] !== `bytes ${lo}-${hi}/${mp4.length}`
+            || +r.headers['content-length'] !== r.body.length) {
+          okAll = false; bad = `#${i} ${r.status} cr=${r.headers['content-range']} len=${r.body.length}`; break;
+        }
+      }
+      const rss1 = await rssKB();
+      check('50 parallel disjoint ranges on 2.6MB mp4', 'all 206, bodies == file slices',
+        `${okAll ? 'all ok' : bad} ${dt}ms rss ${rss0}→${rss1}KB`, okAll);
+      check('server RSS sane after 50x2.6MB storm', '< 1GB', `${rss1}KB`, rss1 > 0 && rss1 < 1024 * 1024);
+    }
+
+    /* ---- J2. 20 parallel mixed GET/HEAD/range/404 ---- */
+    {
+      const plans = [
+        ['/package.json', {}, 200, 'pkg'],
+        ['/test-input.mp4', { headers: { range: 'bytes=0-1023' } }, 206, 'mp4-1k'],
+        [FIX_URL + 'blob.bin', { method: 'HEAD' }, 200, 'head'],
+        ['/no-such-qe-mixed', {}, 404, '404'],
+        [FIX_URL + 'blob.bin', { headers: { range: 'bytes=10-19' } }, 206, 'rng10'],
+        [FIX_URL + 'blob.bin', { headers: { range: 'bytes=abc' } }, 416, '416'],
+        [FIX_URL + 'dir/', {}, 200, 'diridx'],
+      ];
+      const jobs = Array.from({ length: 20 }, (_, i) => plans[i % plans.length]);
+      const rs = await Promise.all(jobs.map(([p, o]) => req(p, o)));
+      let okAll = true, bad = '';
+      rs.forEach((r, i) => {
+        const want = jobs[i][2];
+        if (r.status !== want) { okAll = false; bad = `#${i}(${jobs[i][3]}) ${r.status}≠${want}`; }
+        else if (r.headers['content-length'] !== undefined && jobs[i][1].method !== 'HEAD'
+                 && +r.headers['content-length'] !== r.body.length) {
+          okAll = false; bad = `#${i}(${jobs[i][3]}) cl=${r.headers['content-length']} body=${r.body.length}`;
+        }
+      });
+      check('20 parallel mixed GET/HEAD/range/404', 'each its expected status, cl==body',
+        okAll ? 'all ok' : bad, okAll);
+    }
+
+    /* ---- J3. same file deleted mid-flight ---- */
+    {
+      const eph = join(FIX, 'ephemeral.bin');
+      const ephBytes = Buffer.alloc(600_000);
+      for (let i = 0; i < ephBytes.length; i++) ephBytes[i] = (i * 17 + 3) & 0xff;
+      const tally = {}; let corrupt = 0;
+      for (let i = 0; i < 12; i++) {
+        await writeFile(eph, ephBytes);
+        const ps = Array.from({ length: 6 }, () => req(FIX_URL + 'ephemeral.bin'));
+        const del = rm(eph, { force: true });          // unlink while they fly
+        for (const r of await Promise.all(ps)) {
+          tally[r.status] = (tally[r.status] || 0) + 1;
+          // fd-pinned invariant: a 200 must deliver the WHOLE original file
+          if (r.status === 200 && !r.body.equals(ephBytes)) corrupt++;
+        }
+        await del;
+      }
+      check('same file deleted mid-flight (12x6)', '200+full bytes / 404 / 500 — never 403, never torn',
+        `${JSON.stringify(tally)} corrupt200=${corrupt}`,
+        corrupt === 0 && !('403' in tally) && Object.keys(tally).every(s => [200, 404, 500].includes(+s)));
+      check('server alive after delete storm', 'GET / → 200', `${await req('/').then(r => r.status)}`,
+        await alive());
+    }
+
+    /* ---- J4. trickle reader vs hammering others (whole-file buffering) ---- */
+    {
+      // 12MB — bigger than loopback's autotuned TCP buffers, so a paused
+      // client really stalls the send and the undrained remainder stays
+      // pinned in the server's socket writelist (measurable via RSS)
+      const tk = join(FIX, 'trickle.bin');
+      const tkBuf = Buffer.alloc(12_000_000);
+      for (let i = 0; i < tkBuf.length; i++) tkBuf[i] = (i * 29 + 11) & 0xff;
+      await writeFile(tk, tkBuf);
+      const s = connect(PORT, '127.0.0.1');
+      s.on('error', () => {});
+      await new Promise(r => s.once('connect', r));
+      let got = Buffer.alloc(0);
+      s.on('data', d => { got = Buffer.concat([got, d]); });
+      s.write('GET ' + FIX_URL + 'trickle.bin HTTP/1.1\r\nHost: x\r\n\r\n');
+      await delay(400);                                  // headers + whatever fits in kernel bufs
+      const beforePause = got.length;
+      s.pause();                                         // stop draining the socket
+      await delay(300);
+      const duringPause = got.length - beforePause;      // what still leaked into client-side bufs
+      const rssStall = await rssKB();
+      const lats = [];
+      let allOk = true;
+      for (let i = 0; i < 20; i++) {                     // hammer while the reader is stalled
+        const t = Date.now();
+        const r = i % 4 === 0
+          ? await req('/test-input.mp4', { headers: { range: 'bytes=0-99' } })
+          : await req('/package.json');
+        lats.push(Date.now() - t);
+        if (r.status !== 200 && r.status !== 206) allOk = false;
+      }
+      const maxLat = Math.max(...lats);
+      check('stalled reader does not starve others', '20 mixed reqs each <1.5s while client paused',
+        `maxLat=${maxLat}ms drained=${beforePause}B +${duringPause}B rss=${rss0}→${rssStall}KB`,
+        allOk && maxLat < 1500);
+      s.resume();                                        // drain the rest, verify integrity
+      const dl = Date.now() + 15000;
+      while (Date.now() < dl) {
+        const hEnd = got.indexOf('\r\n\r\n');
+        if (hEnd >= 0) {
+          const cl = +(/content-length: (\d+)/i.exec(got.subarray(0, hEnd).toString('latin1'))?.[1] || -1);
+          if (cl >= 0 && got.length >= hEnd + 4 + cl) break;
+        }
+        await delay(50);
+      }
+      const hEnd = got.indexOf('\r\n\r\n');
+      const body = got.subarray(hEnd + 4);
+      check('trickle reader eventually gets intact body', `body == ${tkBuf.length}B file`,
+        `got=${body.length}B eq=${body.equals(tkBuf)}`, body.equals(tkBuf));
+      s.destroy();
+      await rm(tk, { force: true });
+    }
+
+    /* ---- J5. abort storm: 100x connect→request→abort mid-response ---- */
+    {
+      let settled = 0;
+      for (let w = 0; w < 4; w++) {
+        await Promise.all(Array.from({ length: 25 }, (_, i) => new Promise(res => {
+          const s = connect(PORT, '127.0.0.1');
+          let done = false;
+          const fin = () => { if (!done) { done = true; settled++; s.destroy(); res(); } };
+          s.on('connect', () => {
+            s.write('GET /test-input.mp4 HTTP/1.1\r\nHost: x\r\n\r\n');
+            if (i % 4 === 0) fin();                        // abort before any response
+            else if (i % 4 === 1) s.once('data', fin);     // abort on first bytes
+            else setTimeout(fin, 3 + (i % 25));            // abort mid-body
+          });
+          s.on('error', fin); s.on('close', fin);
+          setTimeout(fin, 4000);                           // safety
+        })));
+      }
+      await delay(300);                                    // let the server unwind
+      const r = await req('/');
+      const rss2 = await rssKB();
+      check('abort storm 100x (EPIPE/ECONNRESET survival)', 'all settled, server alive',
+        `settled=${settled} GET→${r.status} rss=${rss2}KB exit=${child.exitCode}`,
+        settled === 100 && r.status === 200 && child.exitCode === null);
+    }
+
+    /* ---- J6. keep-alive: 30 sequential + 30 pipelined on one socket ---- */
+    {
+      const c = conn();
+      await c.ready;
+      let seqOk = true, seqBad = '';
+      for (let i = 0; i < 30; i++) {
+        const head = i % 6 === 5;
+        const miss = i % 7 === 6;
+        const path = miss ? FIX_URL + 'nope.bin' : FIX_URL + 'blob.bin';
+        const want = miss ? 404 : 200;
+        c.write(`${head ? 'HEAD' : 'GET'} ${path}?seq=${i} HTTP/1.1\r\nHost: x\r\n\r\n`);
+        const r = await c.readResp(head ? 'HEAD' : 'GET');
+        if (r.status !== want || (!head && !miss && !r.body.equals(BLOB))
+            || (head && r.body.length !== 0)) {
+          seqOk = false; seqBad = `#${i}:${r.status}/${r.body.length}`; break;
+        }
+      }
+      check('30 sequential requests on one keep-alive socket', 'all correct, conn reused',
+        seqOk ? '30/30' : seqBad, seqOk);
+      c.close();
+
+      const c2 = conn();
+      await c2.ready;
+      const plan = [];
+      for (let i = 0; i < 30; i++) {
+        if (i % 10 === 9) plan.push(['HEAD', '/package.json', 200]);
+        else if (i % 10 === 4) plan.push(['GET', FIX_URL + 'nope.bin', 404]);
+        else if (i % 10 === 7) plan.push(['GET', FIX_URL + 'blob.bin', 206, 'bytes=0-9']);
+        else plan.push(['GET', FIX_URL + 'blob.bin', 200]);
+      }
+      c2.write(plan.map(([m, p, , rg], i) =>
+        `${m} ${p}?p=${i} HTTP/1.1\r\nHost: x\r\n${rg ? `Range: ${rg}\r\n` : ''}${i === 29 ? 'Connection: close\r\n' : ''}\r\n`).join(''));
+      let pipeOk = true, pipeBad = '';
+      for (let i = 0; i < 30; i++) {
+        const [m, , want, rg] = plan[i];
+        const r = await c2.readResp(m);
+        if (r.status !== want) { pipeOk = false; pipeBad = `#${i}:${r.status}≠${want}`; break; }
+        if (m === 'GET' && want === 200 && !r.body.equals(BLOB)) { pipeOk = false; pipeBad = `#${i}:body`; break; }
+        if (rg && !r.body.equals(BLOB.subarray(0, 10))) { pipeOk = false; pipeBad = `#${i}:range`; break; }
+      }
+      check('30 pipelined requests answered in order', 'all expected, framing intact',
+        pipeOk ? '30/30' : pipeBad, pipeOk);
+      c2.close();
+
+      const resp = await raw('GET /package.json HTTP/1.1\r\nHost: x\r\n'
+        + Array.from({ length: 120 }, (_, i) => `X-Pad-${i}: ${'y'.repeat(20)}\r\n`).join('')
+        + 'Connection: close\r\n\r\n');
+      check('header-heavy request (120 headers)', '200', `${statusOf(resp)}`, statusOf(resp) === 200);
+    }
+
+    /* ---- J7. Expect: 100-continue + undrained body + keep-alive ---- */
+    {
+      const c = conn();
+      await c.ready;
+      c.write('GET ' + FIX_URL + 'blob.bin HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 8\r\n\r\n');
+      const interim = await c.readResp('GET');
+      const r = await c.readResp('GET');                  // server may answer before body arrives
+      c.write('12345678');                                 // the promised body, after the fact
+      c.write('GET /package.json HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+      const next = await c.readResp('GET');
+      check('Expect: 100-continue → interim 100', '100', `${interim.status}`, interim.status === 100);
+      check('undrained req body does not wedge keep-alive', '200 blob then 200 pkg',
+        `${r.status} len=${r.body.length} next=${next.status}`,
+        r.status === 200 && r.body.equals(BLOB) && next.status === 200);
+      c.close();
+    }
+
+    /* ---- J8. mid-write races: range on file being truncated; IMS 304 ---- */
+    {
+      const swingPath = join(FIX, 'swing.bin');
+      const BIG = 3_000_000, SMALL = 900_000, START = 700_000;
+      const swingBuf = Buffer.alloc(BIG);
+      for (let i = 0; i < BIG; i++) swingBuf[i] = (i * 31 + 7) & 0xff;
+      await writeFile(swingPath, swingBuf);
+      const fh = await open(swingPath, 'r+');
+      let racy = 0, inconsistent = 0, weird = '';
+      for (let i = 0; i < 80 && racy < 4; i++) {
+        await fh.truncate(BIG);
+        const pr = req(FIX_URL + 'swing.bin', { headers: { range: `bytes=${START}-` } });
+        const dl = Date.now() + 60;
+        let tog = true;
+        while (Date.now() < dl) { await fh.truncate(tog ? SMALL : BIG); tog = !tog; }
+        const r = await pr;
+        if (r.status === 206) {
+          if (r.body.length !== BIG - START) racy++;
+          const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(r.headers['content-range'] || '');
+          if (!m || (+m[2]) - (+m[1]) + 1 !== r.body.length
+              || +r.headers['content-length'] !== r.body.length) {
+            inconsistent++;
+            weird = `cr=${r.headers['content-range']} cl=${r.headers['content-length']} body=${r.body.length}`;
+          }
+        } else if (r.status !== 416) { inconsistent++; weird = `status=${r.status}`; }
+      }
+      // plain-GET consistency under the same hammer: cl must equal body bytes
+      let getBad = 0;
+      for (let i = 0; i < 8; i++) {
+        await fh.truncate(BIG);
+        const pr = req(FIX_URL + 'swing.bin');
+        const dl = Date.now() + 30;
+        let tog = true;
+        while (Date.now() < dl) { await fh.truncate(tog ? SMALL : BIG); tog = !tog; }
+        const r = await pr;
+        if (r.status !== 200 || +r.headers['content-length'] !== r.body.length) getBad++;
+      }
+      // conditional request while the file is mid-write: 304 stays empty
+      const p304 = req(FIX_URL + 'swing.bin',
+        { headers: { 'if-modified-since': new Date(Date.now() + 60000).toUTCString() } });
+      {
+        const dl = Date.now() + 30; let tog = true;
+        while (Date.now() < dl) { await fh.truncate(tog ? SMALL : BIG); tog = !tog; }
+      }
+      const r304 = await p304;
+      await fh.truncate(BIG); await fh.close();
+      check('range vs mid-write truncate: headers self-consistent', 'cr span == body on every 206',
+        `racy=${racy} inconsistent=${inconsistent} ${weird}`, inconsistent === 0 && racy > 0);
+      check('GET vs mid-write truncate: cl == body', 'consistent', `bad=${getBad}`, getBad === 0);
+      check('future-IMS during mid-write → 304 empty', '304 len=0',
+        `${r304.status} len=${r304.body.length}`, r304.status === 304 && r304.body.length === 0);
+    }
+
+    /* ---- J9. slow-loris header drip: documented node-timeout behavior ---- */
+    {
+      const loris = [];
+      for (let i = 0; i < 8; i++) {
+        const s = connect(PORT, '127.0.0.1');
+        s.on('error', () => {});
+        await new Promise(r => s.once('connect', r));
+        s.write(`GET /package.json HTTP/1.1\r\nHost: x\r\nX-Drip-${i}: `);   // never-ending header
+        loris.push(s);
+      }
+      const drip = setInterval(() => loris.forEach((s, i) => {
+        try { s.write(`${i}`); } catch { /* gone */ }
+      }), 200);
+      const t0 = Date.now();
+      const r1 = await req('/package.json');
+      await delay(1600);
+      const r2 = await req('/package.json');
+      clearInterval(drip);
+      // one drip finishes its headers → server must still answer it
+      let lorisResp = '';
+      loris[0].on('data', d => { lorisResp += d.toString('latin1'); });
+      loris[0].write('done\r\n\r\n');
+      await delay(500);
+      loris.forEach(s => s.destroy());
+      check('slow-loris header drip: others unaffected, drip completes', 'fast GETs + 200',
+        `lat=${Date.now() - t0}ms r=${r1.status}/${r2.status} loris=${statusOf(lorisResp)}`,
+        r1.status === 200 && r2.status === 200 && statusOf(lorisResp) === 200);
+      await delay(150);
+      check('server alive after loris sockets destroyed', 'GET / → 200',
+        `${await req('/').then(r => r.status)}`, await alive());
+    }
+
+    /* ---- J10. fd exhaustion: dedicated low-limit child, flood + recover ---- */
+    {
+      const LP = PORT + 60;
+      const lchild = spawn('/bin/sh', ['-c', 'ulimit -n 48; exec "$0" "$@"',
+        process.execPath, join(ROOT, 'server.mjs')],
+        { env: { ...process.env, PORT: String(LP) }, stdio: ['ignore', 'pipe', 'pipe'] });
+      let ldead = false;
+      lchild.on('exit', () => { ldead = true; });
+      const up = await Promise.race([
+        new Promise(r => lchild.stdout.on('data', d => String(d).includes('→') && r(true))),
+        delay(8000).then(() => false),
+      ]);
+      let flooded = 0, survived = false;
+      if (up) {
+        const socks = [];
+        for (let i = 0; i < 160 && !ldead; i++) {          // ~3x its fd limit
+          const s = connect(LP, '127.0.0.1');
+          s.on('error', () => {});
+          await new Promise(r => { s.once('connect', r); s.once('error', r); s.once('close', r); });
+          s.write(`GET /package.json HTTP/1.1\r\nHost: x\r\nX-Hold: ${i}\r\n`);
+          socks.push(s);
+          if (i % 40 === 0) await delay(40);
+        }
+        flooded = socks.length;
+        await delay(1200);                                 // time for EMFILE to bite if it kills
+        socks.forEach(s => s.destroy());                   // drain the flood
+        await delay(700);
+        survived = await (async () => {
+          try { return (await new Promise((res, rej) => {
+            const q = request({ host: '127.0.0.1', port: LP, path: '/', agent: false },
+              rsp => { rsp.resume(); rsp.on('end', () => res(rsp.statusCode)); });
+            q.on('error', rej); q.setTimeout(3000, () => { q.destroy(); rej(new Error('t/o')); });
+            q.end();
+          })) === 200; } catch { return false; }
+        })();
+      }
+      check('fd exhaustion (48-fd server, 160-socket flood)', 'survives + recovers',
+        `flooded=${flooded} dead=${ldead} recovered=${survived}`, up && !ldead && survived);
+      lchild.kill('SIGKILL');
+    }
   }
 
   /* ================ report ================ */
