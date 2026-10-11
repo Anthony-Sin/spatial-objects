@@ -39,6 +39,12 @@ software cannot remove.
 5. Sway chain lag ~400ms (face k .45 → FACE_SMOOTH 8 → SWAY_SMOOTH 9 →
    camSway 8). Tightened to ~180ms (face k .68, SMOOTHs 15, camSway 14).
 6. HUD fps counted redraws only — never camera/track rate. Now reports each.
+7. In the user's bright boxing recording, many curled fists were classified
+   as `pinch` because thumb and index touch. Boxing now uses the actual curled
+   finger count for punch input and for the glove shape. MediaPipe handedness
+   now maps to the mirrored glove on the matching side.
+8. Committed thrusts can connect while the fist is advancing; the existing
+   two-result gate still prevents a single bad landmark result from firing.
 
 ## Re-probe anytime
 

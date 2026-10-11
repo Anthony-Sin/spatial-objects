@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>peep mockup — 04 tracker hud</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Patrick+Hand&family=Nunito:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#FFF8EC; --paper2:#FDF3E3; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: #241c12; }
+  body { font-family: "Fredoka","Avenir Next","Trebuchet MS",system-ui,sans-serif; color: var(--paper); }
+
+  /* the running game, frozen: 1280x800 plate, old peep removed */
+  .plate { position: fixed; inset: 0; background: url(../_plate.png) center/cover no-repeat #241c12; }
+
+  /* ============================================================
+     04 — TRACKER HUD.  Instrument first.
+     The camera image is demoted to a small feathered, frameless,
+     de-saturated cutout of the head — and that cutout is the
+     readout: it sits inside a framing field at the position the
+     head actually occupies in the camera's view.  Everything is
+     drawn in one ink: a paper hairline with an ink shadow under
+     it, so a 1.5px line survives the bright ring behind it.
+     ============================================================ */
+
+  .peep { position: fixed; left: 30px; bottom: 30px; z-index: 20;
+    width: 228px; display: flex; align-items: flex-end; gap: 9px;
+    pointer-events: none; transform-origin: 0% 100%;
+    opacity: .62;                                /* LOCKED: nearly invisible */
+    transition: opacity .25s ease, transform .25s cubic-bezier(.34,1.56,.64,1); }
+
+  /* --- the framing field: where your head sits in the camera's view --- */
+  .field { position: relative; width: 120px; height: 90px; flex: none;
+    border: 1.5px solid rgba(255,248,236,.78); border-radius: 4px;
+    background: rgba(43,33,24,.40);
+    box-shadow: 0 0 0 1.5px rgba(43,33,24,.72), 0 2px 0 rgba(43,33,24,.5);
+    transition: border-color .18s, box-shadow .18s, background .18s; }
+  /* centre crosshair — two hairline stubs, not a full cross */
+  .field::before, .field::after { content: ''; position: absolute; left: 50%; top: 50%;
+    background: rgba(255,248,236,.45); }
+  .field::before { width: 11px; height: 1px; transform: translate(-50%,-50%); }
+  .field::after  { width: 1px; height: 11px; transform: translate(-50%,-50%); }
+  /* safe zone — head inside this and nothing complains */
+  .safe { position: absolute; inset: 12px 19px; border: 1px dashed rgba(255,248,236,.3);
+    border-radius: 3px; transition: border-color .18s; }
+  /* corner ticks */
+  .cnr { position: absolute; width: 7px; height: 7px; border: 0 solid rgba(255,248,236,.8); }
+  .cnr.tl { left: 3px; top: 3px; border-left-width: 1.5px; border-top-width: 1.5px; }
+  .cnr.tr { right: 3px; top: 3px; border-right-width: 1.5px; border-top-width: 1.5px; }
+  .cnr.bl { left: 3px; bottom: 3px; border-left-width: 1.5px; border-bottom-width: 1.5px; }
+  .cnr.br { right: 3px; bottom: 3px; border-right-width: 1.5px; border-bottom-width: 1.5px; }
+
+  /* edge warning bars — the side you are drifting toward lights up */
+  .edge { position: absolute; background: var(--sun); opacity: 0;
+    box-shadow: 0 0 0 1px rgba(43,33,24,.8); transition: opacity .12s; }
+  .edge.l, .edge.r { top: 4px; bottom: 4px; width: 3px; }
+  .edge.t, .edge.b { left: 4px; right: 4px; height: 3px; }
+  .edge.l { left: 2px; } .edge.r { right: 2px; }
+  .edge.t { top: 2px; }  .edge.b { bottom: 2px; }
+  .peep[data-ex="l"] .edge.l, .peep[data-ex="r"] .edge.r,
+  .peep[data-ey="t"] .edge.t, .peep[data-ey="b"] .edge.b { opacity: 1; }
+
+  /* --- the camera, demoted: feathered frameless head cutout --- */
+  .head { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px;
+    margin: -28px 0 0 -28px; will-change: transform;
+    transition: opacity .25s, filter .25s; }
+  .cut { position: absolute; inset: 0; overflow: hidden;
+    -webkit-mask-image: radial-gradient(circle at 50% 46%, #000 40%, rgba(0,0,0,.65) 58%, transparent 74%);
+            mask-image: radial-gradient(circle at 50% 46%, #000 40%, rgba(0,0,0,.65) 58%, transparent 74%); }
+  .cut img { position: absolute; width: 163px; left: -54px; top: -6px;
+    transform: scaleX(-1);                       /* feed is mirrored */
+    filter: grayscale(.74) contrast(1.2) brightness(1.1); display: block; }
+  .cut canvas { position: absolute; inset: 0; width: 56px; height: 56px; }
+
+  /* --- the readout column --- */
+  .readout { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px;
+    padding-bottom: 1px; }
+  .k { flex: none; width: 27px; font-size: 8px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: rgba(255,248,236,.72); text-shadow: 0 1px 2px rgba(20,14,8,.95); }
+
+  /* lock quality — five ticks, no colour while it is fine */
+  .lockrow, .leanrow { display: flex; align-items: center; gap: 5px; }
+  .leanrow .axis { flex: 1; }
+  .bars { display: flex; gap: 2px; flex: 1; }
+  .bars u { flex: 1; height: 8px; border: 1px solid rgba(255,248,236,.55);
+    border-radius: 1px; background: rgba(43,33,24,.5);
+    box-shadow: 0 0 0 1px rgba(43,33,24,.6); transition: background .15s, border-color .15s; }
+  .peep[data-q="5"] .bars u:nth-child(-n+5),
+  .peep[data-q="4"] .bars u:nth-child(-n+4),
+  .peep[data-q="3"] .bars u:nth-child(-n+3),
+  .peep[data-q="2"] .bars u:nth-child(-n+2),
+  .peep[data-q="1"] .bars u:nth-child(-n+1) { background: rgba(255,248,236,.85); }
+
+  /* lean / dodge — the input the game actually reads */
+  .axis { position: relative; height: 11px; border-radius: 2px;
+    border: 1px solid rgba(255,248,236,.45); background: rgba(43,33,24,.5);
+    box-shadow: 0 0 0 1px rgba(43,33,24,.6); overflow: hidden; }
+  .axis::before { content: ''; position: absolute; left: 50%; top: 1px; bottom: 1px; width: 1px;
+    background: rgba(255,248,236,.5); }
+  .slug { position: absolute; left: 50%; top: 1px; bottom: 1px; width: 12px; margin-left: -6px;
+    border-radius: 1px; background: var(--paper); will-change: transform; }
+  .peep[data-lean="hard"] .slug { background: var(--sun); }
+
+  .tag { font-size: 8px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--paper); background: rgba(43,33,24,.72); border-radius: 2px;
+    padding: 3px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* RECENTER nudge — only exists when it is needed */
+  .warn { position: absolute; left: 0; top: -17px; font-size: 8px; font-weight: 700;
+    letter-spacing: .2em; color: var(--ink); background: var(--sun);
+    border-radius: 2px; padding: 2px 5px; opacity: 0; transform: translateY(3px);
+    transition: opacity .15s, transform .15s; white-space: nowrap; }
+
+  /* ===================== STATE: DRIFTING ===================== */
+  .peep[data-state="drift"] { opacity: 1; }
+  .peep[data-state="drift"] .field { border-color: var(--sun); }
+  .peep[data-state="drift"] .safe { border-color: rgba(255,197,61,.75); }
+  .peep[data-state="drift"] .cnr { border-color: var(--sun); }
+  .peep[data-state="drift"] .bars u { border-color: rgba(255,197,61,.8); }
+  .peep[data-state="drift"] .warn { opacity: 1; transform: none; }
+  .peep[data-state="drift"] .tag { background: var(--sun); color: var(--ink); font-weight: 700; }
+
+  /* ======================= STATE: LOST ======================= */
+  .peep[data-state="lost"] { opacity: 1; transform: scale(1.14); }
+  .peep[data-state="lost"] .field { border-color: var(--coral); border-width: 2.5px;
+    background: rgba(43,33,24,.74);
+    box-shadow: 0 0 0 2px rgba(43,33,24,.85), 0 3px 0 rgba(43,33,24,.6), 0 0 22px rgba(255,107,87,.5);
+    animation: lostbeat .66s ease-in-out infinite alternate; }
+  @keyframes lostbeat { to { box-shadow: 0 0 0 2px rgba(43,33,24,.85), 0 3px 0 rgba(43,33,24,.6), 0 0 34px rgba(255,107,87,.95); } }
+  .peep[data-state="lost"] .safe,
+  .peep[data-state="lost"] .field::before, .peep[data-state="lost"] .field::after { display: none; }
+  .peep[data-state="lost"] .cnr { border-color: var(--coral); }
+  .peep[data-state="lost"] .head { opacity: .1; filter: grayscale(1); }
+  .peep[data-state="lost"] .bars u { border-color: var(--coral); background: rgba(43,33,24,.5) !important; }
+  .peep[data-state="lost"] .slug { display: none; }
+  .peep[data-state="lost"] .axis { border-color: rgba(255,107,87,.7);
+    background: repeating-linear-gradient(135deg, rgba(43,33,24,.6) 0 4px, rgba(255,107,87,.3) 4px 8px); }
+  .peep[data-state="lost"] .tag { background: var(--coral); color: var(--paper); font-weight: 700;
+    animation: tagblink .66s steps(1) infinite; }
+  @keyframes tagblink { 50% { background: var(--ink); color: var(--coral); } }
+  .peep[data-state="lost"] .k { color: rgba(255,248,236,.85); }
+
+  /* the sweep: a search line crawling the empty field. transform only. */
+  .sweep { position: absolute; left: 2px; right: 2px; top: 0; height: 2px;
+    background: var(--coral); box-shadow: 0 0 10px rgba(255,107,87,.9); opacity: 0; }
+  .peep[data-state="lost"] .sweep { opacity: .9; animation: sweep 1.25s linear infinite; }
+  @keyframes sweep { from { transform: translateY(3px); } to { transform: translateY(91px); } }
+  /* the shout, inside the empty field */
+  .alert { position: absolute; inset: 0; display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 2px; text-align: center; }
+  .peep[data-state="lost"] .alert { display: flex; }
+  .alert b { font-size: 15px; font-weight: 700; letter-spacing: .04em; color: var(--coral);
+    text-shadow: 0 2px 0 var(--ink), 0 0 12px rgba(0,0,0,.8);
+    animation: shout .66s ease-in-out infinite alternate; }
+  @keyframes shout { to { transform: scale(1.09); } }
+  .alert span { font-size: 7.5px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--paper); text-shadow: 0 1px 2px rgba(20,14,8,.95); }
+
+  /* ====================== STATE: MOUSE ======================= */
+  /* nothing to frame, so the instrument collapses to one pill */
+  .peep[data-state="mouse"] { opacity: .46; width: 118px; }
+  .peep[data-state="mouse"] .field, .peep[data-state="mouse"] .readout { display: none; }
+  .mouse { display: none; align-items: center; gap: 6px;
+    border: 1.5px solid rgba(255,248,236,.7); border-radius: 999px;
+    background: rgba(43,33,24,.6); box-shadow: 0 0 0 1.5px rgba(43,33,24,.7);
+    padding: 3px 9px 3px 6px; }
+  .peep[data-state="mouse"] .mouse { display: flex; }
+  .mouse i { width: 8px; height: 11px; flex: none; border: 1.5px solid rgba(255,248,236,.85);
+    border-radius: 5px 5px 4px 4px; position: relative; }
+  .mouse i::after { content: ''; position: absolute; left: 50%; top: 1px; width: 1px; height: 3px;
+    margin-left: -.5px; background: rgba(255,248,236,.85); }
+  .mouse span { font-size: 8.5px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; }
+
+  /* ============ small breakpoint (<=1050px -> ~116px) ============ */
+  .peep.sm { position: relative; left: auto; bottom: auto; width: 116px;
+    flex-direction: column; align-items: stretch; gap: 4px; }
+  .peep.sm .field { width: 116px; height: 87px; }
+  .peep.sm .head { width: 42px; height: 42px; margin: -21px 0 0 -21px; }
+  .peep.sm .cut { -webkit-mask-image: radial-gradient(circle at 50% 46%, #000 40%, rgba(0,0,0,.65) 58%, transparent 74%);
+                          mask-image: radial-gradient(circle at 50% 46%, #000 40%, rgba(0,0,0,.65) 58%, transparent 74%); }
+  .peep.sm .cut img { width: 132px; left: -45px; top: -5px; }
+  .peep.sm .cut canvas { width: 42px; height: 42px; }
+  .peep.sm .lockrow .k, .peep.sm .leanrow .k { display: none; }   /* ticks alone still read */
+  .peep.sm .readout { gap: 3px; }
+  .peep.sm .axis { height: 8px; }
+  .peep.sm .tag { font-size: 7px; letter-spacing: .12em; padding: 2px 4px; }
+  .peep.sm .warn { top: 70px; bottom: auto; left: 4px; font-size: 7px; }
+  .peep.sm .alert b { font-size: 12px; }
+  .peep.sm[data-state="lost"] { transform: scale(1.06); }
+  .peep.sm[data-state="mouse"] { width: 116px; }
+  .peep.sm .sweep { animation-name: sweepsm; }
+  @keyframes sweepsm { from { transform: translateY(3px); } to { transform: translateY(82px); } }
+
+  /* ===================== mockup chrome ======================= */
+  .chrome { position: fixed; right: 16px; bottom: 16px; z-index: 60; width: 268px;
+    background: rgba(20,14,8,.84); border: 1px dashed rgba(255,248,236,.4);
+    border-radius: 10px; padding: 9px 10px 10px; font-family: "Nunito",system-ui,sans-serif; }
+  .chrome h4 { font-size: 8.5px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--sun); margin-bottom: 2px; }
+  .chrome p { font-size: 9.5px; line-height: 1.35; color: rgba(255,248,236,.6); margin-bottom: 8px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 14px; margin-bottom: 10px; }
+  .cell { display: flex; flex-direction: column; gap: 4px; }
+  .cell em { font-size: 8px; font-style: normal; font-weight: 800; letter-spacing: .14em;
+    text-transform: uppercase; color: rgba(255,248,236,.5); }
+  .cell .box { height: 150px; display: flex; align-items: flex-end; }
+  .btns { display: flex; flex-wrap: wrap; gap: 5px; }
+  .btns button { font: 800 9px "Nunito",system-ui,sans-serif; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--paper); background: rgba(255,248,236,.1);
+    border: 1px solid rgba(255,248,236,.45); border-radius: 999px; padding: 4px 9px; cursor: pointer; }
+  .btns button[aria-pressed="true"] { background: var(--coral); border-color: var(--coral); color: #fff; }
+  .chrome .hint { margin: 7px 0 0; font-size: 9px; color: rgba(255,248,236,.45); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .peep *, .peep { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="plate"></div>
+
+<!-- ======= the peep, in situ, 1:1, at its real anchor ======= -->
+<div class="peep" data-peep data-state="locked" data-q="5">
+  <div class="field">
+    <div class="safe"></div>
+    <i class="cnr tl"></i><i class="cnr tr"></i><i class="cnr bl"></i><i class="cnr br"></i>
+    <div class="edge l"></div><div class="edge r"></div><div class="edge t"></div><div class="edge b"></div>
+    <div class="head" data-head>
+      <div class="cut">
+        <img src="../_cam.jpg" alt="">
+        <canvas data-nose width="56" height="56"></canvas>
+      </div>
+    </div>
+    <div class="sweep"></div>
+    <div class="alert"><b>FACE LOST</b><span>step into frame</span></div>
+  </div>
+  <div class="readout">
+    <div class="warn">RECENTER</div>
+    <div class="lockrow"><span class="k">lock</span>
+      <span class="bars"><u></u><u></u><u></u><u></u><u></u></span></div>
+    <div class="leanrow"><span class="k">lean</span>
+      <div class="axis"><b class="slug" data-slug></b></div></div>
+    <div class="tag" data-tag>face · locked</div>
+  </div>
+  <div class="mouse"><i></i><span>mouse mode</span></div>
+</div>
+
+<!-- ======= mockup chrome (not part of the design) ======= -->
+<div class="chrome">
+  <h4>mockup chrome — not part of the design</h4>
+  <p>All four states, shown at the <b>&le;1050px</b> small-breakpoint size (116px).
+     Buttons drive the full-size peep bottom-left.</p>
+  <div class="grid">
+    <div class="cell"><em>locked</em><div class="box">
+      <div class="peep sm" data-peep data-state="locked" data-q="5">
+        <div class="field"><div class="safe"></div>
+          <i class="cnr tl"></i><i class="cnr tr"></i><i class="cnr bl"></i><i class="cnr br"></i>
+          <div class="edge l"></div><div class="edge r"></div><div class="edge t"></div><div class="edge b"></div>
+          <div class="head" data-head><div class="cut"><img src="../_cam.jpg" alt="">
+            <canvas data-nose width="42" height="42"></canvas></div></div>
+          <div class="sweep"></div>
+          <div class="alert"><b>FACE LOST</b><span>step in</span></div></div>
+        <div class="readout"><div class="warn">RECENTER</div>
+          <div class="lockrow"><span class="k">lock</span><span class="bars"><u></u><u></u><u></u><u></u><u></u></span></div>
+          <div class="leanrow"><span class="k">lean</span><div class="axis"><b class="slug" data-slug></b></div></div>
+          <div class="tag" data-tag>face · locked</div></div>
+        <div class="mouse"><i></i><span>mouse mode</span></div>
+      </div></div></div>
+    <div class="cell"><em>drifting (edge)</em><div class="box">
+      <div class="peep sm" data-peep data-state="drift" data-q="3">
+        <div class="field"><div class="safe"></div>
+          <i class="cnr tl"></i><i class="cnr tr"></i><i class="cnr bl"></i><i class="cnr br"></i>
+          <div class="edge l"></div><div class="edge r"></div><div class="edge t"></div><div class="edge b"></div>
+          <div class="head" data-head><div class="cut"><img src="../_cam.jpg" alt="">
+            <canvas data-nose width="42" height="42"></canvas></div></div>
+          <div class="sweep"></div>
+          <div class="alert"><b>FACE LOST</b><span>step in</span></div></div>
+        <div class="readout"><div class="warn">RECENTER</div>
+          <div class="lockrow"><span class="k">lock</span><span class="bars"><u></u><u></u><u></u><u></u><u></u></span></div>
+          <div class="leanrow"><span class="k">lean</span><div class="axis"><b class="slug" data-slug></b></div></div>
+          <div class="tag" data-tag>face · edge</div></div>
+        <div class="mouse"><i></i><span>mouse mode</span></div>
+      </div></div></div>
+    <div class="cell"><em>lost</em><div class="box">
+      <div class="peep sm" data-peep data-state="lost" data-q="0">
+        <div class="field"><div class="safe"></div>
+          <i class="cnr tl"></i><i class="cnr tr"></i><i class="cnr bl"></i><i class="cnr br"></i>
+          <div class="edge l"></div><div class="edge r"></div><div class="edge t"></div><div class="edge b"></div>
+          <div class="head" data-head><div class="cut"><img src="../_cam.jpg" alt="">
+            <canvas data-nose width="42" height="42"></canvas></div></div>
+          <div class="sweep"></div>
+          <div class="alert"><b>FACE LOST</b><span>step in</span></div></div>
+        <div class="readout"><div class="warn">RECENTER</div>
+          <div class="lockrow"><span class="k">lock</span><span class="bars"><u></u><u></u><u></u><u></u><u></u></span></div>
+          <div class="leanrow"><span class="k">lean</span><div class="axis"><b class="slug" data-slug></b></div></div>
+          <div class="tag" data-tag>face · lost</div></div>
+        <div class="mouse"><i></i><span>mouse mode</span></div>
+      </div></div></div>
+    <div class="cell"><em>mouse mode</em><div class="box">
+      <div class="peep sm" data-peep data-state="mouse" data-q="0">
+        <div class="field"><div class="safe"></div>
+          <i class="cnr tl"></i><i class="cnr tr"></i><i class="cnr bl"></i><i class="cnr br"></i>
+          <div class="edge l"></div><div class="edge r"></div><div class="edge t"></div><div class="edge b"></div>
+          <div class="head" data-head><div class="cut"><img src="../_cam.jpg" alt="">
+            <canvas data-nose width="42" height="42"></canvas></div></div>
+          <div class="sweep"></div>
+          <div class="alert"><b>FACE LOST</b><span>step in</span></div></div>
+        <div class="readout"><div class="warn">RECENTER</div>
+          <div class="lockrow"><span class="k">lock</span><span class="bars"><u></u><u></u><u></u><u></u><u></u></span></div>
+          <div class="leanrow"><span class="k">lean</span><div class="axis"><b class="slug" data-slug></b></div></div>
+          <div class="tag" data-tag>mouse mode</div></div>
+        <div class="mouse"><i></i><span>mouse mode</span></div>
+      </div></div></div>
+  </div>
+  <div class="btns" data-btns>
+    <button data-go="locked" aria-pressed="true">locked</button>
+    <button data-go="drift" aria-pressed="false">drifting</button>
+    <button data-go="lost" aria-pressed="false">lost</button>
+    <button data-go="mouse" aria-pressed="false">mouse</button>
+  </div>
+  <p class="hint">Full-size peep is 228&times;96 — smaller than today's 238&times;178.</p>
+</div>
+
+<script>
+(() => {
+  /* ---- one synthetic face mesh, generated once ---------------- */
+  const MESH = (() => {
+    const p = [];
+    for (let i = 0; i < 26; i++) {                       // face contour ring
+      const a = i / 26 * Math.PI * 2;
+      p.push([Math.cos(a) * .32, Math.sin(a) * .40 - .02]);
+    }
+    for (let i = 0; i < 62; i++) {                       // interior cloud
+      const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random());
+      p.push([Math.cos(a) * r * .28, Math.sin(a) * r * .36 - .02]);
+    }
+    for (const [cx, cy] of [[-.13,-.08],[.13,-.08]])     // eye clusters
+      for (let i = 0; i < 9; i++) {
+        const a = i / 9 * Math.PI * 2;
+        p.push([cx + Math.cos(a) * .055, cy + Math.sin(a) * .028]);
+      }
+    for (let i = 0; i < 12; i++) p.push([(i / 11 - .5) * .22, .20 + Math.sin(i / 11 * Math.PI) * .018]);
+    return p;
+  })();
+
+  /* ---- wire up every peep instance ---------------------------- */
+  const peeps = [...document.querySelectorAll('[data-peep]')].map(root => {
+    const cv = root.querySelector('[data-nose]');
+    const f = root.querySelector('.field');
+    const big = !root.classList.contains('sm');
+    return {
+      root, cv, cx: cv.getContext('2d'),
+      head: root.querySelector('[data-head]'),
+      slug: root.querySelector('[data-slug]'),
+      tag:  root.querySelector('[data-tag]'),
+      // ranges cached at init — no per-frame layout reads
+      rx: big ? 30 : 36, ry: big ? 16 : 21,
+      sx: big ? 32 : 30,
+      s: cv.width, q: -1, ex: '', ey: '', lean: ''
+    };
+  });
+
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+  /* ---- plausible tracker telemetry per state ------------------ */
+  function sim(state, t) {
+    if (state === 'lost' || state === 'mouse') return null;
+    if (state === 'drift') {                              // head has slid to the right edge
+      return { x: .5 + .40 + Math.sin(t * 1.1) * .035, y: .5 - .10 + Math.sin(t * .7) * .05,
+               yaw: .5 + Math.sin(t * 1.1) * .06, q: 3 };
+    }
+    return { x: .5 + Math.sin(t * .55) * .10 + Math.sin(t * 1.7) * .025,   // gentle live drift
+             y: .5 + Math.sin(t * .43) * .055,
+             yaw: Math.sin(t * .55) * .22, q: 5 };
+  }
+
+  function draw(p, d, t) {
+    const n = p.s, cx = p.cx;
+    if (!d) { cx.clearRect(0, 0, n, n); return; }
+    cx.clearRect(0, 0, n, n);
+    const yaw = d.yaw, br = Math.sin(t * 2.2) * .006;
+    cx.fillStyle = 'rgba(214,237,255,.58)';
+    for (let i = 0; i < MESH.length; i++) {
+      const m = MESH[i];
+      const x = (.5 + m[0] * (1 - Math.abs(yaw) * .22) + yaw * .035) * n;
+      const y = (.46 + m[1] + br) * n;
+      cx.fillRect(x - .5, y - .5, 1, 1);
+    }
+    cx.beginPath();
+    cx.arc((.5 + yaw * .055) * n, (.545 + br) * n, n > 46 ? 3.2 : 2.6, 0, 7);
+    cx.fillStyle = '#FF6B57'; cx.fill();
+  }
+
+  let t0 = performance.now();
+  function frame(now) {
+    requestAnimationFrame(frame);
+    const t = (now - t0) / 1000;
+    for (const p of peeps) {
+      const st = p.root.dataset.state;
+      const d = sim(st, t);
+      draw(p, d, t);
+      if (!d) {
+        if (p.q !== 0) { p.root.dataset.q = 0; p.q = 0; }
+        if (p.ex) { p.root.dataset.ex = p.ex = ''; }
+        if (p.ey) { p.root.dataset.ey = p.ey = ''; }
+        continue;
+      }
+      const ox = (d.x - .5) * 2, oy = (d.y - .5) * 2;     // -1..1 in frame
+      p.head.style.transform = `translate(${(clamp(ox, -1, 1) * p.rx).toFixed(1)}px,${(clamp(oy, -1, 1) * p.ry).toFixed(1)}px)`;
+      p.slug.style.transform = `translateX(${(clamp(d.yaw, -1, 1) * p.sx).toFixed(1)}px)`;
+      // discrete flags — written only when they change
+      const q = d.q; if (q !== p.q) { p.root.dataset.q = q; p.q = q; }
+      const ex = ox < -.52 ? 'l' : ox > .52 ? 'r' : '';
+      const ey = oy < -.52 ? 't' : oy > .52 ? 'b' : '';
+      if (ex !== p.ex) { p.root.dataset.ex = ex; p.ex = ex; }
+      if (ey !== p.ey) { p.root.dataset.ey = ey; p.ey = ey; }
+      const ln = Math.abs(d.yaw) > .38 ? 'hard' : '';
+      if (ln !== p.lean) { p.root.dataset.lean = ln; p.lean = ln; }
+    }
+  }
+  requestAnimationFrame(frame);
+
+  /* ---- chrome: state switcher for the in-situ peep ------------ */
+  const hero = document.querySelector('.peep:not(.sm)');
+  const TAG = { locked: 'face · locked', drift: 'face · edge', lost: 'face · lost', mouse: 'mouse mode' };
+  document.querySelector('[data-btns]').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    for (const o of document.querySelectorAll('[data-btns] button'))
+      o.setAttribute('aria-pressed', String(o === b));
+    hero.dataset.state = b.dataset.go;
+    hero.querySelector('[data-tag]').textContent = TAG[b.dataset.go];
+  });
+})();
+</script>
+</body>
+</html>

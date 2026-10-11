@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>peep mockup 03 — fight card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Patrick+Hand&family=Nunito:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#FFF8EC; --paper2:#FDF3E3; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: #241c12; }
+  body { font-family: "Fredoka","Baloo 2","Trebuchet MS",system-ui,sans-serif; color: var(--paper); }
+
+  /* ---- in-situ backdrop: a real frame of the fight, old peep removed ---- */
+  #plate { position: fixed; inset: 0; background: url("../_plate.png") center/cover no-repeat; }
+
+  /* ===================================================================
+     THE PEEP — "fight card": the player's own die-cut trading card.
+     Same paper-card deck as the timer / bout card / PIP's nameplate,
+     but collectible: white sticker die-cut, holo edge, portrait window,
+     ring-name banner, stat chips, card number in the corner slot.
+     =================================================================== */
+  .peep { position: fixed; left: 26px; bottom: 24px; z-index: 20; pointer-events: none; }
+
+  /* the die-cut: white sticker bleed around the printed card, hand-cut
+     corners (uneven radii), hard ink offset shadow like the rest of the HUD */
+  .fc { position: relative; width: 238px; padding: 7px; background: #fff;
+    border-radius: 22px 20px 23px 19px; transform: rotate(-2.4deg);
+    box-shadow: 0 6px 0 rgba(43,33,24,.45), 0 13px 30px rgba(0,0,0,.5);
+    transition: transform .25s cubic-bezier(.34,1.56,.64,1), filter .25s; }
+
+  /* holo foil: a shimmering ring riding the die-cut edge only. One slow
+     background-position animation on one masked element — no per-frame JS. */
+  .fc .holo { position: absolute; inset: 0; border-radius: inherit; padding: 4px;
+    background: linear-gradient(112deg, rgba(255,255,255,0) 26%, rgba(181,101,216,.85) 40%,
+      rgba(93,169,233,.9) 47%, rgba(79,176,109,.8) 53%, rgba(255,197,61,.85) 60%,
+      rgba(255,255,255,0) 74%);
+    background-size: 320% 100%;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude; animation: foil 9s linear infinite; }
+  @keyframes foil { to { background-position: -320% 0; } }
+
+  /* mis-registration ghosts (only visible when the print goes bad) */
+  .fc .reg { position: absolute; inset: 7px; border-radius: 15px; border: 2.5px solid var(--coral);
+    opacity: 0; pointer-events: none; }
+  .fc .reg.s { border-color: var(--sky); }
+
+  .fc .card { position: relative; border: 2.5px solid var(--ink); border-radius: 15px;
+    background: var(--paper2); padding: 5px 5px 6px; overflow: hidden; }
+
+  /* top slug line: the deck this card belongs to + the set number */
+  .fc .slug { display: flex; align-items: baseline; justify-content: space-between;
+    padding: 0 26px 4px 3px; color: var(--ink); }
+  .fc .slug b, .fc .slug i { white-space: nowrap; }
+  .fc .slug b { font-size: 7.5px; font-weight: 700; letter-spacing: .24em; text-transform: uppercase;
+    opacity: .72; }
+  .fc .slug i { font-family: "Patrick Hand", cursive; font-style: normal; font-size: 11px;
+    letter-spacing: .04em; opacity: .75; }
+
+  /* portrait window — the live camera, cropped like a card photo */
+  .fc .win { position: relative; height: 136px; border: 2.5px solid var(--ink); border-radius: 9px;
+    overflow: hidden; background: #1b1510;
+    background-image: radial-gradient(rgba(43,33,24,.5) 1.1px, transparent 1.2px);
+    background-size: 7px 7px; }
+  .fc .win img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+    transform: scaleX(-1); display: block; }
+  .fc .win canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* a paper tint over the photo so the portrait sits in the same ink-print world */
+  .fc .win::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(180deg, rgba(255,197,61,.10), rgba(181,101,216,.12));
+    mix-blend-mode: multiply; }
+
+  /* crop guide: where the head is supposed to sit in the print */
+  .fc .crop { position: absolute; inset: 15% 20%; pointer-events: none;
+    transition: border-color .18s, inset .18s; }
+  .fc .crop span { position: absolute; width: 13px; height: 13px; border: 2.5px solid var(--leaf);
+    border-radius: 2px; transition: border-color .15s; }
+  .fc .crop span:nth-child(1) { left: -2px; top: -2px; border-right: 0; border-bottom: 0; border-top-left-radius: 5px; }
+  .fc .crop span:nth-child(2) { right: -2px; top: -2px; border-left: 0; border-bottom: 0; border-top-right-radius: 5px; }
+  .fc .crop span:nth-child(3) { left: -2px; bottom: -2px; border-right: 0; border-top: 0; border-bottom-left-radius: 5px; }
+  .fc .crop span:nth-child(4) { right: -2px; bottom: -2px; border-left: 0; border-top: 0; border-bottom-right-radius: 5px; }
+
+  /* edge warning: the side of the window the head is sliding off */
+  .fc .edge { position: absolute; top: 0; bottom: 0; width: 36px; opacity: 0;
+    background: linear-gradient(90deg, rgba(255,197,61,.95) 0 4px, rgba(255,197,61,.45) 5px, rgba(255,197,61,0));
+    transition: opacity .18s; }
+  .fc .edge::after { content: ''; position: absolute; left: 7px; top: 50%; margin-top: -7px;
+    border: 7px solid transparent; border-right-color: var(--sun); }
+  .fc .edge.l { left: 0; }
+  .fc .edge.r { right: 0; transform: scaleX(-1); }
+
+  /* overprint stamps that land in the window when the print fails */
+  .fc .stamp { position: absolute; left: 50%; top: 50%; padding: 5px 12px 6px;
+    transform: translate(-50%,-50%) rotate(-8deg) scale(.6); opacity: 0;
+    border: 3px solid var(--coral); border-radius: 8px; color: var(--coral);
+    font-size: 23px; font-weight: 700; letter-spacing: .1em; white-space: nowrap;
+    text-shadow: 0 2px 0 rgba(255,107,87,.25);
+    transition: transform .22s cubic-bezier(.34,1.8,.5,1), opacity .18s; }
+  .fc .glyph { position: absolute; left: 50%; top: 44%; transform: translate(-50%,-50%);
+    font-size: 46px; line-height: 1; color: rgba(43,33,24,.55); opacity: 0; }
+
+  /* ring-name banner */
+  .fc .banner { position: relative; margin: 5px 0 0; padding: 4px 8px 5px;
+    border: 2.5px solid var(--ink); border-radius: 9px; background: var(--coral);
+    color: var(--paper); text-align: center; box-shadow: 0 3px 0 rgba(43,33,24,.45);
+    transition: background .2s, color .2s; }
+  .fc .banner .nm { font-size: 17px; font-weight: 700; letter-spacing: .14em; line-height: 1;
+    text-shadow: 1.5px 1.5px 0 rgba(43,33,24,.55); }
+  .fc .banner .sub { margin-top: 1px; font-family: "Patrick Hand", cursive; font-size: 10.5px;
+    letter-spacing: .08em; opacity: .9; }
+
+  /* stat chips + the live condition chip (the old tag text, promoted) */
+  .fc .chips { display: flex; gap: 4px; margin-top: 5px; }
+  .fc .chip { flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px;
+    padding: 2.5px 0 3px; border: 2px solid var(--ink); border-radius: 7px;
+    background: var(--paper); color: var(--ink); font-size: 8px; font-weight: 600;
+    letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+  .fc .chip b { font-weight: 700; }
+  .fc .chip.cond { flex: 1.45; background: var(--leaf); color: var(--paper); letter-spacing: .12em;
+    transition: background .2s, color .2s; }
+  .fc .chip.cond i { width: 6px; height: 6px; border-radius: 99px; background: var(--paper);
+    animation: beat 1.4s ease-in-out infinite; }
+  @keyframes beat { 50% { opacity: .25; } }
+
+  /* corner slot: the card number, punched over the die-cut */
+  .fc .no { position: absolute; right: -9px; top: -9px; width: 34px; height: 34px;
+    display: grid; place-items: center; border: 2.5px solid var(--ink); border-radius: 99px;
+    background: var(--sun); color: var(--ink); font-size: 13px; font-weight: 700;
+    letter-spacing: .02em; box-shadow: 0 3px 0 rgba(43,33,24,.45); transform: rotate(6deg); }
+  .fc .no small { display: block; font-size: 5.5px; letter-spacing: .14em; margin-top: -3px; opacity: .7; }
+
+  /* ---------------- STATE: locked (default above) ---------------- */
+
+  /* ---------------- STATE: drift — head sliding to the print edge --- */
+  .fc[data-s="drift"] .crop span { border-color: var(--sun); }
+  .fc[data-s="drift"] .edge.r { opacity: 1; }
+  .fc[data-s="drift"] .banner { background: var(--sun); color: var(--ink); }
+  .fc[data-s="drift"] .banner .nm { text-shadow: 1.5px 1.5px 0 rgba(43,33,24,.3); }
+  .fc[data-s="drift"] .chip.cond { background: var(--sun); color: var(--ink); }
+  .fc[data-s="drift"] .chip.cond i { background: var(--ink); }
+
+  /* ---------------- STATE: lost — the card prints off-register ------- */
+  .fc[data-s="lost"] { animation: shake 2.4s ease-in-out infinite; }
+  @keyframes shake { 0%,100% { transform: rotate(-2.4deg); } 48% { transform: rotate(-3.1deg) translateX(-1px); } }
+  .fc[data-s="lost"] .holo { opacity: 0; }
+  .fc[data-s="lost"] .reg { opacity: .85; animation: misreg 1.9s steps(1) infinite; }
+  .fc[data-s="lost"] .reg.s { animation-delay: .32s; }
+  @keyframes misreg {
+    0%   { transform: translate(-5px,-4px) rotate(-.6deg); }
+    34%  { transform: translate(-7px,-2px) rotate(.5deg); }
+    67%  { transform: translate(5px,4px) rotate(-.3deg); }
+    100% { transform: translate(-5px,-4px) rotate(-.6deg); } }
+  .fc[data-s="lost"] .card { background: var(--paper); }
+  .fc[data-s="lost"] .win { background-color: var(--paper2); }
+  .fc[data-s="lost"] .win img, .fc[data-s="lost"] .win canvas,
+  .fc[data-s="lost"] .crop, .fc[data-s="lost"] .win::after { opacity: 0; }
+  .fc[data-s="lost"] .stamp.noprint { opacity: 1; transform: translate(-50%,-50%) rotate(-8deg) scale(1); }
+  .fc[data-s="lost"] .banner { background: var(--paper); color: var(--coral);
+    box-shadow: 3px 3px 0 rgba(93,169,233,.5), -3px -2px 0 rgba(255,107,87,.45), 0 3px 0 rgba(43,33,24,.4); }
+  .fc[data-s="lost"] .banner .nm { text-shadow: -2px -1.5px 0 rgba(93,169,233,.75), 2px 1.5px 0 rgba(255,107,87,.7); }
+  .fc[data-s="lost"] .banner .sub { color: var(--ink); opacity: .55; }
+  .fc[data-s="lost"] .chip.cond { background: var(--coral); animation: condflash .7s steps(1) infinite; }
+  @keyframes condflash { 50% { background: var(--ink); } }
+  .fc[data-s="lost"] .no { background: var(--paper); }
+
+  /* ---------------- STATE: mouse — an unprinted proof copy ---------- */
+  .fc[data-s="mouse"] .win { background-color: var(--paper2);
+    background-image: repeating-linear-gradient(-45deg, rgba(43,33,24,.1) 0 4px, transparent 4px 11px); }
+  .fc[data-s="mouse"] .win img, .fc[data-s="mouse"] .win canvas,
+  .fc[data-s="mouse"] .crop, .fc[data-s="mouse"] .win::after { opacity: 0; }
+  .fc[data-s="mouse"] .glyph { opacity: 1; }
+  .fc[data-s="mouse"] .stamp.proof { opacity: 1; top: 76%; border-color: var(--sky); color: var(--sky);
+    font-size: 13px; transform: translate(-50%,-50%) rotate(-3deg) scale(1); }
+  .fc[data-s="mouse"] .banner { background: var(--sky); }
+  .fc[data-s="mouse"] .chip.cond { background: var(--sky); color: var(--ink); }
+  .fc[data-s="mouse"] .chip.cond i { background: var(--ink); animation: none; }
+
+  /* ---------------- small breakpoint (≤1050px → ~120px wide) -------- */
+  .fc.sm { width: 120px; padding: 5px; border-radius: 15px 14px 16px 13px; }
+  .fc.sm .card { border-width: 2px; border-radius: 11px; padding: 3px; }
+  .fc.sm .slug, .fc.sm .chip.st { display: none; }
+  .fc.sm .win { height: 74px; border-width: 2px; border-radius: 7px; }
+  .fc.sm .crop span { width: 8px; height: 8px; border-width: 2px; }
+  .fc.sm .banner { padding: 2px 4px 3px; border-width: 2px; border-radius: 7px; }
+  .fc.sm .banner .nm { font-size: 10px; letter-spacing: .08em; }
+  .fc.sm .banner .sub { display: none; }
+  .fc.sm .chip { font-size: 6.5px; border-width: 1.5px; }
+  .fc.sm .no { width: 22px; height: 22px; font-size: 9px; right: -7px; top: -7px; }
+  .fc.sm .no small { display: none; }
+  .fc.sm .stamp.noprint { font-size: 13px; border-width: 2px; padding: 3px 7px; }
+  .fc.sm .stamp.proof { font-size: 8px; }
+  .fc.sm .glyph { font-size: 22px; }
+  @media (max-width: 1050px) { .peep { left: 12px; bottom: 12px; } }
+
+  /* ====================== mockup chrome (NOT the design) ============ */
+  #chrome { position: fixed; right: 16px; top: 184px; width: 310px; z-index: 60;
+    background: rgba(18,13,8,.84); border: 1px dashed rgba(255,248,236,.4); border-radius: 12px;
+    padding: 10px 12px 12px; font-family: "Nunito", system-ui, sans-serif; }
+  #chrome h4 { font-size: 9px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase;
+    color: rgba(255,248,236,.55); margin-bottom: 8px; }
+  #chrome .btns { display: flex; flex-wrap: wrap; gap: 5px; }
+  #chrome button { font: 700 10px "Nunito", system-ui, sans-serif; letter-spacing: .08em;
+    text-transform: uppercase; padding: 5px 9px; border-radius: 7px; cursor: pointer;
+    border: 1px solid rgba(255,248,236,.35); background: transparent; color: rgba(255,248,236,.75); }
+  #chrome button.on { background: var(--paper); color: #241c12; border-color: var(--paper); }
+  #chrome .lbl { margin: 11px 0 5px; font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase;
+    color: rgba(255,248,236,.45); }
+  #chrome .row { display: flex; align-items: flex-start; gap: 6px; }
+  #chrome .mini { width: 92px; height: 104px; position: relative; }
+  #chrome .mini > .fc { position: absolute; left: 0; top: 4px; transform: scale(.385) rotate(-2.4deg);
+    transform-origin: 0 0; }
+  #chrome .mini > .fc[data-s="lost"] { animation: none; }
+  #chrome .cap { margin-top: 2px; font-size: 8px; letter-spacing: .1em; text-transform: uppercase;
+    color: rgba(255,248,236,.5); }
+  #chrome .smwrap { display: flex; align-items: flex-end; gap: 10px; }
+</style>
+</head>
+<body>
+<div id="plate"></div>
+
+<!-- ============ the peep, in situ, 1:1, at its real anchor ============ -->
+<div class="peep" id="situ"></div>
+
+<!-- ============ mockup chrome — not part of the design ============ -->
+<div id="chrome">
+  <h4>mockup chrome · not part of the design</h4>
+  <div class="btns" id="btns"></div>
+  <div class="lbl">all states (scaled 38%)</div>
+  <div class="row" id="minis"></div>
+  <div class="lbl">≤1050px breakpoint · 120px, 1:1</div>
+  <div class="smwrap" id="smrow"></div>
+</div>
+
+<script>
+const CFG = {
+  locked: { tag: 'face · locked', cond: 'MINT' },
+  drift:  { tag: 'face · edge',   cond: 'OFF-CTR' },
+  lost:   { tag: 'face · lost',   cond: 'MISPRINT' },
+  mouse:  { tag: 'mouse mode',    cond: 'PROOF' }
+};
+
+function cardHTML(state, small) {
+  const c = CFG[state];
+  return `<div class="fc${small ? ' sm' : ''}" data-s="${state}">
+    <div class="holo"></div>
+    <div class="reg c"></div><div class="reg s"></div>
+    <div class="card">
+      <div class="slug"><b>scrap! · fight card</b><i data-cond>cond ${c.cond}</i></div>
+      <div class="win">
+        <img src="../_cam.jpg" alt="">
+        <canvas data-nose></canvas>
+        <div class="edge l"></div><div class="edge r"></div>
+        <div class="crop"><span></span><span></span><span></span><span></span></div>
+        <div class="glyph">&#8598;</div>
+        <div class="stamp noprint">NO PRINT</div>
+        <div class="stamp proof">NO CAMERA · PROOF COPY</div>
+      </div>
+      <div class="banner">
+        <div class="nm">THE ROOKIE</div>
+        <div class="sub">bubble's challenger</div>
+      </div>
+      <div class="chips">
+        <div class="chip cond"><i></i><span data-tag>${c.tag}</span></div>
+        <div class="chip st">rch <b>71"</b></div>
+        <div class="chip st">wt <b>147</b></div>
+      </div>
+    </div>
+    <div class="no">03<small>OF 12</small></div>
+  </div>`;
+}
+
+/* ---- build the in-situ card, the state strip and the small variant ---- */
+const situ = document.getElementById('situ');
+situ.innerHTML = cardHTML('locked', false);
+
+const minis = document.getElementById('minis');
+['locked', 'lost', 'mouse'].forEach(s => {
+  const w = document.createElement('div');
+  w.innerHTML = `<div class="mini">${cardHTML(s, false)}</div><div class="cap">${s}</div>`;
+  minis.appendChild(w);
+});
+
+const smrow = document.getElementById('smrow');
+smrow.innerHTML = cardHTML('locked', true) + cardHTML('lost', true);
+
+const btns = document.getElementById('btns');
+Object.keys(CFG).forEach((s, i) => {
+  const b = document.createElement('button');
+  b.textContent = s === 'drift' ? 'locked · drift' : s;
+  b.className = i === 0 ? 'on' : '';
+  b.onclick = () => {
+    [...btns.children].forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    const fc = situ.firstElementChild;
+    fc.dataset.s = s;
+    fc.querySelector('[data-tag]').textContent = CFG[s].tag;
+    fc.querySelector('[data-cond]').textContent = 'cond ' + CFG[s].cond;
+  };
+  btns.appendChild(b);
+});
+
+/* ---- live face-mesh dot cloud (stand-in for canvas[data-nose]) ----
+   One rAF loop, precomputed point cloud, integer fillRects. Cheap. */
+const DPR = Math.min(2, window.devicePixelRatio || 1);
+function makeCloud(n) {
+  const p = [];
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random());
+    p.push([Math.cos(a) * r * 0.30, Math.sin(a) * r * 0.38 - 0.02]);
+  }
+  return p;
+}
+const CLOUD = makeCloud(478), CLOUD_S = CLOUD.slice(0, 150);
+const rigs = [];
+document.querySelectorAll('canvas[data-nose]').forEach(cv => {
+  const host = cv.closest('.fc');
+  rigs.push({ cv, ctx: cv.getContext('2d'), host, w: 0, h: 0,
+    pts: host.classList.contains('sm') ? CLOUD_S : CLOUD,
+    ph: Math.random() * 10 });
+});
+function size() {
+  for (const r of rigs) {
+    const w = r.cv.clientWidth, h = r.cv.clientHeight;
+    if (!w || !h) continue;
+    if (w !== r.w || h !== r.h) {
+      r.w = w; r.h = h;
+      r.cv.width = Math.round(w * DPR); r.cv.height = Math.round(h * DPR);
+      r.ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+  }
+}
+size(); addEventListener('resize', size);
+
+function frame(t) {
+  const s = t / 1000;
+  for (const r of rigs) {
+    const st = r.host.dataset.s;
+    const ctx = r.ctx, w = r.w, h = r.h;
+    if (!w) continue;
+    ctx.clearRect(0, 0, w, h);
+    if (st === 'lost' || st === 'mouse') continue;
+    const p = r.ph;
+    // slow head sway; drift state parks the head hard against the right edge
+    let cx = 0.5 + Math.sin(s * 0.7 + p) * 0.055 + Math.sin(s * 1.9 + p) * 0.012;
+    let cy = 0.47 + Math.sin(s * 0.52 + p * 1.7) * 0.04;
+    if (st === 'drift') cx = 0.80 + Math.sin(s * 1.1 + p) * 0.02;
+    const bx = cx * w, by = cy * h, sw = w, sh = h;
+    ctx.fillStyle = 'rgba(210,235,255,.5)';
+    const pts = r.pts, jx = Math.sin(s * 3.1) * 0.6, jy = Math.cos(s * 2.6) * 0.6;
+    for (let i = 0; i < pts.length; i++) {
+      const q = pts[i];
+      ctx.fillRect((bx + q[0] * sw + jx) | 0, (by + q[1] * sh + jy) | 0, 1, 1);
+    }
+    ctx.fillStyle = '#FF6B57';
+    ctx.beginPath();
+    ctx.arc(bx + jx, by + 0.03 * sh + jy, r.host.classList.contains('sm') ? 2.4 : 4, 0, 6.2832);
+    ctx.fill();
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

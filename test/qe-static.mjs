@@ -771,7 +771,7 @@ async function dynamicProbes() {
             landmarks: isHands(Ctor) ? [VALID_HAND] : VALID_HAND,
             handedness: [[{ categoryName: 'Left' }]] });
         const got = gotHands(h);
-        probe(isHands(Ctor) ? got === 1 && h.state.hands[0].side === 'right' : got === true,
+        probe(isHands(Ctor) ? got === 1 && h.state.hands[0].side === 'left' : got === true,
           F, `${Ctor.name}: malformed payloads not dropped / valid payload lost (got=${got})`);
         h.stop();
       }

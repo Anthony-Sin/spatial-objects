@@ -480,10 +480,12 @@ export class Hands {
     st.spread = (L && R) ? Math.hypot(L.palm.x - R.palm.x, L.palm.y - R.palm.y) : null;
   }
   _sideOf(lm, handedness, i) {
-    // detector labels the person's anatomical side; mirror it for self-view
+    // MediaPipe labels assume a mirrored selfie input. We feed the raw camera
+    // frame and mirror only the drawn landmarks, so its label already names
+    // the matching side of the final selfie view. Reversing it swapped mitts.
     const label = handedness?.[i]?.[0]?.categoryName || '';
-    if (label === 'Left') return 'right';
-    if (label === 'Right') return 'left';
+    if (label === 'Left') return 'left';
+    if (label === 'Right') return 'right';
     return (lm[0]?.x ?? 0) > .5 ? 'left' : 'right';
   }
   stop() {

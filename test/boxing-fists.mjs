@@ -58,6 +58,25 @@ const settle = (ft, h, f = fc(), n = 30) => { for (let i = 0; i < n; i++) ft.upd
     `x=${ev[0]?.x} y=${ev[0]?.y}`);
 }
 
+// Closed hands in bright webcam footage are frequently tagged as a pinch.
+// A curled finger count still represents a fist, and impact should land on
+// the advancing hand before the apex/retraction frame.
+{
+  const ft = new FistTracker();
+  settle(ft, hand('left', .4, .55, 1.6, 'fist'));
+  const path = [1.7, 1.85, 2, 2.2, 2.4, 2.6, 2.75, 2.9];
+  let landedAt = -1;
+  for (let i = 0; i < path.length; i++) {
+    const h = hand('left', .4, .55, path[i], 'fist');
+    h.kind = 'pinch'; h.nExt = 0;
+    ft.update(hs(h), fc(), DT);
+    if (ft.punches.length && landedAt < 0) landedAt = i;
+  }
+  check('curled pinch is accepted as a boxing fist', ft.punches.length === 1);
+  check('contact fires while fist advances', landedAt >= 0 && landedAt < path.length - 1,
+    `index=${landedAt}`);
+}
+
 // ---- 3. right thrust → cross; lateral-dominant → hook; up-dominant → uppercut
 {
   const ft = new FistTracker();

@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>peep · 01 broadcast corner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Patrick+Hand&family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#FFF8EC; --paper2:#FDF3E3; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: #241c12; }
+  body { font-family: "Fredoka","Nunito","Trebuchet MS",system-ui,sans-serif; color: var(--paper); }
+
+  /* the running game, frozen — HUD and all, old peep removed */
+  .plate { position: fixed; inset: 0; background: url(../_plate.png) center/cover no-repeat; }
+
+  /* ===================================================================
+     THE PEEP — "corner cam": a hard-edged camera window with a paper
+     broadcast lower-third under it. Everything is pointer-events:none.
+     =================================================================== */
+  .peep { position: fixed; left: 30px; bottom: 30px; z-index: 20; width: 248px;
+    pointer-events: none; -webkit-user-select: none; user-select: none;
+    filter: drop-shadow(0 12px 26px rgba(0,0,0,.5)); }
+
+  /* --- tally rail: REC + camera name + the on-air lamp --------------- */
+  .peep .rail { display: flex; align-items: center; gap: 6px; height: 19px;
+    padding: 0 7px 0 6px; background: var(--ink); color: var(--paper);
+    border: 2.5px solid var(--ink); border-bottom: none;
+    border-radius: 9px 9px 0 0; font-size: 8px; font-weight: 700;
+    letter-spacing: .2em; text-transform: uppercase; }
+  .peep .rec { width: 7px; height: 7px; border-radius: 99px; background: var(--coral);
+    box-shadow: 0 0 0 1.5px rgba(255,107,87,.3); animation: recblink 1.4s steps(1,end) infinite; }
+  @keyframes recblink { 50% { opacity: .18; } }
+  .peep .camid { opacity: .92; }
+  .peep .tally { margin-left: auto; display: flex; align-items: center; gap: 5px;
+    font-size: 8px; letter-spacing: .18em; }
+  .peep .lamp { width: 9px; height: 9px; border-radius: 3px; background: var(--leaf);
+    border: 1.5px solid rgba(43,33,24,.85); box-shadow: 0 0 7px rgba(79,176,109,.85); }
+
+  /* --- the camera window -------------------------------------------- */
+  .peep .win { position: relative; overflow: hidden; height: 150px;
+    border: 2.5px solid var(--ink); background: #171009; }
+  .peep .win img { position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; transform: scaleX(-1); display: block;
+    filter: saturate(.92) contrast(1.06); }
+  .peep .win canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* framing guide: thirds + corner ticks, like a camera's safe-frame */
+  .peep .thirds { position: absolute; inset: 0;
+    background:
+      linear-gradient(90deg, transparent 0 calc(33.33% - .5px), rgba(255,248,236,.18) calc(33.33% - .5px) calc(33.33% + .5px), transparent calc(33.33% + .5px) calc(66.66% - .5px), rgba(255,248,236,.18) calc(66.66% - .5px) calc(66.66% + .5px), transparent calc(66.66% + .5px)),
+      linear-gradient(0deg, transparent 0 calc(33.33% - .5px), rgba(255,248,236,.13) calc(33.33% - .5px) calc(33.33% + .5px), transparent calc(33.33% + .5px) calc(66.66% - .5px), rgba(255,248,236,.13) calc(66.66% - .5px) calc(66.66% + .5px), transparent calc(66.66% + .5px)); }
+  .peep .ticks { position: absolute; inset: 7px; }
+  .peep .ticks b { position: absolute; width: 11px; height: 11px;
+    border: 2px solid rgba(255,248,236,.75); }
+  .peep .ticks b:nth-child(1) { left: 0; top: 0; border-right: 0; border-bottom: 0; }
+  .peep .ticks b:nth-child(2) { right: 0; top: 0; border-left: 0; border-bottom: 0; }
+  .peep .ticks b:nth-child(3) { left: 0; bottom: 0; border-right: 0; border-top: 0; }
+  .peep .ticks b:nth-child(4) { right: 0; bottom: 0; border-left: 0; border-top: 0; }
+
+  /* autofocus box — rides the head, goes amber at the frame edge */
+  .peep .af { position: absolute; left: 0; top: 0; width: 62px; height: 62px;
+    margin: -31px 0 0 -31px; will-change: transform;
+    border: 2px solid var(--paper); border-radius: 3px;
+    box-shadow: 0 0 0 1.5px rgba(43,33,24,.55), inset 0 0 0 1.5px rgba(43,33,24,.3); }
+  .peep .af::after { content: ''; position: absolute; left: 50%; top: 50%;
+    width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 99px;
+    background: var(--coral); box-shadow: 0 0 0 1.5px rgba(43,33,24,.6); }
+  .peep[data-edge="1"] .af { border-color: var(--sun);
+    box-shadow: 0 0 0 1.5px rgba(43,33,24,.55), 0 0 10px rgba(255,197,61,.9);
+    animation: afnudge .5s ease-in-out infinite alternate; }
+  @keyframes afnudge { to { opacity: .45; } }
+
+  /* edge warning chevrons: which side you are drifting off */
+  .peep .edge { position: absolute; top: 0; bottom: 0; width: 22px; opacity: 0;
+    background: linear-gradient(90deg, rgba(255,197,61,.85), rgba(255,197,61,0));
+    transition: opacity .18s; }
+  .peep .edge.r { right: 0; transform: scaleX(-1); }
+  .peep[data-edge="1"] .edge.r { opacity: 1; animation: edgepulse .5s ease-in-out infinite alternate; }
+  /* mock only: slide the still so the head really is at the frame edge */
+  .peep[data-edge="1"] .win img { transform: scaleX(-1) scale(1.35) translateX(-19%); }
+  @keyframes edgepulse { to { opacity: .3; } }
+
+  /* burned-in timecode, bottom-right of the window */
+  .peep .tc { position: absolute; right: 5px; bottom: 4px; font-size: 8px;
+    font-weight: 700; letter-spacing: .08em; color: rgba(255,248,236,.85);
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 1px 2px rgba(20,14,8,.95); }
+
+  /* --- failure dressing: scanlines, roll bar, the lost slug ---------- */
+  .peep .scan { position: absolute; inset: 0; opacity: 0; transition: opacity .12s;
+    background: repeating-linear-gradient(0deg, rgba(20,14,8,.55) 0 1px, transparent 1px 3px); }
+  .peep .roll { position: absolute; left: 0; right: 0; top: 0; height: 26px; opacity: 0;
+    background: linear-gradient(180deg, rgba(255,248,236,0), rgba(255,248,236,.22), rgba(20,14,8,.5), rgba(255,248,236,0));
+    will-change: transform; }
+  .peep .slug { position: absolute; left: -6px; right: -6px; top: 50%; opacity: 0;
+    transform: translateY(-50%) rotate(-1.6deg); padding: 5px 0; text-align: center;
+    background: var(--coral); border-top: 2.5px solid var(--ink); border-bottom: 2.5px solid var(--ink);
+    color: var(--paper); font-size: 15px; font-weight: 800; letter-spacing: .16em; }
+  .peep .slug small { display: block; margin-top: 1px; font-size: 8px; letter-spacing: .22em;
+    font-weight: 700; opacity: .95; }
+
+  .peep[data-state="lost"] .win img { filter: saturate(0) contrast(.8) brightness(.62); }
+  .peep[data-state="lost"] .scan { opacity: 1; }
+  .peep[data-state="lost"] .roll { opacity: 1; animation: rolldn 2.4s linear infinite; }
+  @keyframes rolldn { from { transform: translateY(-30px); } to { transform: translateY(152px); } }
+  .peep[data-state="lost"] .slug { opacity: 1; animation: slugpop .22s cubic-bezier(.34,1.7,.5,1); }
+  @keyframes slugpop { from { transform: translateY(-50%) rotate(-1.6deg) scale(.7); opacity: 0; } }
+  .peep[data-state="lost"] .af, .peep[data-state="lost"] .thirds,
+  .peep[data-state="lost"] .ticks, .peep[data-state="lost"] canvas { opacity: 0; }
+  .peep[data-state="lost"] .lamp { background: var(--coral); box-shadow: 0 0 9px rgba(255,107,87,1);
+    animation: tallyblink .42s steps(1,end) infinite; }
+  @keyframes tallyblink { 50% { background: #5a2a22; box-shadow: none; } }
+  .peep[data-state="lost"] .rail { animation: railflash .42s steps(1,end) infinite; }
+  @keyframes railflash { 50% { background: #7a1f14; } }
+
+  /* --- mouse mode: the camera is dark, so we show test-card bars ----- */
+  .peep .bars { position: absolute; inset: 0; display: none;
+    background: linear-gradient(90deg,
+      var(--paper) 0 14.28%, var(--sun) 14.28% 28.56%, var(--leaf) 28.56% 42.84%,
+      var(--sky) 42.84% 57.12%, var(--berry) 57.12% 71.4%, var(--coral) 71.4% 85.68%,
+      var(--ink) 85.68% 100%); }
+  .peep .bars::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 34%;
+    background: repeating-linear-gradient(90deg, rgba(43,33,24,.9) 0 12px, rgba(253,243,227,.9) 12px 24px);
+    opacity: .5; }
+  .peep .offslate { position: absolute; left: 50%; top: 50%; display: none;
+    transform: translate(-50%,-50%) rotate(-1.2deg); padding: 7px 14px 8px; text-align: center;
+    background: var(--paper); color: var(--ink); border: 2.5px solid var(--ink); border-radius: 10px;
+    box-shadow: 0 4px 0 rgba(43,33,24,.55); }
+  .peep .offslate b { display: block; font-size: 14px; font-weight: 800; letter-spacing: .1em; }
+  .peep .offslate span { display: block; margin-top: 1px; font-size: 7.5px; font-weight: 700;
+    letter-spacing: .2em; color: var(--coral); }
+  .peep[data-state="mouse"] .bars, .peep[data-state="mouse"] .offslate { display: block; }
+  .peep[data-state="mouse"] .win img, .peep[data-state="mouse"] .af,
+  .peep[data-state="mouse"] .thirds, .peep[data-state="mouse"] canvas { display: none; }
+  .peep[data-state="mouse"] .lamp { background: #6d6356; box-shadow: none; }
+  .peep[data-state="mouse"] .rec { background: #6d6356; animation: none; box-shadow: none; }
+  .peep[data-state="mouse"] .spine { background: var(--berry); }
+  .peep[data-state="mouse"] .ticks b { border-color: rgba(43,33,24,.45); }
+
+  /* --- the lower third ---------------------------------------------- */
+  .peep .l3 { position: relative; display: flex; background: var(--paper); color: var(--ink);
+    border: 2.5px solid var(--ink); border-top: none; border-radius: 0 0 11px 11px;
+    overflow: hidden; box-shadow: 0 6px 0 rgba(43,33,24,.45); }
+  .peep .spine { flex: none; width: 9px; background: var(--coral); }
+  .peep[data-state="lost"] .spine { background: var(--coral); animation: spineflash .42s steps(1,end) infinite; }
+  @keyframes spineflash { 50% { background: var(--ink); } }
+  .peep .l3 .body { flex: 1; min-width: 0; padding: 5px 8px 6px 9px; }
+  .peep .nm { display: flex; align-items: baseline; gap: 7px; }
+  .peep .nm b { font-size: 14px; font-weight: 800; letter-spacing: .03em; line-height: 1.05; }
+  .peep .nm i { font-style: normal; font-size: 8px; font-weight: 700; letter-spacing: .14em;
+    color: rgba(43,33,24,.62); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .peep .sig { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+  .peep .sig .k { font-size: 7.5px; font-weight: 800; letter-spacing: .2em; color: rgba(43,33,24,.55); }
+  /* the "audio bars" of this broadcast are tracking strength */
+  .peep .meter { display: flex; align-items: flex-end; gap: 2px; height: 11px; }
+  .peep .meter i { width: 4px; background: rgba(43,33,24,.15); border-radius: 1px; }
+  .peep .meter i:nth-child(1) { height: 4px; } .peep .meter i:nth-child(2) { height: 6px; }
+  .peep .meter i:nth-child(3) { height: 7.5px; } .peep .meter i:nth-child(4) { height: 9px; }
+  .peep .meter i:nth-child(5) { height: 11px; }
+  .peep .meter i.on { background: var(--leaf); }
+  .peep .meter i.warn { background: var(--sun); }
+  .peep .meter i.bad { background: var(--coral); }
+  .peep .tick-line { margin-left: auto; font-size: 8px; font-weight: 800; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--leaf); white-space: nowrap; }
+  .peep[data-edge="1"] .tick-line { color: #b07a0c; }
+  .peep[data-state="lost"] .tick-line { color: var(--coral); animation: tickblink .42s steps(1,end) infinite; }
+  @keyframes tickblink { 50% { opacity: .25; } }
+  .peep[data-state="mouse"] .tick-line { color: var(--berry); }
+
+  /* ≤1050px: the window keeps the rail + spine + meter and drops the
+     fighter slate and timecode — the health read survives the shrink */
+  .peep.small { width: 116px; }
+  .peep.small .win { height: 74px; }
+  .peep.small .rail { height: 14px; padding: 0 4px; gap: 4px; font-size: 6px; letter-spacing: .1em; }
+  .peep.small .rec { width: 5px; height: 5px; }
+  .peep.small .lamp { width: 7px; height: 7px; }
+  .peep.small .tally span { display: none; }
+  .peep.small .camid { letter-spacing: .06em; }
+  .peep.small .af { width: 34px; height: 34px; margin: -17px 0 0 -17px; }
+  .peep.small .af::after { width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; }
+  .peep.small .ticks { inset: 4px; } .peep.small .ticks b { width: 7px; height: 7px; }
+  .peep.small .tc, .peep.small .nm, .peep.small .sig .k { display: none; }
+  .peep.small .l3 .body { padding: 3px 5px 4px 5px; }
+  .peep.small .spine { width: 6px; }
+  .peep.small .sig { margin-top: 0; gap: 4px; }
+  .peep.small .tick-line { font-size: 7px; letter-spacing: .06em; }
+  .peep.small .slug { font-size: 9px; letter-spacing: .06em; padding: 3px 0; }
+  .peep.small .slug small { display: none; }
+  .peep.small .offslate { padding: 3px 6px 4px; }
+  .peep.small .offslate b { font-size: 9px; letter-spacing: .04em; }
+  .peep.small .offslate span { display: none; }
+
+  /* ===================================================================
+     MOCKUP CHROME — not part of the design
+     =================================================================== */
+  .chrome { position: fixed; z-index: 60; font-family: "Nunito","Fredoka",system-ui,sans-serif; }
+  .chrome-lbl { font-size: 8.5px; font-weight: 800; letter-spacing: .26em; text-transform: uppercase;
+    color: rgba(255,248,236,.55); }
+  .rail-panel { right: 12px; top: 12px; bottom: 12px; width: 300px;
+    background: rgba(20,14,8,.76); border: 1px dashed rgba(255,248,236,.3); border-radius: 12px;
+    padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 7px; }
+  .rail-panel h1 { font-size: 10px; font-weight: 900; letter-spacing: .2em; text-transform: uppercase;
+    color: rgba(255,248,236,.8); flex: none; }
+  .rail-panel .cap { font-size: 8px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase;
+    color: rgba(255,248,236,.45); flex: none; line-height: 1.7; }
+  .rail-panel .slotwrap { transform: scale(.73); transform-origin: left top; height: 158px; flex: none; }
+  .rail-panel .slotwrap .peep { position: static; filter: none; }
+  .rail-panel .smallrow { display: flex; align-items: flex-end; gap: 9px;
+    transform: scale(.75); transform-origin: left top; height: 92px; flex: none; margin-top: 7px; }
+  .rail-panel .smallrow .peep { position: static; filter: none; }
+  .switch { left: 50%; top: 12px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px;
+    background: rgba(20,14,8,.76); border: 1px dashed rgba(255,248,236,.3); border-radius: 10px;
+    padding: 6px 8px; }
+  .switch button { font: 800 9px/1 "Nunito",system-ui,sans-serif; letter-spacing: .12em;
+    text-transform: uppercase; color: rgba(255,248,236,.8); background: transparent;
+    border: 1px solid rgba(255,248,236,.35); border-radius: 6px; padding: 5px 8px; cursor: pointer; }
+  .switch button.on { background: var(--sun); color: #2B2118; border-color: var(--sun); }
+</style>
+</head>
+<body>
+<div class="plate"></div>
+
+<!-- =============== the peep, in situ, 1:1 =============== -->
+<div class="peep" data-state="locked" data-edge="0" data-live>
+  <div class="rail">
+    <span class="rec"></span>
+    <span class="camid">CAM 2 · CORNER</span>
+    <span class="tally"><span data-tallytxt>ON AIR</span><i class="lamp"></i></span>
+  </div>
+  <div class="win">
+    <img src="../_cam.jpg" alt="">
+    <canvas data-nose></canvas>
+    <div class="thirds"></div>
+    <div class="ticks"><b></b><b></b><b></b><b></b></div>
+    <div class="edge l"></div><div class="edge r"></div>
+    <div class="af" data-af></div>
+    <div class="bars"></div>
+    <div class="offslate"><b>NO CAM</b><span>FEED UNAVAILABLE</span></div>
+    <div class="tc" data-tc>00:01:29:04</div>
+    <div class="scan"></div>
+    <div class="roll"></div>
+    <div class="slug">SIGNAL LOST<small>STEP BACK INTO FRAME</small></div>
+  </div>
+  <div class="l3">
+    <div class="spine"></div>
+    <div class="body">
+      <div class="nm"><b>THE ROOKIE</b><i>3–1–0 · 2KO</i></div>
+      <div class="sig">
+        <span class="k">SIG</span>
+        <span class="meter" data-meter><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="tick-line" data-ticker>TRACKING LOCKED</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =============== mockup chrome =============== -->
+<div class="chrome switch">
+  <span class="chrome-lbl">mockup&nbsp;·&nbsp;state</span>
+  <button data-set="locked" class="on">locked</button>
+  <button data-set="edge">edge</button>
+  <button data-set="lost">lost</button>
+  <button data-set="mouse">mouse</button>
+</div>
+
+<div class="chrome rail-panel">
+  <h1>mockup chrome — all states</h1>
+  <div class="cap">locked · face · locked</div>
+  <div class="slotwrap" data-slot="locked"></div>
+  <div class="cap">lost · face · lost</div>
+  <div class="slotwrap" data-slot="lost"></div>
+  <div class="cap">mouse mode · no camera</div>
+  <div class="slotwrap" data-slot="mouse"></div>
+  <div class="cap">≤1050px — 116px wide</div>
+  <div class="smallrow" data-slot="small"></div>
+</div>
+
+<script>
+(() => {
+  const live = document.querySelector('[data-live]');
+
+  /* ---- state table -------------------------------------------------- */
+  const STATES = {
+    locked: { tally: 'ON AIR',  ticker: 'TRACKING LOCKED', brief: 'LOCKED', sig: 5, cls: 'on'   },
+    edge:   { tally: 'ON AIR',  ticker: 'NEAR FRAME EDGE', brief: 'EDGE',   sig: 2, cls: 'warn' },
+    lost:   { tally: 'LOST',    ticker: 'SIGNAL LOST',     brief: 'LOST',   sig: 0, cls: 'bad'  },
+    mouse:  { tally: 'OFF AIR', ticker: 'MOUSE MODE',      brief: 'MOUSE',  sig: 0, cls: 'bad'  },
+  };
+  function apply(node, name) {
+    const s = STATES[name];
+    node.dataset.state = (name === 'edge') ? 'locked' : name;
+    node.dataset.edge = (name === 'edge') ? '1' : '0';
+    node.querySelector('[data-tallytxt]').textContent = s.tally;
+    node.querySelector('[data-ticker]').textContent =
+      node.classList.contains('small') ? s.brief : s.ticker;
+    [...node.querySelector('[data-meter]').children].forEach((b, i) => {
+      b.className = i < s.sig ? s.cls : '';
+    });
+  }
+
+  /* ---- clone the peep into the chrome rail --------------------------- */
+  const mk = (name, small) => {
+    const n = live.cloneNode(true);
+    n.removeAttribute('data-live');
+    if (small) n.classList.add('small');
+    apply(n, name);
+    return n;
+  };
+  document.querySelector('[data-slot="locked"]').append(mk('locked'));
+  document.querySelector('[data-slot="lost"]').append(mk('lost'));
+  document.querySelector('[data-slot="mouse"]').append(mk('mouse'));
+  const smallRow = document.querySelector('[data-slot="small"]');
+  smallRow.append(mk('locked', 1), mk('lost', 1), mk('mouse', 1));
+
+  /* ---- face mesh: a cheap plausible 478-pt drift --------------------- */
+  // Pre-baked unit-space mesh (ellipsoid shell + feature clusters), drawn
+  // with one translate per frame — same cost shape as boxing.html's noseDot.
+  const PTS = [];
+  let seed = 7;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < 300; i++) {            // face oval shell
+    const a = rnd() * Math.PI * 2, r = .74 + rnd() * .26;
+    PTS.push([Math.cos(a) * r * .62, Math.sin(a) * r * .86 + .04]);
+  }
+  for (const [cx, cy, n, s] of [[-.26,-.18,46,.12],[.26,-.18,46,.12],[0,.08,30,.09],[0,.38,46,.16]]) {
+    for (let i = 0; i < n; i++) PTS.push([cx + (rnd()-.5)*s*2, cy + (rnd()-.5)*s]);
+  }
+
+  const rigs = [...document.querySelectorAll('.peep')].map(p => {
+    const c = p.querySelector('[data-nose]');
+    return { p, c, x: c.getContext('2d'), af: p.querySelector('[data-af]'),
+             tc: p.querySelector('[data-tc]'), w: 0, h: 0 };
+  });
+
+  const t0 = performance.now();
+  function frame(now) {
+    requestAnimationFrame(frame);
+    const t = (now - t0) / 1000;
+    // one shared "head" path: a slow bob plus the occasional slip left/right
+    const slip = Math.sin(t * .55) * .5 + Math.sin(t * .23 + 1.3) * .32;
+    for (const g of rigs) {
+      const st = g.p.dataset.state, edge = g.p.dataset.edge === '1';
+      if (g.tc) {
+        const f = Math.floor(t * 30) % 30, sec = 89 + Math.floor(t);
+        g.tc.textContent = '00:' + String(Math.floor(sec / 60) % 60).padStart(2, '0') + ':' +
+          String(sec % 60).padStart(2, '0') + ':' + String(f).padStart(2, '0');
+      }
+      if (st !== 'locked') { if (g.c.width) g.c.width = 0; continue; }
+      if (!g.w) { g.w = g.c.clientWidth | 0; g.h = g.c.clientHeight | 0; }
+      if (!g.w) continue;
+      if (g.c.width !== g.w) { g.c.width = g.w; g.c.height = g.h; }
+      const cx = (edge ? .70 : .455 + slip * .075) * g.w;
+      const cy = (.45 + Math.sin(t * .9 + 2) * .032) * g.h;
+      const sc = g.h * (edge ? .52 : .42), x = g.x;
+      x.clearRect(0, 0, g.w, g.h);
+      x.fillStyle = 'rgba(210,235,255,.5)';
+      for (let i = 0; i < PTS.length; i++)
+        x.fillRect(cx + PTS[i][0] * sc - .5, cy + PTS[i][1] * sc - .5, 1, 1);
+      x.beginPath(); x.arc(cx, cy + .1 * sc, g.w > 160 ? 4 : 2.5, 0, 7);
+      x.fillStyle = '#FF6B57'; x.fill();
+      g.af.style.transform = 'translate(' + cx.toFixed(1) + 'px,' + (cy + .04 * sc).toFixed(1) + 'px)';
+    }
+  }
+  requestAnimationFrame(frame);
+
+  /* ---- chrome switcher ---------------------------------------------- */
+  document.querySelectorAll('.switch button').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.switch button').forEach(o => o.classList.remove('on'));
+      b.classList.add('on');
+      apply(live, b.dataset.set);
+    });
+  });
+  apply(live, 'locked');
+})();
+</script>
+</body>
+</html>

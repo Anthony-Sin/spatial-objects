@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scrap! — beat the count · lab</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --paper:#FFF8EC; --paper2:#FDF3E3; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: #241c12; }
+  body { font-family: "Fredoka","Baloo 2","Avenir Next","Trebuchet MS",system-ui,sans-serif;
+    color: var(--paper); }
+  #cam { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
+    transform: scaleX(-1); opacity: .38; filter: saturate(.7) brightness(.8); }
+  #fx { position: fixed; inset: 0; z-index: 10; }
+  .vig { position: fixed; inset: 0; z-index: 5; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(36,28,18,.55) 100%); }
+
+  .panel { position: fixed; top: 16px; right: 16px; bottom: 16px; width: 322px; z-index: 20;
+    border: 2.5px solid var(--ink); border-radius: 18px; background: var(--paper);
+    color: var(--ink); box-shadow: 0 6px 0 rgba(43,33,24,.5), 0 16px 40px rgba(0,0,0,.4);
+    display: flex; flex-direction: column; overflow: hidden; }
+  .panel h1 { font-size: 13px; letter-spacing: .22em; padding: 11px 14px 9px;
+    background: var(--ink); color: var(--paper); }
+  .panel h1 em { color: var(--sun); font-style: normal; }
+  .sec { padding: 10px 14px; border-bottom: 2px dashed rgba(43,33,24,.25); }
+  .sec:last-child { border-bottom: 0; }
+  .big { font-size: 30px; font-weight: 800; line-height: 1.05; }
+  .sub { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; opacity: .7; margin-top: 2px; }
+  .row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .stat { background: var(--paper2); border: 2px solid var(--ink); border-radius: 10px;
+    padding: 5px 7px; text-align: center; }
+  .stat b { display: block; font-size: 17px; }
+  .stat span { font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; opacity: .65; }
+  .hand { display: flex; align-items: center; gap: 7px; background: var(--paper2);
+    border: 2px solid var(--ink); border-radius: 10px; padding: 5px 8px; margin-top: 5px;
+    font-size: 11px; }
+  .hand .dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--ink); flex: none; }
+  .hand .meter { flex: 1; height: 8px; border: 2px solid var(--ink); border-radius: 5px;
+    background: rgba(43,33,24,.12); overflow: hidden; }
+  .hand .meter i { display: block; height: 100%; background: var(--coral); }
+  .hand.off { opacity: .38; }
+  #log { flex: 1; overflow-y: auto; font-family: ui-monospace, Menlo, monospace;
+    font-size: 10.5px; line-height: 1.5; padding: 8px 14px; }
+  #log div { white-space: nowrap; }
+  #log .hit { color: #2f7d4b; } #log .miss { color: #c0392b; }
+  #log .ev { color: #7d6a4f; } #log .ver { font-weight: 700; }
+  .sliders label { display: flex; align-items: center; gap: 8px; font-size: 10.5px;
+    letter-spacing: .08em; text-transform: uppercase; margin-top: 6px; }
+  .sliders input { flex: 1; accent-color: var(--coral); }
+  .sliders output { width: 38px; text-align: right; font-size: 11px; }
+  .hint { font-size: 10px; line-height: 1.45; opacity: .75; padding: 9px 14px;
+    background: var(--paper2); }
+  .btn { display: block; width: 100%; margin-top: 7px; padding: 8px; border: 2.5px solid var(--ink);
+    border-radius: 12px; background: var(--sun); color: var(--ink); font: inherit;
+    font-size: 12px; font-weight: 800; letter-spacing: .14em; cursor: pointer;
+    box-shadow: 0 3px 0 rgba(43,33,24,.5); }
+  .btn:active { transform: translateY(2px); box-shadow: none; }
+</style>
+</head>
+<body>
+<video id="cam" playsinline muted></video>
+<div class="vig"></div>
+<canvas id="fx"></canvas>
+
+<div class="panel">
+  <h1>BEAT THE COUNT · <em>LAB</em></h1>
+  <div class="sec">
+    <div class="big" id="status">—</div>
+    <div class="sub" id="subline">starting…</div>
+  </div>
+  <div class="sec">
+    <div class="grid">
+      <div class="stat"><b id="cPunch">0</b><span>punches</span></div>
+      <div class="stat"><b id="cTag">0</b><span>tagged</span></div>
+      <div class="stat"><b id="cMiss">0</b><span>missed</span></div>
+      <div class="stat"><b id="cFade">0</b><span>fades</span></div>
+      <div class="stat"><b id="cUp">0</b><span>ups</span></div>
+      <div class="stat"><b id="cOut">0</b><span>outs</span></div>
+    </div>
+    <div class="row" style="margin-top:8px"><span id="camline">cam: —</span><span id="trkline">track: —</span></div>
+  </div>
+  <div class="sec" id="hands"></div>
+  <div class="sec sliders">
+    <label>rings <input id="sN" type="range" min="1" max="6" step="1" value="3"><output id="oN">3</output></label>
+    <label>size <input id="sR" type="range" min=".04" max=".18" step=".01" value=".09"><output id="oR">.09</output></label>
+    <label>fuse <input id="sF" type="range" min="1" max="6" step=".2" value="2.6"><output id="oF">2.6s</output></label>
+    <label>count <input id="sT" type="range" min="4" max="16" step=".5" value="8"><output id="oT">8s</output></label>
+  </div>
+  <div id="log"></div>
+  <div class="hint">
+    <b>Touch the ring with your glove</b> or punch <b>toward the camera</b> at it —
+    a sideways swipe won't fire (punches are thrown by depth, not x/y motion).
+    Click anywhere = mouse-punch at that spot. <span id="camnote"></span>
+  </div>
+  <div class="sec"><button class="btn" id="again">KNOCK ME DOWN AGAIN</button></div>
+</div>
+
+<script type="module">
+/* rise-lab — standalone sandbox for the get-up QTE.
+   Drives the REAL code path: FistTracker emits punches {kind,side,power,x,y},
+   a real Fight is armed into 'playerdown' and its _riseTick does the exact
+   same ring hit-test the bout runs. Every punch is logged with where it
+   landed vs the ring, so a punch that "did nothing" shows why. */
+import { FistTracker } from './shared/boxing/fists.js';
+import { Fight } from './shared/boxing/fight.js';
+import { BoxingAudio } from './shared/boxing/audio.js';
+import Hands from './shared/hands.js';
+
+const $ = q => document.querySelector(q);
+const video = $('#cam'), fx = $('#fx'), cx = fx.getContext('2d');
+const logEl = $('#log');
+const DPR = Math.min(2, devicePixelRatio || 1);
+const EMPTY = { hands: [] };
+
+const tracker = new FistTracker();
+const fight = new Fight({ seed: (Math.random() * 2 ** 31) | 0 });
+const audio = new BoxingAudio();
+
+const cnt = { punch: 0, tag: 0, miss: 0, nopos: 0, fade: 0, up: 0, out: 0 };
+let marks = [];          // punch impact splats {x,y,v,t0}
+let holdUntil = 0;       // verdict splash timer — sim frozen while showing
+let verdict = null;      // 'UP!' | 'STAYED DOWN' | null
+let armTimer = 0;        // pending re-arm, cleared if user re-arms early
+let lastHs = EMPTY;      // freshest hands state, for the HUD row
+let ringBefore = null;   // ring pos at step start — splats outlive ring moves
+
+/* ---------- arming: force the real fight into the count ---------- */
+function arm() {
+  const s = fight.state;
+  s.phase = 'playerdown'; s.player.hp = 0; s.events.length = 0;
+  fight._phaseT = 0;
+  fight._riseOpen();       // real ring spawn + 'rise' event — _downs inside
+                           // escalates it: each arm is a meaner count
+  verdict = null;
+  fight.state.events.length = 0;
+  log(`down #${s.rise.depth} — tag ${s.rise.need} rings (r=${s.rise.r.toFixed(2)}, fuse ${(fight._eachFor || 0).toFixed(1)}s)`, 'ev');
+}
+const rearm = () => { clearTimeout(armTimer); armTimer = setTimeout(arm, 1600); };
+
+/* ---------- camera / tracking (skippable: ?nocam) ---------- */
+let hands = null;
+const qs = new URLSearchParams(location.search);
+if (!qs.has('nocam')) (async () => {
+  try {
+    const ms = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, frameRate: 30 }, audio: false });
+    video.srcObject = ms; await video.play();
+    hands = await Hands.create(video, './vendor/mediapipe', { preferCpu: false });
+    $('#camnote').textContent = 'cam live.';
+  } catch (e) {
+    $('#camnote').textContent = 'no cam (' + (e?.name || e) + ') — click to punch.';
+  }
+})(); else $('#camnote').textContent = 'cam skipped (?nocam) — click to punch.';
+
+/* ---------- mouse + test hooks ---------- */
+const injected = [];
+window.__injectPunch = (x, y, o = {}) =>
+  injected.push({ kind: o.kind || 'jab', side: o.side || 'left', power: o.power ?? 1, x, y });
+fx.addEventListener('pointerdown', e => {
+  audio.unlock();
+  __injectPunch(e.clientX / PW(), e.clientY / innerHeight, { kind: 'jab' });
+});
+addEventListener('pointerdown', () => audio.unlock(), { once: true });
+addEventListener('keydown', () => audio.unlock(), { once: true });
+$('#again').onclick = () => { clearTimeout(armTimer); holdUntil = 0; arm(); };
+
+/* sliders → live tuning on the real fight's own table */
+const bind = (id, out, key, fmt) => {
+  const el = $(id), o = $(out);
+  el.oninput = () => { fight._T[key] = +el.value; o.textContent = fmt(+el.value); };
+};
+bind('#sN', '#oN', 'riseTargets', v => v);
+bind('#sR', '#oR', 'riseR', v => v.toFixed(2));
+bind('#sF', '#oF', 'riseEachT', v => v.toFixed(1) + 's');
+bind('#sT', '#oT', 'riseT', v => v + 's');
+
+/* ---------- log ---------- */
+function log(txt, cls = 'ev') {
+  const d = document.createElement('div');
+  d.className = cls; d.textContent = txt;
+  logEl.appendChild(d);
+  while (logEl.children.length > 60) logEl.firstChild.remove();
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+/* ---------- frame ---------- */
+/* play area = everything left of the debug panel — all normalized x (ring,
+   palms, splats, clicks) map into it, and riseAspect is its W/H so the hit
+   test stays an exact circle */
+const PW = () => Math.max(300, innerWidth - 356);
+const ASP = () => PW() / Math.max(1, innerHeight);
+let lastT = performance.now();
+
+function frame(tNow) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(.1, Math.max(0, (tNow - lastT) / 1000)); lastT = tNow;
+  const W = PW(), H = innerHeight;
+
+  // real tracker → real punches (drain every frame, hold or not)
+  const hs = lastHs = window.__forceHands || hands?.state || EMPTY;
+  tracker.update(hs, null, dt);
+  const punches = tracker.punches.splice(0).concat(injected.splice(0));
+
+  // step the REAL fight only while the count is live — splash freezes the sim
+  const frozen = tNow < holdUntil;
+  if (!frozen) {
+    // ring pos before the step — tags advance it, so the splat needs the pre-step spot
+    const rb = fight.state.rise;
+    ringBefore = { x: rb.x, y: rb.y, r: rb.r };
+    // glove palms double as touches — same wiring game.js feeds the bout
+    const riseTouch = [];
+    for (const h of hs.hands || [])
+      if (h?.palm && Number.isFinite(h.palm.x) && Number.isFinite(h.palm.y))
+        riseTouch.push({ x: h.palm.x, y: h.palm.y });
+    fight.step(dt, { punches, riseAspect: ASP(), riseTouch });
+    readEvents(punches, tNow);
+  } else for (const pn of punches) {
+    // during the splash a punch is still worth showing — just marks 'no target'
+    cnt.punch++; mark(pn, 'idle', tNow);
+  }
+
+  draw(W, H, tNow, frozen);
+  hud(tNow);
+  audio.update(dt, fight.state);
+}
+
+/* pair each 'player-punch' event with the punch that produced it — _riseTick
+   emits player-punch then exactly one verdict, in input order */
+function readEvents(punches, tNow) {
+  let pi = 0, pending = null;
+  for (const e of fight.state.events) {
+    if (e === 'player-punch') { pending = punches[pi++]; cnt.punch++; }
+    else if (e === 'rise-hit' || e === 'rise-miss') {
+      if (pending) { mark(pending, e, tNow); pending = null; }
+      else if (e === 'rise-hit') {         // no punch paired → a glove touch tag
+        cnt.tag++;
+        const rb = ringBefore || fight.state.rise;
+        const t = (lastHs.hands || []).find(h => h?.palm &&
+          (h.palm.x - rb.x) ** 2 + ((h.palm.y - rb.y) / ASP()) ** 2 <= rb.r ** 2);
+        marks.push({ x: t?.palm.x ?? rb.x, y: t?.palm.y ?? rb.y, c: '#4FB06D', t0: tNow, hit: true });
+        log(`touch tag — glove inside the ring`, 'hit');
+      }
+    }
+    else if (e === 'rise-fade') { cnt.fade++; log('ring faded — next one', 'ev'); }
+    else if (e === 'revive') {
+      cnt.up++; verdict = 'UP!'; holdUntil = tNow + 1600;
+      log('★ REVIVED — back up at 25%', 'ver'); rearm();
+    }
+    else if (e === 'lose') {
+      cnt.out++; verdict = 'STAYED DOWN'; holdUntil = tNow + 1600;
+      log('✕ counted out — try again', 'ver'); rearm();
+    }
+    audio.handleEvent(e, fight.state);
+  }
+  fight.state.events.length = 0;
+}
+
+/* an impact splat where the game thinks the punch landed, colored by verdict */
+function mark(pn, verdict_, tNow) {
+  const r = fight.state.rise;
+  const asp = ASP();
+  const hasPos = Number.isFinite(pn?.x) && Number.isFinite(pn?.y);
+  let d = null;
+  if (hasPos && verdict_ !== 'idle') {
+    const dx = pn.x - r.x, dy = (pn.y - r.y) / asp;
+    d = Math.sqrt(dx * dx + dy * dy);
+  }
+  if (verdict_ === 'rise-hit') cnt.tag++;
+  else if (verdict_ === 'rise-miss') (hasPos ? cnt.miss++ : cnt.nopos++);
+  const c = verdict_ === 'rise-hit' ? '#4FB06D' : verdict_ === 'rise-miss' ? '#FF6B57' : '#9c8b74';
+  if (hasPos) marks.push({ x: pn.x, y: pn.y, c, t0: tNow, d, hit: verdict_ === 'rise-hit' });
+  const pos = hasPos ? `@(${pn.x.toFixed(2)},${pn.y.toFixed(2)})` : '@(no pos)';
+  const why = verdict_ === 'rise-hit' ? 'TAGGED'
+    : !hasPos ? 'MISS — punch carried no x,y'
+    : d != null && verdict_ !== 'idle' ? `MISS — off by ${(d - r.r).toFixed(3)} (r=${r.r.toFixed(2)})`
+    : 'no live count';
+  log(`${pn.side || '?'} ${pn.kind || 'punch'} ${pos} · ${why}`,
+      verdict_ === 'rise-hit' ? 'hit' : 'miss');
+}
+
+/* ---------- draw ---------- */
+function draw(W, H, tNow, frozen) {   // W = play-area width (panel excluded)
+  const nowS = tNow / 1000;
+  cx.clearRect(0, 0, innerWidth, H);   // clear the whole canvas, not just play
+  const st = fight.state, rise = st.rise;
+
+  if (verdict) {   // verdict splash, match game's callout vibe
+    cx.save(); cx.textAlign = 'center';
+    cx.font = `800 ${Math.min(96, W * .09)}px Fredoka, sans-serif`;
+    cx.lineWidth = 10; cx.strokeStyle = '#2B2118';
+    cx.fillStyle = verdict === 'UP!' ? '#4FB06D' : '#FF6B57';
+    cx.strokeText(verdict, W / 2, H * .42); cx.fillText(verdict, W / 2, H * .42);
+    cx.font = '700 17px Fredoka, sans-serif'; cx.fillStyle = '#FFF8EC';
+    cx.fillText(verdict === 'UP!' ? 'back up at 25% — again!' : 'the count ran out — again!',
+      W / 2, H * .42 + 40);
+    cx.restore();
+  }
+
+  // the ring — verbatim from boxing.html's drawOverlay QTE block
+  if (rise?.active && st.phase === 'playerdown') {
+    const cxr = rise.x * W, cyr = rise.y * H, R = rise.r * W;
+    const popIn = Math.min(1, (1 - rise.each01) * 9);
+    const pulse = 1 + Math.sin(nowS * 9) * .045;
+    const RR = Math.max(6, R * (.55 + .45 * popIn) * pulse);
+    cx.save(); cx.globalAlpha = .94;
+    cx.beginPath(); cx.arc(cxr, cyr, RR, 0, Math.PI * 2);
+    cx.fillStyle = '#FFC53D'; cx.fill();
+    cx.lineWidth = Math.max(5, RR * .13); cx.strokeStyle = '#2B2118'; cx.stroke();
+    cx.beginPath(); cx.arc(cxr, cyr, RR * .46, 0, Math.PI * 2);
+    cx.fillStyle = '#FFF8EC'; cx.fill();
+    cx.lineWidth = Math.max(3, RR * .07); cx.stroke();
+    cx.beginPath(); cx.arc(cxr, cyr, RR * .17, 0, Math.PI * 2);
+    cx.fillStyle = '#FF6B57'; cx.fill();
+    cx.beginPath();
+    cx.arc(cxr, cyr, RR * 1.24, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * rise.each01);
+    cx.lineWidth = Math.max(4, RR * .1); cx.lineCap = 'round';
+    cx.strokeStyle = '#FF6B57'; cx.stroke();
+    // faint true tag boundary — the aspect-corrected test in pixel space
+    cx.beginPath(); cx.arc(cxr, cyr, R, 0, Math.PI * 2);
+    cx.setLineDash([6, 7]); cx.lineWidth = 2;
+    cx.strokeStyle = 'rgba(255,248,236,.8)'; cx.stroke(); cx.setLineDash([]);
+    cx.restore();
+
+    // pips + count bar, top centre — same as the bout HUD
+    const pipR = Math.max(7, R * .2), pipY = Math.max(96, H * .105);
+    for (let i = 0; i < rise.need; i++) {
+      const gx = W / 2 + (i - (rise.need - 1) / 2) * pipR * 3.1;
+      cx.beginPath(); cx.arc(gx, pipY, pipR, 0, Math.PI * 2);
+      cx.fillStyle = i < rise.got ? '#4FB06D' : 'rgba(255,248,236,.3)'; cx.fill();
+      cx.lineWidth = 3; cx.strokeStyle = '#2B2118'; cx.stroke();
+    }
+    const bw = Math.min(340, W * .3), bx = W / 2 - bw / 2, by = pipY + pipR + 8;
+    cx.beginPath(); cx.roundRect(bx, by, bw, 9, 4.5);
+    cx.fillStyle = 'rgba(43,33,24,.35)'; cx.fill();
+    cx.beginPath(); cx.roundRect(bx, by, bw * Math.max(0, rise.t01), 9, 4.5);
+    cx.fillStyle = '#FF6B57'; cx.fill();
+
+    // the ref's count, big and left
+    const n = Math.min(10, Math.floor(fight._phaseT / (fight._T.riseT / 10)) + 1);
+    cx.save(); cx.textAlign = 'center';
+    cx.font = `800 ${Math.min(150, W * .14)}px Fredoka, sans-serif`;
+    cx.lineWidth = 12; cx.strokeStyle = '#2B2118'; cx.fillStyle = '#FFF8EC';
+    cx.strokeText(n, W * .14, H * .47); cx.fillText(n, W * .14, H * .47);
+    cx.font = '700 15px Fredoka, sans-serif';
+    cx.fillText(`TAG THE RINGS · ${rise.got}/${rise.need}`, W * .14, H * .47 + 34);
+    cx.restore();
+  }
+
+  // tracked hands: palm dot + reach ring, and the fist state label
+  for (const h of lastHs.hands || []) {
+    if (!h?.palm || !Number.isFinite(h.palm.x)) continue;
+    const px = h.palm.x * W, py = h.palm.y * H;
+    const span = h.lm?.length >= 10 ? Math.hypot((h.lm[0].x - h.lm[9].x) * W, (h.lm[0].y - h.lm[9].y) * H) : 30;
+    const col = h.side === 'left' ? '#5DA9E9' : '#FF6B57';
+    cx.beginPath(); cx.arc(px, py, Math.max(14, span * .9), 0, Math.PI * 2);
+    cx.fillStyle = h.kind === 'fist' ? col : 'rgba(255,248,236,.28)'; cx.fill();
+    cx.lineWidth = 4; cx.strokeStyle = '#2B2118'; cx.stroke();
+    cx.font = '700 11px Fredoka, sans-serif'; cx.textAlign = 'center';
+    cx.fillStyle = '#2B2118';
+    cx.fillText(`${h.side} · ${h.kind || '?'}`, px, py + Math.max(14, span * .9) + 14);
+  }
+
+  // impact splats fade out
+  marks = marks.filter(m => tNow - m.t0 < 900);
+  for (const m of marks) {
+    const a = 1 - (tNow - m.t0) / 900, px = m.x * W, py = m.y * H;
+    cx.save(); cx.globalAlpha = a;
+    cx.beginPath(); cx.arc(px, py, 16 + (1 - a) * 14, 0, Math.PI * 2);
+    cx.fillStyle = m.c; cx.fill();
+    cx.lineWidth = 3.5; cx.strokeStyle = '#2B2118'; cx.stroke();
+    if (m.hit) {   // starburst on tag
+      cx.font = '800 15px Fredoka, sans-serif'; cx.textAlign = 'center';
+      cx.fillStyle = '#2B2118'; cx.fillText('TAG', px, py + 5);
+    }
+    cx.restore();
+  }
+}
+
+/* ---------- hud ---------- */
+function hud(tNow) {
+  const st = fight.state, rise = st.rise;
+  $('#status').textContent = verdict
+    ? verdict : rise?.active ? `DOWN #${rise.depth || 1} · ${rise.got}/${rise.need}` : '—';
+  $('#subline').textContent = verdict
+    ? (verdict === 'UP!' ? 'you beat the count' : 'rings got away')
+    : rise?.active ? 'touch the ring or punch toward cam' : '…';
+  $('#cPunch').textContent = cnt.punch;
+  $('#cTag').textContent = cnt.tag;
+  $('#cMiss').textContent = cnt.miss + cnt.nopos;
+  $('#cFade').textContent = cnt.fade;
+  $('#cUp').textContent = cnt.up;
+  $('#cOut').textContent = cnt.out;
+  $('#camline').textContent = hands ? `cam ${(hands.stats.cameraHz || 0).toFixed(0)}Hz` : 'cam —';
+  $('#trkline').textContent = hands ? `track ${(hands.stats.trackHz || 0).toFixed(0)}Hz` : 'track —';
+  const dbg = tracker.debug();
+  const row = side => {
+    const h = (lastHs.hands || []).find(x => x.side === side);
+    const col = side === 'left' ? '#5DA9E9' : '#FF6B57';
+    if (!h) return `<div class="hand off"><i class="dot" style="background:${col}"></i>${side} — not seen</div>`;
+    const reach = Math.min(1, Math.max(0, dbg.reach[side] ?? 0));
+    // thrust velocity vs FIRE_VEL (1.2 reach/s) — the "why didn't it fire" meter
+    const rv = tracker._s?.[side]?.reachVel ?? 0, hot = rv > 1.2 ? '🔥' : '';
+    return `<div class="hand"><i class="dot" style="background:${col}"></i>` +
+      `${side} ${h.kind || '?'} <b>${dbg.state[side] || '?'}</b>` +
+      `<div class="meter"><i style="width:${(reach * 100) | 0}%"></i></div>` +
+      `v${rv.toFixed(1)}${hot} ${(h.palm?.x ?? -1).toFixed(2)},${(h.palm?.y ?? -1).toFixed(2)}</div>`;
+  };
+  $('#hands').innerHTML = row('left') + row('right');
+}
+
+function size() {
+  fx.width = Math.round(innerWidth * DPR); fx.height = Math.round(innerHeight * DPR);
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener('resize', size); size();
+
+window.__lab = { fight, tracker, cnt, marks: () => marks, arm };
+arm();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -17,6 +17,7 @@ hand._ingest([open], handed);
 check(hand.state.hands.length === 0, 'first-frame detection held at the phantom gate');
 hand._ingest([open], handed);
 check(hand.state.hands[0]?.kind === 'palm', 'open fingers register as a palm sign');
+check(hand.state.hands[0]?.side === 'right', 'raw camera Right label maps to right selfie glove');
 const x0 = hand.state.hands[0].lm[8].x;
 hand._ingest([open.map(p => ({ ...p, x: p.x + .05 }))], handed);
 const moved = hand.state.hands[0];

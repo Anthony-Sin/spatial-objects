@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>peep mockup 05 — glove tag</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Patrick+Hand&family=Nunito:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#FFF8EC; --paper2:#FDF3E3; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body { background: #241c12 url("../_plate.png") center/cover no-repeat;
+    font-family: "Fredoka","Baloo 2","Trebuchet MS",system-ui,sans-serif; color: var(--paper); }
+
+  /* ======================================================================
+     THE PEEP — "glove tag". A physical toy hanging in the corner: a drawn
+     boxing mitt swinging off a lace, the live camera masked into a blobby
+     window in its palm. Nothing here is a rounded rectangle.
+     Footprint: 244x258 at left 30 / bottom 30 (today's is 238 wide).
+     ====================================================================== */
+  .peep { position: fixed; left: 30px; bottom: 26px; z-index: 20;
+    width: 244px; height: 240px; pointer-events: none; }
+  .peep .card { position: absolute; inset: 0; transform-origin: 122px 4px;
+    will-change: transform; }
+  .peep .face { position: absolute; inset: 0; }
+  .peep .lay { position: absolute; inset: 0; width: 244px; height: 240px;
+    overflow: visible; }
+
+  /* camera masked into the drawn palm window (boils in sync with its ink) */
+  .winclip { position: absolute; inset: 0; clip-path: url(#winClip); }
+  .winclip .cam { position: absolute; left: 66px; top: 80px; width: 124px; height: 112px;
+    object-fit: cover; transform: scaleX(-1); display: block; }
+  .winclip canvas { position: absolute; left: 0; top: 0; width: 244px; height: 240px; }
+  .winclip .wash { position: absolute; inset: 0;
+    background: radial-gradient(ellipse 102px 86px at 128px 136px,
+      rgba(43,33,24,0) 52%, rgba(43,33,24,.5) 100%); }
+  .winclip .nocam { position: absolute; inset: 0; background: #1d1711;
+    background-image: repeating-linear-gradient(135deg, rgba(255,248,236,.05) 0 7px, transparent 7px 14px);
+    opacity: 0; }
+  .peep.lost .winclip .nocam { opacity: 1; }
+
+  /* the scrawled status ribbon sits on the glove, below the window */
+  .pill { position: absolute; left: 64px; top: 186px; width: 128px;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 4px 0 5px; transform: rotate(-2.2deg);
+    background: var(--ink); color: var(--paper);
+    border: 2.5px solid var(--ink); border-radius: 14px 12px 15px 11px;
+    box-shadow: 0 3px 0 rgba(43,33,24,.5);
+    font-family: "Patrick Hand","Fredoka",cursive; font-size: 15px; line-height: 1;
+    letter-spacing: .09em; text-transform: uppercase; white-space: nowrap; }
+  .pill i { width: 9px; height: 9px; border-radius: 50%; background: var(--leaf);
+    border: 1.5px solid rgba(43,33,24,.8); flex: none; }
+  .peep.lost .pill { background: var(--coral); }
+  .peep.lost .pill i { background: var(--sun); animation: blink .42s steps(1) infinite; }
+  .peep.mouse .pill { background: var(--sky); color: var(--ink); top: 174px; left: 66px; width: 124px; }
+  .peep.mouse .pill i { background: var(--paper); }
+  @keyframes blink { 50% { opacity: .15; } }
+
+  /* head drifting toward the edge of frame — the one thing the old peep
+     could not say at all */
+  .edge { position: absolute; left: 20px; top: -18px; width: 210px; text-align: center;
+    font-family: "Patrick Hand",cursive; font-size: 22px; color: var(--sun);
+    -webkit-text-stroke: 3.2px var(--ink); paint-order: stroke;
+    opacity: 0; transition: opacity .12s; transform: rotate(-3deg); }
+  .peep.edging .edge { opacity: 1; animation: nudge .5s ease-in-out infinite alternate; }
+  @keyframes nudge { to { transform: rotate(-3deg) translateY(-4px); } }
+
+  /* the big hand-scrawled callout for tracking loss */
+  .yell { position: absolute; left: 6px; bottom: 230px; width: 262px;
+    opacity: 0; transform: translateY(10px) rotate(-5deg); transform-origin: 30% 100%;
+    transition: opacity .18s, transform .3s cubic-bezier(.34,1.7,.5,1); }
+  .peep.lost .yell { opacity: 1; transform: rotate(-5deg);
+    animation: yellbob 1.05s ease-in-out infinite alternate; }
+  @keyframes yellbob { to { transform: rotate(-2.2deg) translateY(-5px) scale(1.03); } }
+  .yell b { display: block; font-family: "Patrick Hand",cursive; font-weight: 400;
+    font-size: 36px; line-height: .9; color: var(--sun);
+    -webkit-text-stroke: 4px var(--ink); paint-order: stroke;
+    text-shadow: 0 4px 0 rgba(43,33,24,.45); }
+  .yell small { display: block; margin: 2px 0 0 4px; font-family: "Patrick Hand",cursive;
+    font-size: 18px; color: var(--paper); -webkit-text-stroke: 3px var(--ink);
+    paint-order: stroke; }
+  .yell svg { display: block; margin-left: 96px; }
+
+  .face.back, .face.mouse { display: none; }
+  .face.back { transform: scaleX(-1); }   /* un-mirror the back so its lettering reads */
+  .peep.showback .face.front { display: none; }
+  .peep.showback .face.back { display: block; }
+  .peep.mouse .face.front, .peep.mouse .face.back { display: none !important; }
+  .peep.mouse .face.mouse { display: block; }
+
+  .backtxt { position: absolute; left: 48px; top: 176px; width: 160px; text-align: center;
+    font-family: "Patrick Hand",cursive; font-size: 17px; color: var(--ink);
+    transform: rotate(-2deg); }
+
+  /* the cursor that wiggles beside the mouse-mode charm */
+  .peep.mouse .wig { animation: wig 1.6s ease-in-out infinite alternate;
+    transform-origin: 152px 142px; }
+  @keyframes wig { to { transform: translate(7px,-5px) rotate(5deg); } }
+
+  /* ---- small breakpoint (<=1050px -> ~116px wide): the whole toy scales,
+     the ribbon drops its lettering and keeps the state dot ---- */
+  .peep.sm { width: 116px; height: 115px; }
+  .peep.sm .inner { transform: scale(.4754); transform-origin: 0 0;
+    position: absolute; left: 0; top: 0; width: 244px; height: 240px; }
+  .peep.sm .pill span { display: none; }
+  .peep.sm .pill { left: 98px; top: 178px; width: 60px; padding: 9px 0; }
+  .peep.sm .pill i { width: 26px; height: 26px; border-width: 3px; }
+  .peep.sm .yell b { font-size: 44px; -webkit-text-stroke: 6px var(--ink); }
+  .peep.sm .edge { font-size: 26px; -webkit-text-stroke: 3.4px var(--ink); }
+
+  /* ====================== mockup chrome (not the design) ================ */
+  .chrome { position: fixed; right: 20px; bottom: 20px; z-index: 60; width: 266px;
+    padding: 9px 11px 11px; color: var(--ink); background: rgba(255,248,236,.94);
+    border: 2.5px dashed var(--ink); border-radius: 14px; font-size: 11px; }
+  .chrome h4 { font-size: 9px; letter-spacing: .22em; text-transform: uppercase;
+    color: #9a3c2c; font-weight: 800; }
+  .chrome .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 7px 0 8px; }
+  .chrome .cell { position: relative; height: 152px; border: 1.5px solid rgba(43,33,24,.3);
+    border-radius: 9px; background: #4a3b2c url("../_plate.png") -520px -420px/1280px 800px; overflow: hidden; }
+  .chrome .cell em { position: absolute; left: 4px; top: 3px; z-index: 5; font-style: normal;
+    font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--paper);
+    text-shadow: 0 1px 2px #000; }
+  .chrome .cell .peep { position: absolute; left: 8px; bottom: 2px;
+    transform: scale(.36); transform-origin: 0 100%; }
+  .chrome .cell.smcell .peep { transform: scale(1); left: 4px; bottom: 6px; }
+  .chrome .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chrome button { pointer-events: auto; font: 800 10px "Fredoka",sans-serif; letter-spacing: .08em;
+    text-transform: uppercase; padding: 5px 9px; border: 2px solid var(--ink);
+    border-radius: 999px; background: var(--paper); color: var(--ink); cursor: pointer; }
+  .chrome button.on { background: var(--coral); color: #fff; }
+  .chrome p { margin-top: 6px; font-size: 10px; line-height: 1.3; opacity: .72; }
+</style>
+</head>
+<body>
+
+<!-- shared drawn geometry: the glove silhouette and the palm window.
+     Both boil across 3 hand-drawn frames; the window clip boils with its
+     own ink outline so the mask and the line never disagree. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <radialGradient id="gloss" cx=".36" cy=".26" r=".86">
+      <stop offset="0" stop-color="#FF9C8C"/><stop offset=".5" stop-color="#FF6B57"/>
+      <stop offset="1" stop-color="#DF4B38"/>
+    </radialGradient>
+    <radialGradient id="glossBack" cx=".36" cy=".26" r=".86">
+      <stop offset="0" stop-color="#FFFCF4"/><stop offset="1" stop-color="#EFDFC4"/>
+    </radialGradient>
+    <clipPath id="winClip" clipPathUnits="userSpaceOnUse"><path class="bw" d=""/></clipPath>
+    <clipPath id="gloveClip" clipPathUnits="userSpaceOnUse"><path class="bg" d=""/></clipPath>
+  </defs>
+</svg>
+
+<template id="tpl">
+<div class="inner">
+  <div class="yell">
+    <b>WHERE&rsquo;D YA GO?!</b>
+    <small>step back into frame</small>
+    <svg width="78" height="40" viewBox="0 0 78 40" fill="none">
+      <path d="M8 3C30 10 50 18 58 33" stroke="#2B2118" stroke-width="7" stroke-linecap="round"/>
+      <path d="M8 3C30 10 50 18 58 33" stroke="#FFC53D" stroke-width="3.4" stroke-linecap="round"/>
+      <path d="M46 31l14 5-3-14" stroke="#2B2118" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M46 31l14 5-3-14" stroke="#FFC53D" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>
+
+  <div class="card">
+    <!-- ---------------- front: the mitt with the camera in its palm ------- -->
+    <div class="face front">
+      <svg class="lay" viewBox="0 0 244 240">
+        <g transform="translate(0,8)"><path class="bg" fill="rgba(43,33,24,.5)"/></g>
+        <!-- lace: the thing it hangs from -->
+        <path class="lace" d="M122 2C118 12 126 20 122 28" stroke="#2B2118" stroke-width="7" fill="none" stroke-linecap="round"/>
+        <path class="lace" d="M122 2C118 12 126 20 122 28" stroke="#FFC53D" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path class="bg glovefill" fill="url(#gloss)" stroke="#2B2118" stroke-width="5" stroke-linejoin="round"/>
+        <g clip-path="url(#gloveClip)">
+          <!-- wide laced cuff: the detail that makes it read GLOVE, not bauble -->
+          <path d="M74 58C104 68 148 68 176 56" stroke="rgba(43,33,24,.8)" stroke-width="4" fill="none" stroke-linecap="round"/>
+          <path d="M88 28C106 38 130 44 158 40M90 46C110 50 134 44 160 26"
+                stroke="rgba(43,33,24,.6)" stroke-width="3.4" fill="none" stroke-linecap="round"/>
+          <path d="M30 164C22 172 24 182 36 188" stroke="rgba(43,33,24,.55)" stroke-width="2.6" fill="none"
+                stroke-linecap="round" stroke-dasharray="5 6"/>
+          <path d="M212 104C220 126 224 158 212 184" stroke="rgba(255,248,236,.3)" stroke-width="5" fill="none" stroke-linecap="round"/>
+        </g>
+        <!-- punched hole the hang-lace threads through -->
+        <circle cx="122" cy="24" r="7" fill="#2B2118"/><circle cx="122" cy="24" r="3" fill="#1b140d"/>
+      </svg>
+
+      <div class="winclip">
+        <div class="nocam"></div>
+        <img class="cam" src="../_cam.jpg" alt="">
+        <canvas data-nose width="244" height="240"></canvas>
+        <div class="wash"></div>
+      </div>
+
+      <svg class="lay" viewBox="0 0 244 240">
+        <path class="bw winink" fill="none" stroke="#2B2118" stroke-width="5"/>
+        <path d="M86 110C96 96 112 88 126 88" stroke="rgba(255,248,236,.5)" stroke-width="4" fill="none" stroke-linecap="round"/>
+      </svg>
+
+      <div class="edge">&larr; middle!</div>
+      <div class="pill"><i></i><span data-tag>face &middot; locked</span></div>
+    </div>
+
+    <!-- ---------------- back: it spins to show its blank side ------------- -->
+    <div class="face back">
+      <svg class="lay" viewBox="0 0 244 240">
+        <g transform="translate(0,8)"><path class="bg" fill="rgba(43,33,24,.5)"/></g>
+        <path class="lace" d="M122 2C118 12 126 20 122 28" stroke="#2B2118" stroke-width="7" fill="none" stroke-linecap="round"/>
+        <path class="lace" d="M122 2C118 12 126 20 122 28" stroke="#FFC53D" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path class="bg" fill="url(#glossBack)" stroke="#2B2118" stroke-width="5" stroke-linejoin="round"/>
+        <g stroke="#2B2118" fill="none" stroke-linecap="round">
+          <path d="M90 108l20 20M110 108l-20 20" stroke-width="6"/>
+          <path d="M146 108l20 20M166 108l-20 20" stroke-width="6"/>
+          <path d="M98 160c10-12 22 10 32-2s22 10 30-2" stroke-width="6"/>
+          <path d="M80 86c-6-10-2-18 6-20" stroke-width="4"/>
+          <path d="M180 86c6-10 2-18-6-20" stroke-width="4"/>
+        </g>
+        <circle cx="122" cy="24" r="7" fill="#2B2118"/>
+      </svg>
+      <div class="backtxt">no face in here!</div>
+    </div>
+
+    <!-- ---------------- mouse mode: a little drawn mouse on the lace ------ -->
+    <div class="face mouse">
+      <svg class="lay" viewBox="0 0 244 240">
+        <g transform="translate(0,8)"><path class="bw" fill="rgba(43,33,24,.5)"/></g>
+        <path class="lace" d="M122 2C118 26 126 56 122 84" stroke="#2B2118" stroke-width="7" fill="none" stroke-linecap="round"/>
+        <path class="lace" d="M122 2C118 26 126 56 122 84" stroke="#FFC53D" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path class="bw" fill="#FFF8EC" stroke="#2B2118" stroke-width="5"/>
+        <g stroke="#2B2118" fill="none" stroke-linejoin="round" stroke-linecap="round">
+          <path d="M128 98c21 0 33 17 33 38s-12 33-33 33-33-12-33-33 12-38 33-38z" fill="#5DA9E9" stroke-width="5"/>
+          <path d="M128 98v25" stroke-width="4.5"/>
+          <path d="M95 123h66" stroke-width="4.5"/>
+          <path d="M128 90c0-10 12-14 12-22" stroke-width="4.5"/>
+        </g>
+        <g class="wig">
+          <path d="M152 142l34 16-14 4 6 14-8 4-7-14-11 8z" fill="#FFF8EC" stroke="#2B2118" stroke-width="4.5" stroke-linejoin="round"/>
+        </g>
+      </svg>
+      <div class="pill"><i></i><span>mouse mode</span></div>
+    </div>
+  </div>
+</div>
+</template>
+
+<div class="peep locked" data-live></div>
+
+<div class="chrome">
+  <h4>mockup chrome &middot; not the design</h4>
+  <div class="grid">
+    <div class="cell"><em>locked</em><div class="peep locked" data-st="locked"></div></div>
+    <div class="cell"><em>lost</em><div class="peep lost showback" data-st="lost"></div></div>
+    <div class="cell"><em>mouse</em><div class="peep mouse" data-st="mouse"></div></div>
+    <div class="cell smcell"><em>&le;1050px &middot; 116px</em><div class="peep locked sm" data-st="sm"></div></div>
+  </div>
+  <div class="btns">
+    <button data-set="locked" class="on">locked</button>
+    <button data-set="lost">lost</button>
+    <button data-set="mouse">mouse</button>
+    <button data-hit>take a hit</button>
+  </div>
+  <p>Live peep is bottom-left at 1:1. It sways on a real pendulum and tilts the way you lean.</p>
+</div>
+
+<script>
+/* ======================================================================
+   drawn geometry. One base path per shape, then two jittered siblings —
+   that is the whole "boil". Three discrete frames at ~9fps, handed to the
+   compositor as an animation of the CSS `d` property: no canvas redraw,
+   no JS per frame for the outline at all.
+   ====================================================================== */
+const GLOVE = 'M78 24C78 15 166 15 166 24C168 34 170 46 172 56'
+  + 'C208 68 234 98 232 134C230 176 200 210 160 218C120 226 76 216 52 192'
+  + 'C40 197 23 190 20 176C17 163 27 154 39 156C45 157 48 162 50 168'
+  + 'C36 150 30 120 40 96C48 76 60 64 76 58C76 46 78 34 78 24Z';
+const WIN = 'M128 86C166 84 184 108 184 136C184 168 162 186 128 186'
+  + 'C94 186 72 168 72 136C72 108 92 86 128 86Z';
+
+/* deterministic wobble so the three frames are a hand's three passes,
+   not random noise every reload */
+let seed = 20260211;
+const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296 - .5;
+const boil = (d, amp) => d.replace(/-?\d+(\.\d+)?/g, n => (parseFloat(n) + rnd() * amp * 2).toFixed(1));
+
+const frames = (d, amp) => [d, boil(d, amp), boil(d, amp)];
+const gF = frames(GLOVE, 1.9), wF = frames(WIN, 1.6);
+const kf = (name, fr) => '@keyframes ' + name + '{0%{d:path("' + fr[0] + '")}'
+  + '33.33%{d:path("' + fr[1] + '")}66.66%{d:path("' + fr[2] + '")}}';
+const st = document.createElement('style');
+st.textContent = kf('boilG', gF) + kf('boilW', wF)
+  + '.bg{d:path("' + gF[0] + '");animation:boilG .33s steps(1,end) infinite}'
+  + '.bw{d:path("' + wF[0] + '");animation:boilW .33s steps(1,end) infinite}'
+  /* tracking lost: the ink goes limp — the line stops breathing */
+  + '.peep.lost .bg,.peep.lost .bw{animation-duration:1.5s}';
+document.head.appendChild(st);
+
+/* ---------------- instantiate: one live peep + four chrome previews ----- */
+const tpl = document.getElementById('tpl');
+document.querySelectorAll('.peep').forEach(p => p.appendChild(tpl.content.cloneNode(true)));
+
+/* ---------------- the face mesh, alive ---------------------------------- */
+/* a 478-point mesh is really a face-shaped cloud; precompute unit offsets
+   once and only transform them per frame. 1px rects, no path building. */
+const MESH = (() => {
+  const pts = []; let s = 7;
+  const r = () => (s = (s * 48271) % 2147483647) / 2147483647;
+  for (let i = 0; i < 170; i++) {
+    const a = r() * 6.283, rad = Math.sqrt(r()) ;
+    pts.push([Math.cos(a) * rad * .74, Math.sin(a) * rad * .96 - .04]);
+  }
+  for (let i = 0; i < 26; i++) {               // a denser ridge: brow + lips
+    const t = i / 26 * 6.283;
+    pts.push([Math.cos(t) * .42, (i % 2 ? -.34 : .3) + Math.sin(t) * .06]);
+  }
+  return pts;
+})();
+
+function meshDraw(cv, lean, lift, t) {
+  const x = cv.getContext('2d');
+  x.clearRect(0, 0, 244, 240);
+  const cx = 128 + lean * 26, cy = 134 + lift * 12, rx = 38, ry = 44;
+  x.fillStyle = 'rgba(210,235,255,.5)';
+  for (let i = 0; i < MESH.length; i++) {
+    const p = MESH[i];
+    const jx = Math.sin(t * 2.1 + i) * .5, jy = Math.cos(t * 1.7 + i * .7) * .5;
+    x.fillRect(cx + p[0] * rx + jx - .5, cy + p[1] * ry + jy - .5, 1, 1);
+  }
+  x.beginPath();
+  x.arc(cx + lean * 4, cy + 8 + lift * 2, 4, 0, 7);
+  x.fillStyle = '#ff6b57'; x.fill();
+}
+
+/* ---------------- the live one: pendulum + lean ------------------------- */
+const live = document.querySelector('.peep[data-live]');
+const liveCard = live.querySelector('.card');
+const liveCv = live.querySelector('canvas[data-nose]');
+const liveTag = live.querySelector('[data-tag]'), liveEdge = live.querySelector('.edge');
+let state = 'locked', theta = 0, omega = 0, spin = 0, spinTarget = 0, lean = 0, lift = 0;
+
+function setState(s) {
+  state = s;
+  live.className = 'peep ' + s;
+  spinTarget = s === 'lost' ? 1 : 0;
+  liveTag.textContent = s === 'lost' ? 'face · lost' : s === 'mouse' ? 'mouse mode' : 'face · locked';
+  if (s === 'lost') omega -= 5.2;                    // it drops when the face drops
+  document.querySelectorAll('[data-set]').forEach(b => b.classList.toggle('on', b.dataset.set === s));
+}
+document.querySelectorAll('[data-set]').forEach(b => b.onclick = () => setState(b.dataset.set));
+document.querySelector('[data-hit]').onclick = () => { omega += 13; };
+
+let t0 = performance.now(), mt = 0;
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min(.05, (now - t0) / 1000); t0 = now; mt += dt;
+
+  /* the player's head: a slow plausible drift (stands in for face.state) */
+  lean = state === 'locked' ? Math.sin(mt * .42) * .62 + Math.sin(mt * .17) * .36 : 0;
+  lift = Math.sin(mt * .63) * .4;
+  const edging = state === 'locked' && Math.abs(lean) > .72;
+  live.classList.toggle('edging', edging);
+  if (edging) {                                   // point back toward centre frame
+    const want = lean > 0 ? 'middle! \u2192' : '\u2190 middle!';
+    if (liveEdge.textContent !== want) liveEdge.textContent = want;
+  }
+
+  /* short stiff pendulum: breeze + the lean it mirrors, spring + damping */
+  const breeze = Math.sin(mt * .9) * 1.5 + Math.sin(mt * 2.3) * .5;
+  const rest = (state === 'lost' ? -17 : state === 'mouse' ? 0 : lean * 11) + breeze;
+  omega += (-62 * (theta - rest) - 7.4 * omega) * dt;
+  theta += omega * dt;
+
+  /* lost: it spins to show its blank back */
+  spin += (spinTarget - spin) * Math.min(1, dt * 7);
+  const c = Math.cos(spin * Math.PI);
+  live.classList.toggle('showback', c < 0);
+  liveCard.style.transform = 'rotate(' + theta.toFixed(2) + 'deg) scaleX('
+    + (Math.abs(c) < .04 ? .04 : Math.abs(c)).toFixed(3) + ')';
+
+  if (state === 'locked' && !(frame++ & 1)) meshDraw(liveCv, lean, lift, mt);
+}
+let frame = 0;
+requestAnimationFrame(loop);
+
+/* chrome previews: static pose + one mesh draw, so they cost nothing */
+document.querySelectorAll('.peep[data-st]').forEach(p => {
+  const st = p.dataset.st, card = p.querySelector('.card');
+  const ang = st === 'lost' ? -16 : st === 'mouse' ? 3 : 9;
+  card.style.transform = 'rotate(' + ang + 'deg)' + (st === 'lost' ? ' scaleX(-1)' : '');
+  const tg = p.querySelector('[data-tag]');
+  if (tg) tg.textContent = st === 'lost' ? 'face · lost' : 'face · locked';
+  const cv = p.querySelector('canvas[data-nose]');
+  if (cv && st !== 'lost' && st !== 'mouse') meshDraw(cv, st === 'sm' ? .1 : .5, .1, 3);
+  if (st === 'locked') p.classList.add('edging');
+});
+setState('locked');
+</script>
+</body>
+</html>

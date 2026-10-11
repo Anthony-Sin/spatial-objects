@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>peep mock 02-corner-mirror — scrap!</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Patrick+Hand&family=Nunito:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#FFF8EC; --paper2:#FDF3E3; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8;
+    /* two in-family tints of --ink for the battered frame timber (on purpose) */
+    --wood:#4A3A2A; --wood2:#6B5340; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body { background: #241c12 url("../_plate.png") center/cover no-repeat;
+    font-family: "Fredoka", system-ui, sans-serif; color: var(--ink); }
+
+  /* ======================================================================
+     THE CORNER MIRROR — the peep as a physical object in the player's
+     corner: a battered locker-room mirror propped against the post, taped
+     at the corners, hand-wrap draped over the top, name scrawled on a strip
+     of athletic tape. Everything that used to be UI chrome is now a prop.
+     ====================================================================== */
+  .peep { position: fixed; left: 30px; bottom: 30px; z-index: 20; width: 238px;
+    pointer-events: none; transform: rotate(-1.6deg); transform-origin: 50% 100%;
+    filter: drop-shadow(0 10px 22px rgba(0,0,0,.5)); }
+
+  /* the timber: chunky ink-edged frame, hard offset shadow, chipped corner */
+  .peep .frame { position: relative; padding: 9px 9px 11px; border: 2.5px solid var(--ink);
+    border-radius: 15px; background:
+      repeating-linear-gradient(94deg, rgba(0,0,0,.14) 0 3px, rgba(255,255,255,.05) 3px 7px),
+      linear-gradient(170deg, var(--wood2), var(--wood) 42%, #3A2C20);
+    box-shadow: 0 6px 0 rgba(43,33,24,.75), inset 0 2px 0 rgba(255,248,236,.18),
+      inset 0 -3px 0 rgba(0,0,0,.3); }
+  /* chips in the timber — little ink-lipped bites out of the edge */
+  .peep .chip { position: absolute; background: var(--wood2); border: 2px solid var(--ink);
+    border-radius: 40% 60% 55% 45%; }
+  .peep .chip.a { width: 15px; height: 9px; left: 42px; top: -5px; transform: rotate(-6deg); }
+  .peep .chip.b { width: 10px; height: 13px; right: -5px; bottom: 44px; transform: rotate(8deg); }
+
+  /* the glass */
+  .peep .glass { position: relative; border-radius: 8px; overflow: hidden;
+    border: 2px solid rgba(20,14,8,.85); background: #1b2630;
+    box-shadow: inset 0 0 0 1px rgba(255,248,236,.14), inset 0 10px 22px rgba(0,0,0,.45); }
+  .peep .glass img { display: block; width: 100%; transform: scaleX(-1);
+    transition: filter .35s, opacity .35s; }
+  .peep .glass canvas, .peep .glass .lay { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .peep .lay { pointer-events: none; }
+
+  /* grease-pencil crosshair scrawled straight onto the glass — keep your
+     head inside the box. Goes coral + nudge-arrow when you drift out */
+  .peep .cross path, .peep .cross line { fill: none; stroke: rgba(255,248,236,.62);
+    stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round;
+    transition: stroke .2s; }
+  .peep .cross .tick { stroke-width: 2.2; }
+  .peep .cross .arrow { opacity: 0; stroke: var(--coral); stroke-width: 3.4; }
+  .peep.off .cross path, .peep.off .cross line { stroke: var(--coral); }
+  .peep.off .cross .arrow.on { opacity: 1; }
+
+  /* smudges, grease and a hairline chip in the glass — static, free */
+  .peep .smudge { opacity: .5; }
+  .peep .smudge path { fill: none; stroke: rgba(255,248,236,.5); stroke-linecap: round; }
+
+  /* ---- the fog: your own breath on the glass when the camera loses you.
+     Two static gradient layers + a cheap 7s transform drift (compositor
+     only — no per-frame blur, no filter). Palm-swipe streaks are a static
+     SVG mask, so they cost nothing after first paint. ---- */
+  .peep .fog { opacity: 0; transition: opacity .45s ease;
+    background:
+      radial-gradient(ellipse 62% 50% at 28% 32%, rgba(236,246,250,.82), rgba(236,246,250,0) 74%),
+      radial-gradient(ellipse 55% 45% at 78% 66%, rgba(226,240,248,.8), rgba(226,240,248,0) 74%),
+      radial-gradient(ellipse 70% 60% at 52% 88%, rgba(240,248,250,.72), rgba(240,248,250,0) 76%),
+      linear-gradient(176deg, rgba(228,241,247,.62), rgba(206,226,238,.72));
+    -webkit-mask-image: var(--swipe); mask-image: var(--swipe);
+    -webkit-mask-size: 100% 100%; mask-size: 100% 100%; }
+  .peep.lost .fog { opacity: 1; animation: steam 7s ease-in-out infinite alternate; }
+  @keyframes steam { from { transform: translate3d(-4px,3px,0) scale(1.06); }
+                     to   { transform: translate3d(5px,-3px,0) scale(1.1); } }
+  /* condensation drips — three thin runs, slow, cheap */
+  .peep .drips { opacity: 0; transition: opacity .4s; }
+  .peep.lost .drips { opacity: 1; }
+  .peep .drips i { position: absolute; top: 0; width: 3px; border-radius: 0 0 3px 3px;
+    background: linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,.85));
+    animation: drip 5.5s linear infinite; }
+  .peep .drips i:nth-child(1) { left: 38px;  height: 46px; animation-delay: -1.2s; }
+  .peep .drips i:nth-child(2) { left: 128px; height: 62px; animation-delay: -3.4s; }
+  .peep .drips i:nth-child(3) { left: 186px; height: 34px; animation-delay: -4.6s; }
+  @keyframes drip { 0% { transform: translateY(0); opacity: 0; }
+    12% { opacity: .9; } 100% { transform: translateY(120px); opacity: 0; } }
+  /* one static blur on a 220px still — set once on state change, never
+     animated, so it rasterises a single cached layer */
+  .peep.lost .glass img { filter: blur(4px) brightness(.5) saturate(.35); }
+  /* finger-written in the steam */
+  .peep .wrote { opacity: 0; transition: opacity .35s .12s; }
+  .peep.lost .wrote { opacity: 1; }
+  .peep .wrote text { font-family: "Patrick Hand", cursive; fill: rgba(26,40,52,.8);
+    font-size: 29px; }
+
+  /* ---- the hand-wrap draped over the top-right corner ---- */
+  .peep .wrap { position: absolute; right: -18px; top: -34px; width: 78px; z-index: 3;
+    transform: rotate(5deg); }
+  .peep .wrap .cloth { stroke: var(--ink); stroke-width: 2.5; stroke-linejoin: round;
+    stroke-linecap: round; }
+  .peep .wrap .fold { fill: none; stroke: rgba(43,33,24,.42); stroke-width: 1.8; }
+  /* ---- mouse mode: the towel thrown right over the glass ---- */
+  .peep .towel { position: absolute; left: 6px; right: -4px; top: -26px; z-index: 4;
+    opacity: 0; transform: translateY(-14px) rotate(-3deg);
+    transition: opacity .3s, transform .3s; pointer-events: none;
+    filter: drop-shadow(-3px 8px 7px rgba(0,0,0,.5)); }
+  .peep.mouse .towel { opacity: 1; transform: rotate(-3deg); }
+  /* no camera at all — the glass behind the towel is just dark glass */
+  .peep.mouse .glass img { opacity: 0; }
+  .peep .towel .cloth { stroke: var(--ink); stroke-width: 2.5; stroke-linejoin: round; }
+  .peep .towel .fold { fill: none; stroke: rgba(43,33,24,.5); stroke-width: 2; }
+  .peep.mouse .wrap, .peep.mouse .cross { display: none; }
+
+  /* ---- athletic tape at the corners, holding the thing together ---- */
+  .peep .tape { position: absolute; z-index: 5; background:
+      repeating-linear-gradient(0deg, rgba(43,33,24,.07) 0 2px, rgba(43,33,24,0) 2px 5px),
+      var(--paper2);
+    border: 1.5px solid rgba(43,33,24,.5); box-shadow: 0 2px 0 rgba(43,33,24,.3);
+    clip-path: polygon(3% 0, 97% 2%, 100% 46%, 96% 100%, 5% 97%, 0 52%); }
+  .peep .tape.tl { width: 52px; height: 19px; left: -14px; top: -8px; transform: rotate(-38deg); }
+  .peep .tape.br { width: 46px; height: 17px; right: -13px; bottom: -4px; transform: rotate(-36deg); }
+  .peep .tape.bl { width: 40px; height: 16px; left: -12px; bottom: 26px; transform: rotate(40deg); }
+
+  /* ---- THE NAME STRIP: a length of tape across the bottom rail with the
+     fighter's name in marker. This is the tag. On LOST it flips to a
+     scrawled warning in coral; on MOUSE it's a different note. ---- */
+  .peep .strip { position: absolute; left: 10px; right: 26px; bottom: -13px; z-index: 6;
+    padding: 4px 10px 3px; background:
+      repeating-linear-gradient(0deg, rgba(43,33,24,.06) 0 2px, rgba(43,33,24,0) 2px 5px),
+      var(--paper);
+    border: 2px solid var(--ink); border-radius: 3px;
+    box-shadow: 0 3px 0 rgba(43,33,24,.5);
+    clip-path: polygon(2% 6%, 99% 0, 100% 60%, 98% 100%, 3% 94%, 0 48%);
+    transform: rotate(-1.3deg); transition: background .25s, transform .25s; }
+  .peep .strip .scrawl { font-family: "Patrick Hand", cursive; font-size: 17px; line-height: 1.05;
+    letter-spacing: .01em; color: var(--ink); white-space: nowrap; overflow: hidden; }
+  .peep .strip .scrawl b { font-weight: 400; }
+  .peep .strip .sub { font-family: "Patrick Hand", cursive; font-size: 12.5px;
+    color: rgba(43,33,24,.62); margin-top: -2px; white-space: nowrap; }
+  /* a marker underline doodle under the name */
+  .peep .strip .ul { position: absolute; left: 10px; right: 14px; bottom: 2px; height: 5px; }
+  .peep .strip .ul path { fill: none; stroke: var(--coral); stroke-width: 2.2;
+    stroke-linecap: round; opacity: .75; }
+
+  .peep.lost .strip { background:
+      repeating-linear-gradient(0deg, rgba(43,33,24,.06) 0 2px, rgba(43,33,24,0) 2px 5px),
+      var(--sun);
+    transform: rotate(-3.4deg); animation: rattle .5s ease-in-out infinite alternate; }
+  .peep.lost .strip .scrawl { color: #8E2A17; font-size: 18px; }
+  .peep.lost .strip .sub { color: rgba(43,33,24,.75); }
+  @keyframes rattle { from { transform: rotate(-3.4deg) translateY(0); }
+                      to   { transform: rotate(-2.2deg) translateY(-1.5px); } }
+  .peep.mouse .strip { transform: rotate(-1deg); }
+  .peep.mouse .strip .scrawl { color: rgba(43,33,24,.9); }
+
+  /* lean read-out: the mirror itself tips a hair with your head, and a
+     grease-pencil tick slides along the bottom rail. No text needed. */
+  .peep .lean { position: absolute; left: 12px; right: 12px; bottom: 3px; height: 5px; z-index: 2;
+    border-radius: 3px; background: rgba(255,248,236,.18); overflow: hidden; }
+  .peep .lean i { position: absolute; top: -1px; width: 22px; height: 7px; border-radius: 4px;
+    background: var(--sun); box-shadow: 0 0 0 1.5px rgba(43,33,24,.8);
+    left: 50%; margin-left: -11px; will-change: transform; }
+  .peep.lost .lean, .peep.mouse .lean { opacity: .25; }
+  .peep.lost .lean i, .peep.mouse .lean i { background: rgba(255,248,236,.4); }
+
+  /* small breakpoint ≤1050px — the prop survives by shedding detail:
+     wrap + corner tape + crosshair ticks go, the strip keeps the name */
+  @media (max-width: 1050px) {
+    .peep { left: 14px; bottom: 14px; width: 116px; }
+    .peep .frame { padding: 5px 5px 6px; border-width: 2px; border-radius: 10px; }
+    .peep .wrap, .peep .tape.bl, .peep .chip, .peep .smudge { display: none; }
+    .peep .strip { left: 4px; right: 10px; bottom: -9px; padding: 2px 6px; }
+    .peep .strip .scrawl { font-size: 11px; } .peep .strip .sub { display: none; }
+    .peep .cross .tick { display: none; }
+  }
+
+  /* ====================== mockup chrome (not the design) ================= */
+  .chrome { position: fixed; z-index: 60; font-family: "Nunito", system-ui, sans-serif;
+    color: var(--paper); pointer-events: none; }
+  .chrome .pill { display: inline-block; padding: 2px 9px; border-radius: 999px;
+    border: 1.5px dashed rgba(255,248,236,.55); background: rgba(20,14,8,.72);
+    font-size: 9.5px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
+  .chrome.c-lock { left: 282px; bottom: 56px; }
+  .chrome.c-lost { left: 282px; bottom: 291px; }
+  .chrome.c-mouse { left: 282px; bottom: 526px; }
+  .chrome .lead { display: block; margin-top: 4px; max-width: 150px; font-size: 10.5px;
+    font-weight: 700; line-height: 1.3; color: rgba(255,248,236,.78);
+    text-shadow: 0 1px 3px rgba(0,0,0,.9); }
+  .legend { position: fixed; right: 24px; bottom: 22px; z-index: 60; width: 232px;
+    padding: 10px 12px 12px; border: 1.5px dashed rgba(255,248,236,.5); border-radius: 12px;
+    background: rgba(20,14,8,.78); color: rgba(255,248,236,.88);
+    font-family: "Nunito", system-ui, sans-serif; font-size: 10.5px; line-height: 1.45;
+    pointer-events: none; }
+  .legend h4 { font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--sun); margin-bottom: 5px; }
+  .legend .mini { margin-top: 9px; display: flex; align-items: flex-end; gap: 10px; }
+  .legend .mini .cap { font-size: 9px; letter-spacing: .14em; text-transform: uppercase;
+    color: rgba(255,248,236,.6); }
+  /* the ≤1050px variant, rendered inline at its real 116px so you can see it */
+  .mini-peep { position: relative; width: 116px; transform: rotate(-1.6deg); }
+  .mini-peep .frame { position: relative; padding: 5px 5px 6px; border: 2px solid var(--ink);
+    border-radius: 10px; background: linear-gradient(170deg, var(--wood2), var(--wood) 42%, #3A2C20);
+    box-shadow: 0 4px 0 rgba(43,33,24,.75); }
+  .mini-peep .glass { position: relative; border-radius: 5px; overflow: hidden;
+    border: 1.5px solid rgba(20,14,8,.85); }
+  .mini-peep .glass img { display: block; width: 100%; transform: scaleX(-1); }
+  .mini-peep .strip { position: absolute; left: 4px; right: 10px; bottom: -9px;
+    padding: 1px 6px 0; background: var(--paper); border: 2px solid var(--ink); border-radius: 3px;
+    box-shadow: 0 2px 0 rgba(43,33,24,.5); transform: rotate(-1.3deg);
+    font-family: "Patrick Hand", cursive; font-size: 11px; color: var(--ink); }
+  .mini-peep .tape { position: absolute; width: 34px; height: 13px; left: -9px; top: -5px;
+    transform: rotate(-38deg); background: var(--paper2); border: 1.5px solid rgba(43,33,24,.5);
+    clip-path: polygon(3% 0, 97% 2%, 100% 46%, 96% 100%, 5% 97%, 0 52%); }
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+
+<div class="chrome c-mouse"><span class="pill">mockup · state 3 of 3</span>
+  <span class="lead">no camera. towel over the glass, note in marker.</span></div>
+<div class="chrome c-lost"><span class="pill">mockup · state 2 of 3</span>
+  <span class="lead">face lost — the glass steams over and the tape flips.</span></div>
+<div class="chrome c-lock"><span class="pill">mockup · state 1 of 3 · live anchor</span>
+  <span class="lead">locked. real position: left 30 / bottom 30, 238px.
+  head drifts out of the grease-pencil box every few seconds.</span></div>
+
+<div class="legend">
+  <h4>mockup chrome</h4>
+  Three instances, all 1:1, stacked up the left rail so every state is visible
+  at once. Only the bottom one sits at the real in-game anchor.
+  <div class="mini">
+    <div class="mini-peep">
+      <div class="frame"><div class="glass"><img src="../_cam.jpg" alt=""></div></div>
+      <div class="tape"></div>
+      <div class="strip">ROOKIE · locked</div>
+    </div>
+    <div class="cap">≤1050px<br>116px</div>
+  </div>
+</div>
+
+<script>
+/* ---------------------------------------------------------------------------
+   build three peeps from one template, then run ONE rAF loop that draws the
+   fake 478-point face mesh into the locked instance only.
+--------------------------------------------------------------------------- */
+const GW = 220, GH = 165;   // glass box, 4:3 like the cam
+
+/* static mask used by the fog: white = fogged, dark strokes = palm-swiped
+   clear. Inlined as a data-URI so it paints once and never re-rasterises. */
+const SWIPE = `url("data:image/svg+xml;utf8,${encodeURIComponent(
+`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 220 165' preserveAspectRatio='none'>
+<rect width='220' height='165' fill='white'/>
+<g fill='none' stroke='black' stroke-linecap='round' opacity='.85'>
+<path d='M14 118 C60 96 118 104 168 78' stroke-width='15'/>
+<path d='M18 136 C66 116 124 122 176 96' stroke-width='11' opacity='.6'/>
+<path d='M168 24 C188 38 196 54 190 70' stroke-width='9' opacity='.45'/>
+</g></svg>`)}")`;
+
+const CROSS = `
+<svg class="lay cross" viewBox="0 0 220 165" preserveAspectRatio="none" aria-hidden="true">
+  <path d="M63 26 C58 25 55 29 55.5 36 L55 58"/>
+  <path d="M157 27 C163 26 166 30 165 37 L165.5 58"/>
+  <path d="M55 108 L56 131 C55 138 59 141 65 140"/>
+  <path d="M165 107 L164.5 130 C165.5 138 161 141.5 155 140"/>
+  <line class="tick" x1="110" y1="70" x2="110" y2="96"/>
+  <line class="tick" x1="97" y1="83" x2="123" y2="83"/>
+  <line class="tick" x1="55" y1="83" x2="66" y2="83"/>
+  <line class="tick" x1="154" y1="83" x2="165" y2="83"/>
+  <path class="arrow aL" d="M40 83 L24 83 M31 75 L22 83 L31 91"/>
+  <path class="arrow aR" d="M180 83 L196 83 M189 75 L198 83 L189 91"/>
+</svg>`;
+
+const SMUDGE = `
+<svg class="lay smudge" viewBox="0 0 220 165" preserveAspectRatio="none" aria-hidden="true">
+  <path d="M12 142 C24 132 30 136 44 128" stroke-width="7" opacity=".35"/>
+  <path d="M186 18 C196 26 200 34 198 44" stroke-width="5" opacity=".3"/>
+  <path d="M203 118 L214 131 M206 126 L213 121" stroke-width="2"/>
+  <path d="M0 10 L26 0" stroke-width="9" opacity=".22"/>
+</svg>`;
+
+const WROTE = `
+<svg class="lay wrote" viewBox="0 0 220 165" preserveAspectRatio="none" aria-hidden="true">
+  <text x="110" y="96" text-anchor="middle" transform="rotate(-4 110 96)">where'd ya go?</text>
+</svg>`;
+
+/* hand-wrap draped over the top-right corner of the frame */
+const WRAP = `
+<svg class="wrap" viewBox="0 0 78 126" aria-hidden="true">
+  <path class="cloth" fill="#FF6B57" d="M16 12 C28 4 50 2 62 11 C66 36 60 60 58 86
+    C57 98 60 108 52 110 C44 112 42 104 34 106 C25 108 20 103 20 94
+    C19 66 13 36 16 12 Z"/>
+  <path class="fold" d="M30 10 C34 40 31 72 29 104"/>
+  <path class="fold" d="M46 8 C50 38 47 72 46 108"/>
+  <path fill="#FFC53D" stroke="none" d="M15 44 C30 38 50 38 60 43 L59 55
+    C46 50 29 50 15 56 Z"/>
+  <path fill="none" stroke="#2B2118" stroke-width="2.5" stroke-linecap="round"
+    d="M15 45 C30 39 50 39 60 44 M15 57 C29 51 46 51 59 56"/>
+</svg>`;
+
+/* the whole towel, thrown over the mirror for mouse mode */
+const TOWEL = `
+<svg class="towel" viewBox="0 0 240 200" aria-hidden="true">
+  <defs>
+    <linearGradient id="twl" x1="0" y1="0" x2=".4" y2="1">
+      <stop offset="0" stop-color="#F7F0E0"/><stop offset=".5" stop-color="#EADFC6"/>
+      <stop offset="1" stop-color="#CDBB9A"/>
+    </linearGradient>
+    <clipPath id="twlclip"><path d="M10 36 C44 12 92 8 128 18 C170 29 206 14 228 30
+      C232 62 230 94 228 118 C214 142 212 122 196 134 C182 144 184 160 168 159
+      C152 158 152 140 136 150 C120 160 124 177 108 179 C92 181 92 161 76 168
+      C60 175 62 193 46 191 C32 189 34 169 20 174 C8 166 14 110 10 36 Z"/></clipPath>
+  </defs>
+  <!-- cloth thrown over the glass: slumped top, lazy folds, scalloped hem that
+       rides up to the right so a corner of the dark glass still shows -->
+  <path class="cloth" fill="url(#twl)" d="M10 36 C44 12 92 8 128 18 C170 29 206 14 228 30
+    C232 62 230 94 228 118 C214 142 212 122 196 134 C182 144 184 160 168 159
+    C152 158 152 140 136 150 C120 160 124 177 108 179 C92 181 92 161 76 168
+    C60 175 62 193 46 191 C32 189 34 169 20 174 C8 166 14 110 10 36 Z"/>
+  <g clip-path="url(#twlclip)">
+    <!-- the ridge where it folds over the top rail of the frame -->
+    <path fill="#DCCDB0" stroke="none" d="M12 34 C44 10 92 6 128 16 C170 27 206 12 228 28
+      L229 50 C204 36 170 46 128 36 C92 27 42 34 13 56 Z"/>
+    <path fill="none" stroke="#2B2118" stroke-width="2" opacity=".3"
+      d="M13 54 C44 32 92 26 128 36 C170 47 204 36 229 50"/>
+    <path fill="none" stroke="#FF6B57" stroke-width="10" opacity=".92"
+      d="M4 104 C58 88 178 92 236 104"/>
+    <path fill="none" stroke="#2B2118" stroke-width="1.6" opacity=".32"
+      d="M4 98 C58 82 178 86 236 98 M4 110 C58 94 178 98 236 110"/>
+    <path fill="none" stroke="#5DA9E9" stroke-width="5" opacity=".9"
+      d="M4 122 C58 106 178 110 236 122"/>
+    <path class="fold" opacity=".55" d="M48 30 C64 70 56 126 50 176"/>
+    <path class="fold" opacity=".35" d="M118 20 C132 62 128 128 120 182"/>
+    <path class="fold" opacity=".5" d="M192 26 C204 66 198 128 190 178"/>
+    <path fill="none" stroke="rgba(43,33,24,.28)" stroke-width="1.5"
+      stroke-dasharray="5 7" d="M14 158 C70 146 176 150 228 160"/>
+    <path fill="rgba(43,33,24,.16)" stroke="none"
+      d="M12 162 C70 150 178 154 228 164 L228 200 L12 200 Z"/>
+    <path fill="rgba(255,255,255,.4)" stroke="none"
+      d="M18 40 C50 18 92 16 120 26 L118 44 C92 34 50 38 20 60 Z"/>
+  </g>
+</svg>`;
+
+function peepHTML(state, name, note) {
+  return `
+  <div class="frame">
+    <i class="chip a"></i><i class="chip b"></i>
+    <div class="glass">
+      <img src="../_cam.jpg" alt="">
+      <canvas class="mesh" width="${GW}" height="${GH}"></canvas>
+      ${CROSS}
+      ${SMUDGE}
+      <div class="lay fog"></div>
+      <div class="lay drips"><i></i><i></i><i></i></div>
+      ${WROTE}
+    </div>
+    <div class="lean"><i></i></div>
+  </div>
+  ${WRAP}
+  ${TOWEL}
+  <i class="tape tl"></i><i class="tape br"></i><i class="tape bl"></i>
+  <div class="strip">
+    <div class="scrawl">${name}</div>
+    <div class="sub">${note}</div>
+    <svg class="ul" viewBox="0 0 180 6" preserveAspectRatio="none">
+      <path d="M2 4 C40 1 92 6 178 2"/></svg>
+  </div>`;
+}
+
+const SPEC = [
+  { st: 'locked', bottom: 30,  name: `ROOKIE`,
+    note: `corner mirror · round 1` },
+  { st: 'lost',   bottom: 265, name: `CAN'T SEE YA!`,
+    note: `get back in the glass →` },
+  { st: 'mouse',  bottom: 500, name: `no cam today`,
+    note: `swing it with the mouse` },
+];
+
+const stage = document.getElementById('stage');
+const built = SPEC.map(s => {
+  const el = document.createElement('div');
+  el.className = 'peep ' + s.st;
+  el.style.bottom = s.bottom + 'px';
+  el.style.setProperty('--swipe', SWIPE);
+  el.innerHTML = peepHTML(s.st, s.name, s.note);
+  stage.appendChild(el);
+  return el;
+});
+
+/* ---- fake face mesh: 478 points arranged in a plausible head, drifting ---- */
+const PTS = (() => {
+  const p = [], R = () => Math.random();
+  for (let i = 0; i < 400; i++) {            // face oval shell + interior
+    const a = R() * Math.PI * 2, r = Math.sqrt(R()) * .38 + (i % 3 === 0 ? .6 : .34);
+    p.push([Math.cos(a) * r * .30, Math.sin(a) * r * .38 - .02]);
+  }
+  for (let i = 0; i < 40; i++) {             // eyes
+    const s = i < 20 ? -1 : 1, a = R() * Math.PI * 2;
+    p.push([s * .13 + Math.cos(a) * .045, -.09 + Math.sin(a) * .022]);
+  }
+  for (let i = 0; i < 24; i++)               // mouth
+    p.push([(R() - .5) * .22, .17 + (R() - .5) * .035]);
+  for (let i = 0; i < 14; i++)               // nose bridge
+    p.push([(R() - .5) * .04, (R() - .5) * .18 + .02]);
+  return p;
+})();
+
+const live = built[0];
+const mesh = live.querySelector('.mesh');
+const mx = mesh.getContext('2d');
+const leanTick = live.querySelector('.lean i');
+/* mockup-only: the still stands in for a live feed, so we slide it with the
+   fake head so the mesh sits on a face instead of floating off it */
+const still = live.querySelector('.glass img');
+still.style.willChange = 'transform';
+const aL = live.querySelector('.cross .aL'), aR = live.querySelector('.cross .aR');
+let offNow = false, offSide = 0, t0 = performance.now();
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const t = (now - t0) / 1000;
+  /* a believable slip-and-return: a slow bob plus an occasional big dodge */
+  const big = Math.sin(t * .42);
+  const cx = .5 + Math.sin(t * .9) * .035 + big * .20;
+  const cy = .5 + Math.sin(t * 1.35 + 1.1) * .03 + Math.max(0, Math.sin(t * .3)) * .03;
+  const sc = 1 + Math.sin(t * .55) * .04;
+
+  mx.clearRect(0, 0, GW, GH);
+  mx.fillStyle = 'rgba(210,235,255,.7)';
+  for (let i = 0; i < PTS.length; i += 2) {      // same cheap 1px dot cloud
+    const q = PTS[i];
+    mx.fillRect(cx * GW + q[0] * GW * sc - .5, cy * GH + q[1] * GH * sc - .5, 1, 1);
+  }
+  const nx = cx * GW, ny = cy * GH + 4;
+  mx.beginPath(); mx.arc(nx, ny, 4, 0, 7); mx.fillStyle = '#FF6B57'; mx.fill();
+  mx.lineWidth = 1.5; mx.strokeStyle = 'rgba(43,33,24,.75)'; mx.stroke();
+
+  /* head-off-centre: compare against the grease-pencil box (x 55..165) */
+  const side = nx < 70 ? -1 : nx > 150 ? 1 : 0;
+  if (!!side !== offNow || side !== offSide) {
+    offNow = !!side; offSide = side;
+    live.classList.toggle('off', offNow);
+    aL.classList.toggle('on', side < 0);
+    aR.classList.toggle('on', side > 0);
+  }
+  /* grease tick slides along the bottom rail — lean read-out, transform only */
+  leanTick.style.transform = `translateX(${((cx - .5) * 2 * 78).toFixed(1)}px)`;
+  still.style.transform = `scaleX(-1) scale(1.14) translate(${
+    ((.5 - cx) * GW / 1.14).toFixed(1)}px, ${((cy - .5) * GH / 1.14).toFixed(1)}px)`;
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

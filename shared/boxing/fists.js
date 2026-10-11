@@ -19,8 +19,9 @@
      baseline = slow EMA of span, updated ONLY while the hand is calm
      reach    = span / baseline     (~1 at rest, grows as fist nears camera)
    A punch THROWS when smoothed d(reach)/dt crosses FIRE_VEL while the hand
-   is fist-ish, and EMITS once the thrust dies (apex/retract, or MAX_THROW_T
-   hold-out) — power ∝ peak reach. Direction = dominant channel of the
+   is fist-ish, and EMITS at committed forward reach (or when the thrust
+   stalls for a shorter shot) — power follows the estimated impact reach.
+   Direction = dominant channel of the
    throw's net motion in hand-size units: lateral → 'hook', upward →
    'uppercut', else 'jab'/'cross' by side. The fist stays spent until
    reachVel dips below RESET_VEL — the retract re-arms it, so combos work.
@@ -43,6 +44,8 @@ export const TUNING = {
   FIRE_VEL: 1.2,        // reach/s — thrust speed that starts a throw
   FIRE_FRAMES: 2,       // consecutive hot frames required — a 1-frame
                         // landmark spike can never fire a phantom punch
+  CONTACT_REACH: 1.38, // a committed fist connects while still travelling
+  CONTACT_LEAD: .12,   // estimate reach at impact from current thrust speed
   EMIT_VEL: .12,        // reach/s — thrust stalls near apex ⇒ emit NOW
                         // (was -.05: waited for actual retraction — punches
                         // felt ~250ms late)
@@ -140,6 +143,8 @@ export class FistTracker {
       if (!(T.RESET_VEL > -50)) T.RESET_VEL = TUNING.RESET_VEL;
       if (!(T.FIRE_FRAMES >= 1)) T.FIRE_FRAMES = TUNING.FIRE_FRAMES;
       if (!(T.REACH_CAP > 1)) T.REACH_CAP = TUNING.REACH_CAP;   // ÷(REACH_CAP-1)
+      if (!(T.CONTACT_REACH > 1)) T.CONTACT_REACH = TUNING.CONTACT_REACH;
+      if (!(T.CONTACT_LEAD >= 0)) T.CONTACT_LEAD = TUNING.CONTACT_LEAD;
       if (!(T.GUARD_Y_ZERO > T.GUARD_Y_FULL)) {                 // ordered band
         T.GUARD_Y_ZERO = TUNING.GUARD_Y_ZERO; T.GUARD_Y_FULL = TUNING.GUARD_Y_FULL; }
       if (!(T.GUARD_REACH_HI > T.GUARD_REACH_LO)) {             // ordered band
@@ -323,8 +328,11 @@ export class FistTracker {
       if (calm) S.baseline = ema(S.baseline, span, T.BASELINE_RATE, dt);
 
       // ---- punch state machine: idle → throw → recover → idle
+      // A closed fist often puts thumb and index close enough for the generic
+      // gesture layer to call it a pinch. Finger extension is the relevant
+      // boxing signal; the pinch label must not veto a curled hand.
       const fistish = h.kind === 'fist'
-        || (h.kind !== 'pinch' && typeof h.nExt === 'number' && h.nExt <= 2);
+        || (Number.isFinite(h.nExt) && h.nExt <= 2);
       // debounce: thrust speed must persist FIRE_FRAMES frames before the
       // throw engages — a single-frame span spike (real MediaPipe pop-outs)
       // heats up once then collapses below threshold, so it can't emit
@@ -344,8 +352,13 @@ export class FistTracker {
         S.acc.t += S.reachVel * dt;
         S.acc.x += S.vx * inv * dt;
         S.acc.y += S.vy * inv * dt;
-        if (S.reachVel < T.EMIT_VEL || S.tThrow > T.MAX_THROW_T) {
-          this._emit(side, S);
+        // Make contact on the advancing fist, once two real camera samples
+        // agree on a throw. Waiting for retraction made the visible glove
+        // arrive first and the hit sound/damage land a beat later.
+        const contact = fresh && fistish && reach >= T.CONTACT_REACH
+          && S.reachVel > T.FIRE_VEL;
+        if (contact || S.reachVel < T.EMIT_VEL || S.tThrow > T.MAX_THROW_T) {
+          this._emit(side, S, contact);
           S.state = 'recover';              // must retract to re-arm
         }
       } else if (S.state === 'recover' && S.reachVel < T.RESET_VEL) {
@@ -368,14 +381,17 @@ export class FistTracker {
     return this;
   }
 
-  _emit(side, S) {
+  _emit(side, S, advancing = false) {
     const T = this.T;
     const thrust = Math.max(S.acc.t, 0), lat = Math.abs(S.acc.x), up = -S.acc.y;
     const kind = lat > thrust && lat > up ? 'hook'
       : up > thrust && up >= lat ? 'uppercut'
       : side === 'left' ? 'jab' : 'cross';
+    const impactReach = advancing
+      ? Math.max(S.peak, S.reach + Math.min(.65, S.reachVel * T.CONTACT_LEAD))
+      : S.peak;
     const power = Math.max(T.POWER_FLOOR,
-      clamp((S.peak - 1) / (T.REACH_CAP - 1), 0, 1));
+      clamp((impactReach - 1) / (T.REACH_CAP - 1), 0, 1));
     // x/y = palm spot at emit (norm overlay coords) — the down-count get-up
     // QTE in fight.js needs WHERE the glove was, not just that it flew
     this.punches.push({ kind, side, power, x: S.px, y: S.py, t: +this._t.toFixed(3) });
