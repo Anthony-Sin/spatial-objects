@@ -55,6 +55,8 @@ export const TUNING = {
   downT: 2.4,           // a KO'd fighter stays down this long → win/lose
   rounds: 3,            // judges' decision after this many rounds
   roundHeal: .12,       // fraction of maxHp restored between rounds
+  cornerHeal: .55,      // halftime patch-up — the floor your hp comes back to (never full)
+  cornerStam: .7,       // the corner gets your legs back too — stamina floor after the break
 
   reach: 1.45,          // forgiving contact plane for a planted first-person boxer
   reachPow: .2,         // power 0..1 stretches reach by up to this fraction
@@ -215,17 +217,55 @@ export class Fight {
 
   reset() {
     const o = this.opts, s = this.state;
-    /* degenerate opts → sane floors — re-applied here (not just in the
-       constructor): opts mutated between bouts once baked 'x'/NaN/-9 into
-       hp and a NaN clock that could never reach a verdict. */
-    o.playerHp = Math.max(1, num(o.playerHp, 100));
-    o.npcHp    = Math.max(1, num(o.npcHp, 100));
-    o.roundLen = Math.max(1, num(o.roundLen, 90));
-    if (typeof o.npcName !== 'string' || !o.npcName) o.npcName = 'PIP';
-    const vk = SPECIALS[o.npcVariant] ? o.npcVariant : 'bubble';
+    /* degenerate opts → sane floors, computed into LOCALS first: opts may be
+       Object.freeze()'d by a caller (devtools lockdown), in which case writing
+       back throws in strict mode and used to kill reset() outright. The sim
+       reads the locals — and _startRound re-floors opts.roundLen on its own —
+       so a frozen or live-mutated opts can no longer bake garbage into hp or
+       wedge the round clock on NaN. */
+    const php  = Math.max(1, num(o.playerHp, 100));
+    const nhp  = Math.max(1, num(o.npcHp, 100));
+    const rlen = Math.max(1, num(o.roundLen, 90));
+    const nnm  = (typeof o.npcName === 'string' && o.npcName) ? o.npcName : 'PIP';
+    try {
+      o.playerHp = php; o.npcHp = nhp; o.roundLen = rlen; o.npcName = nnm;
+    } catch { /* frozen opts — sanitized values still govern state below */ }
+    // own-key check: '__proto__'/'constructor' resolve through the prototype
+    // chain and once snapshotted {} → NaN windup/dmg — PIP telegraphed forever
+    const vk = Object.prototype.hasOwnProperty.call(SPECIALS, o.npcVariant)
+      ? o.npcVariant : 'bubble';
     this._T = saneT(TUNING, _TDEF);          // fresh sanitized tuning snapshot
+    /* saneT guarantees finite, NOT sane: a finite-negative edit (live or
+       pre-reset) of TUNING/SPECIALS/VSTATS still inverted the sim — dmg<0
+       HEALED past maxHp, stamCost<0 pushed stamina over 1, score<0 sank it
+       negative, roundHeal<0 dug hp under zero. Clamp every knob to its
+       documented domain on the snapshot so the exported tables can be
+       re-mutated freely without corrupting a running bout. */
+    const T = this._T;
+    for (const sub of ['dmg', 'npcDmg', 'stamCost', 'score', 'windup'])
+      for (const k in T[sub]) T[sub][k] = Math.max(0, T[sub][k]);
+    for (const k of ['stamRegen', 'npcRegen', 'counterDamage', 'duckUpperMul',
+      'gasRecover', 'gasWindup', 'dodgeWin', 'dodgeCd', 'perfectWin', 'perfectStun',
+      'stunHitCost', 'hurtT', 'npcHurtT', 'recoverT', 'whiffT', 'blockT',
+      'idleMin', 'idleVar', 'circleMin', 'circleVar', 'retreatMin', 'retreatVar',
+      'pressMax', 'celebrateT', 'celebrateCd', 'comboWindup', 'comboWindow',
+      'counterWindow', 'tiltDecay', 'specialEvery', 'reach', 'reachPow',
+      'attackAt', 'npcReach', 'hurtRegenT', 'introT', 'countT', 'downT',
+      'punchDur', 'rageSpeed', 'specialStam', 'specialCost'])
+      T[k] = Math.max(0, T[k]);
+    for (const k of ['roundHeal', 'cornerHeal', 'cornerStam', 'powFloor', 'blockMul',
+      'gasPower', 'gasGuard',
+      'exhaustMul', 'regenBusy', 'regenHurt', 'slipBase', 'slipRage',
+      'retreatOnHurt', 'guardT', 'dodgeT', 'gassedT', 'gassedHyst', 'hitAt',
+      'npcCost'])
+      T[k] = clamp(T[k], 0, 1);
+    T.comboMax = Math.max(1, T.comboMax);
     this._special = saneT(SPECIALS[vk], _SDEF[vk]);
+    for (const k of ['stam', 'cost', 'dmgMul', 'chip', 'windup', 'windupMul'])
+      this._special[k] = Math.max(0, this._special[k]);
+    this._special.chain = Math.max(1, this._special.chain);
     this._stat = saneT(VSTATS[vk], _VDEF[vk]);
+    for (const k in this._stat) this._stat[k] = Math.max(0, this._stat[k]);
     this._rng = mulberry32((o.seed | 0) || 1);
     this._phaseT = 0;                 // generic timer for intro/down phases
     this._actFor = .35;               // duration of the current npc action
@@ -246,13 +286,13 @@ export class Fight {
     this._wantSledge = false;         // (legacy alias — same gate as _wantSlam)
     this._normals = 0;                // normal attacks since the last special
     this._swing = null;               // how the live swing resolved: hit|blocked|dodged|perfect|whiff
-    s.phase = 'intro'; s.round = 0; s.timeLeft = o.roundLen; s.countdown = 0;
+    s.phase = 'intro'; s.round = 0; s.timeLeft = rlen; s.countdown = 0;
     s.events.length = 0; s.lastBlow = null;
     this._comboT = 0;
-    Object.assign(s.player, { hp: o.playerHp, maxHp: o.playerHp, stamina: 1, score: 0,
+    Object.assign(s.player, { hp: php, maxHp: php, stamina: 1, score: 0,
       combo: 0, bestCombo: 0, counterT: 0, status: 'idle', hurtT: 0, gassed: false,
       dodge: { dir: null, t: 9, cd: 0 }, perfects: 0 });
-    Object.assign(s.npc, { hp: o.npcHp, maxHp: o.npcHp, stamina: 1, name: o.npcName, action: 'idle', actionT: 0, telegraph: null, gassed: false, specialReady: false });
+    Object.assign(s.npc, { hp: nhp, maxHp: nhp, stamina: 1, name: nnm, action: 'idle', actionT: 0, telegraph: null, gassed: false, specialReady: false });
   }
 
   step(dt, inputs = {}) {
@@ -370,11 +410,30 @@ export class Fight {
     if (this.state.phase === 'intro') this._startRound();
   }
 
+  /* the corner break — the halftime lifeline. The page freezes the bout while
+     you're on the ropes; corner() patches the fighter to a FRACTION of max
+     (never a full heal) and deals the next round like a fresh bell. Fighting
+     phase only — a fighter on the canvas is already lost to the count. */
+  corner() {
+    const s = this.state, p = s.player;
+    if (s.phase !== 'fighting' || p.hp <= 0) return false;
+    p.hp = Math.min(p.maxHp, Math.max(p.hp, p.maxHp * this._T.cornerHeal));
+    p.stamina = Math.max(p.stamina, this._T.cornerStam);
+    p.dodge.dir = null; p.dodge.cd = 0;           // clean slate out of the break
+    this._tilt = 0;
+    s.round = Math.min(s.round, Math.max(0, this._T.rounds - 1));  // can't halftime past the card
+    this._emit('corner');
+    this._startRound();
+    return true;
+  }
+
   // scripted swing (tutorial): telegraphs like a real one; false if PIP is busy
   throwPunch(kind = 'jab', side = 'left', windup = null) {
     const s = this.state, n = s.npc;
     if (s.phase !== 'fighting' || ['windup', 'punch', 'down', 'hurt', 'stunned'].includes(n.action)) return false;
-    this._windup(false, { kind: this._T.windup[kind] ? kind : 'jab',
+    // finite-own-key check, not truthiness: '__proto__'/'constructor' used to
+    // pass the gate → T.windup[kind] returned Object.prototype → NaN windup
+    this._windup(false, { kind: Number.isFinite(this._T.windup[kind]) ? kind : 'jab',
       side: side === 'right' ? 'right' : 'left',
       windup: Number.isFinite(+windup) && +windup > 0 ? +windup : null });
     return true;
@@ -401,7 +460,10 @@ export class Fight {
 
   _startRound() {   // → countdown; the bell ('round-start') rings when it hits zero
     const s = this.state;
-    s.round++; s.timeLeft = this.opts.roundLen;
+    /* re-floor here too — opts.roundLen is read LIVE between bouts (the reset
+       write-back may have been refused by a frozen opts, or a devtools edit
+       landed mid-fight); a NaN/-∞ clock once wedged 'fighting' forever */
+    s.round++; s.timeLeft = Math.max(1, num(this.opts.roundLen, 90));
     s.phase = 'countdown'; this._phaseT = 0; s.countdown = 0;
     this._chain = 0; this._swing = null;
     this._setAct('idle', .5);
@@ -454,7 +516,9 @@ export class Fight {
   _playerPunch(pn, inp) {
     const s = this.state, T = this._T, p = s.player, n = s.npc;
     this._emit('player-punch');
-    const kind = T.dmg[pn.kind] ? pn.kind : 'jab';
+    // inherited keys ('__proto__', 'constructor') passed a truthy lookup and
+    // once baked NaN into stamCost/dmg — hp and stamina stayed NaN forever
+    const kind = Number.isFinite(T.dmg[pn?.kind]) ? pn.kind : 'jab';
     const cost = T.stamCost[kind];
     const gassed = p.gassed;
     this._punchT = .22 * (gassed ? T.gasRecover : 1);   // gassed arms recover slower
@@ -507,7 +571,7 @@ export class Fight {
     const s = this.state, T = this._T;
     this._emit('player-miss');
     // kind sanitized — a garbage pn.kind once leaked into lastBlow/audio
-    s.lastBlow = { who: 'player', kind: T.dmg[pn?.kind] ? pn.kind : 'jab',
+    s.lastBlow = { who: 'player', kind: Number.isFinite(T.dmg[pn?.kind]) ? pn.kind : 'jab',
       result: 'miss', reason };
     // PIP loves watching you miss — occasional taunt (only from mobile states)
     if (this.ai && reason !== 'exhausted' && this._celebrateCd <= 0 && this._rng() < .18
@@ -640,8 +704,9 @@ export class Fight {
     const wu = Number.isFinite(force?.windup) && force.windup > 0 ? force.windup
       : (this._wantSlam || this._wantSledge) ? spec.windup
       : combo ? T.comboWindup * (spec.windupMul || 1) : T.windup[kind];
-    this._windupFor = Math.max(.05, wu
-      * (1 - T.rageSpeed * rage) * (n.gassed ? T.gasWindup : 1) * this._stat.windup);
+    // Math.max can't shed NaN (Math.max(.05, NaN) === NaN) — guard the product
+    const wuS = wu * (1 - T.rageSpeed * rage) * (n.gassed ? T.gasWindup : 1) * this._stat.windup;
+    this._windupFor = Math.max(.05, Number.isFinite(wuS) ? wuS : .66);
     this._pk = { kind, side };
     n.action = 'windup'; n.actionT = 0;
     n.telegraph = { kind, side, t01: 0, combo: this._chain,

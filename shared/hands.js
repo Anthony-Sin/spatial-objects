@@ -16,9 +16,13 @@
 const LERP = 1;            // display raw measured motion; extra EMA caused visible lag
 const BOOT_MS = 30000;     // worker boot grace before inline covers the gap
 const STUCK_MS = 5000;     // an infer this long with no result/error = hung worker
+const RESPAWN_MS = 3000;   // delay before re-spawning a mid-game-dead worker
 const INFER_W = 640;       // frames wider than this are downscaled for inference
 const INLINE_EVERY = 3;    // inline detects block the thread — third-rate only
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+/* create() opts {bootMs,stuckMs,respawnMs} shrink these for QE probes —
+   production callers never set them, so the constants stay the defaults */
+const posMs = (v, d) => (Number.isFinite(+v) && +v > 0 ? +v : d);
 
 export class Hands {
   constructor() {
@@ -29,7 +33,8 @@ export class Hands {
     this._t = -1; this._prev = {}; this._tick = 0;
     this._vendorUrl = null; this._video = null; this._onNew = null;
     this._retryT = null; this._initLocalP = null; this._stopped = false;
-    this._sentAt = 0;
+    this._sentAt = 0; this._bootW = null;
+    this._bootMs = BOOT_MS; this._stuckMs = STUCK_MS; this._respawnMs = RESPAWN_MS;
     this.stats = { cameraHz: 0, trackHz: 0, roundTripMs: 0, inferMs: 0,
       lastResultAt: 0, frameWidth: 0, frameHeight: 0 };
     this._lastCameraAt = 0;
@@ -39,8 +44,11 @@ export class Hands {
     h._vendorUrl = new URL(vendorUrl, location.href).href.replace(/\/$/, '');
     h._video = video;
     h._preferCpu = !!opts.preferCpu;
+    h._bootMs = posMs(opts.bootMs, BOOT_MS);
+    h._stuckMs = posMs(opts.stuckMs, STUCK_MS);
+    h._respawnMs = posMs(opts.respawnMs, RESPAWN_MS);
     const spawnP = h._spawn();
-    let which = await Promise.race([spawnP, sleep(BOOT_MS).then(() => 'slow')]);
+    let which = await Promise.race([spawnP, sleep(h._bootMs).then(() => 'slow')]);
     /* 'slow' almost always means the ~13MB model download is still in
        flight — racing it with a second inline fetch doubles the transfer
        on the exact weak link causing the slowness (b3-soak: both fetched
@@ -48,7 +56,15 @@ export class Hands {
        one more grace window alone before covering with an inline
        landmarker; a late 'ready' still adopts either way. */
     if (which === 'slow')
-      which = await Promise.race([spawnP, sleep(BOOT_MS).then(() => 'slow')]);
+      which = await Promise.race([spawnP, sleep(h._bootMs).then(() => 'slow')]);
+    /* still slow after two grace windows? Keep waiting on the worker's
+       verdict rather than spawning a competing ~13MB fetch (b4-soak: at
+       60s both realms fetched anyway — the inline cover itself starves
+       weak links). But a silently-dead worker must not wedge create()
+       forever: after 3 more windows of silence, cover with inline while
+       the worker keeps booting — a late 'ready' still adopts. */
+    if (which === 'slow')
+      which = await Promise.race([spawnP, sleep(h._bootMs * 3).then(() => 'slow')]);
     // a stop() during the boot race must not resurrect an inline landmarker
     if (h._stopped) return h;
     if (which !== 'ok') await h._initLocal();
@@ -64,10 +80,21 @@ export class Hands {
       let w;
       try { w = new Worker(new URL('./track-worker.js', import.meta.url)); }   // classic worker — ESM in via import()
       catch { return res('fail'); }
+      /* until 'ready' adopts it the worker isn't in _worker — keep a handle
+         anyway so stop() (or a superseding spawn) can reap a still-booting
+         worker instead of letting its ~13MB download run for a dead tracker —
+         and if 'ready' never lands, it would leak forever */
+      h._bootW = w;
+      const done = () => { if (h._bootW === w) h._bootW = null; };
       w.onmessage = (e) => {
         const d = e.data || {};
         if (d.type === 'ready') {
-          if (d.error) { try { w.terminate(); } catch {} res('fail'); }
+          done();
+          /* 'ready'+error can also land on an already-ADOPTED worker (a stray
+             second init round-trip): route it through _workerDied so _worker
+             never dangles at a terminated worker — a bare terminate() would
+             wedge _inFlight until the STUCK watchdog noticed */
+          if (d.error) { h._workerDied(w, false); res('fail'); }
           else { h._adopt(w, d.delegate); res('ok'); }
         }
         else if (d.type === 'result') {
@@ -79,19 +106,22 @@ export class Hands {
             ? st.trackHz * .7 + (1000 / Math.max(1, now - st.lastResultAt)) * .3
             : 1000 / Math.max(1, now - st.lastResultAt);
           st.lastResultAt = now;
-          h._inFlight = false; h._ingest(d.landmarks, d.handedness); h._onNew?.();
+          h._inFlight = false;
+          try { h._ingest(d.landmarks, d.handedness); } catch {}  // a bad frame must never swallow the _onNew re-dispatch
+          h._onNew?.();
         }
         else if (d.type === 'fatal') {   // repeated detect errors — GPU ctx died
-          h._workerDied(w, false);       // no respawn — the delegate itself is bad
+          done(); h._workerDied(w, false);       // no respawn — the delegate itself is bad
         }
       };
-      w.onerror = () => { h._workerDied(w); res('fail'); };
+      w.onerror = () => { done(); h._workerDied(w); res('fail'); };
       try { w.postMessage({ type: 'init', kind: 'hands', vendorUrl: h._vendorUrl,
         preferCpu: h._preferCpu }); }
-      catch { res('fail'); }
+      catch { done(); res('fail'); }
     });
   }
   _adopt(w, delegate) {
+    if (this._bootW === w) this._bootW = null;   // ownership moves to _worker
     // a 'ready' landing after stop() would resurrect a worker on a dead
     // tracker — kill it instead of adopting
     if (this._stopped) { try { w.terminate(); } catch {} return; }
@@ -99,7 +129,13 @@ export class Hands {
     if (this._worker && this._worker !== w) { try { this._worker.terminate(); } catch {} }
     this._worker = w;
     this.delegate = `${delegate}-worker`;
-    this.landmarker?.close?.(); this.landmarker = null;   // worker won — free the inline copy
+    /* close() CAN throw on a half-dead GL graph — escaping the onmessage
+       handler it would skip res('ok'), skip the onerror rewire, and leave
+       `landmarker` truthy: that stale ref then blocked every future
+       _initLocal early-return, so the NEXT worker death had no inline
+       fallback to land on */
+    try { this.landmarker?.close?.(); } catch {}
+    this.landmarker = null;                            // worker won — free the inline copy
     w.onerror = () => this._workerDied(w);               // mid-game death → inline + one respawn
   }
   /* One place a worker goes to die. Idempotent: a zombie that already lost
@@ -114,7 +150,7 @@ export class Hands {
     clearTimeout(this._retryT);
     if (respawn) this._retryT = setTimeout(() => {
       if (!this._worker && !this._stopped) this._spawn();
-    }, 3000);
+    }, this._respawnMs);
   }
   /* concurrent callers (fatal + onerror can fire together) must share ONE
      boot — two inline landmarkers meant leaked GPU/CPU graphs */
@@ -159,7 +195,7 @@ export class Hands {
       this.stats.frameWidth = frame.displayWidth || frame.width || vw;
       this.stats.frameHeight = frame.displayHeight || frame.height || vh;
       try { this._worker.postMessage({ type: 'frame', frame }, [frame]); }
-      catch { frame.close?.(); this._inFlight = false; }
+      catch { try { frame.close?.(); } catch {} this._inFlight = false; }
     };
     // createImageBitmap itself may not exist, may reject, or may throw
     // SYNCHRONOUSLY — every path must land here, not in the rVFC callback
@@ -200,7 +236,7 @@ export class Hands {
              (hung infer — a GPU deadlock fires no onerror): _inFlight would
              latch forever and tracking silently stops. The warm-up proved a
              detect CAN complete, so past the watchdog window it's dead. */
-          else if (this._sentAt && now - this._sentAt > STUCK_MS)
+          else if (this._sentAt && now - this._sentAt > this._stuckMs)
             this._workerDied(this._worker);
         }
         else if (this.landmarker) {
@@ -225,9 +261,14 @@ export class Hands {
     // an exception inside onNew must never kill the chain — re-scheduling is
     // unconditional so one bad frame can't end tracking for the session
     if (v.requestVideoFrameCallback) {          // paced by the camera itself — rAF fires too often
-      const again = () => v.requestVideoFrameCallback(() => {
-        if (this._stopped) return;              // stop() must kill the chain, not just idle it
-        try { if (this._worker || this.landmarker) onNew(); } catch {} again(); });
+      const again = () => { try {
+        v.requestVideoFrameCallback(() => {
+          if (this._stopped) return;              // stop() must kill the chain, not just idle it
+          try { if (this._worker || this.landmarker) onNew(); } catch {} again(); });
+        /* re-registering can throw on a detached document — an escape from
+           inside the rVFC callback is an uncaught error AND a dead chain;
+           ending quietly is strictly better */
+      } catch {} };
       again();
     } else {
       const again = () => {
@@ -296,8 +337,12 @@ export class Hands {
     this._stopped = true;
     clearTimeout(this._retryT);
     this._inFlight = false; this._prev = {};
+    /* a still-booting worker isn't _worker yet — kill it too or it keeps
+       downloading ~13MB for a dead tracker (and leaks forever if its
+       'ready' never lands) */
+    try { this._bootW?.terminate(); } catch {} this._bootW = null;
     try { this._worker?.postMessage({ type: 'close' }); } catch {}
-    this._worker?.terminate(); this._worker = null;
+    try { this._worker?.terminate(); } catch {} this._worker = null;
     try { this.landmarker?.close?.(); } catch {} this.landmarker = null;
     this.delegate = 'none';
     // drop the whole derived state, not just .hands — a stale pinch/orbit

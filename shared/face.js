@@ -17,12 +17,16 @@
 */
 const BOOT_MS = 30000;
 const STUCK_MS = 5000;    // an infer this long with no result/error = hung worker
+const RESPAWN_MS = 3000;  // delay before re-spawning a mid-game-dead worker
 /* a glove passed in front of the camera occludes the face for a moment —
    'found' only concedes the face is gone after this much CONTINUOUS loss,
    so a punch flurry never makes the nose dot / head tracking blink out */
 const LOST_MS = 3000;
 const INFER_W = 640;      // downscale wider frames before inference — same cap as hands.js
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+/* create() opts {bootMs,stuckMs,respawnMs} shrink these for QE probes —
+   production callers never set them, so the constants stay the defaults */
+const posMs = (v, d) => (Number.isFinite(+v) && +v > 0 ? +v : d);
 
 export class Face {
   constructor() {
@@ -35,7 +39,8 @@ export class Face {
     this._t = -1; this._tick = 0; this._rate = 2;
     this._vendorUrl = null; this._video = null; this._onNew = null;
     this._retryT = null; this._initLocalP = null; this._stopped = false;
-    this._sentAt = 0;
+    this._sentAt = 0; this._bootW = null;
+    this._bootMs = BOOT_MS; this._stuckMs = STUCK_MS; this._respawnMs = RESPAWN_MS;
   }
   static async create(video, vendorUrl = './vendor/mediapipe', opts = {}) {
     const f = new Face();
@@ -44,16 +49,22 @@ export class Face {
     // face infer is light enough that CPU-first is the right default — the
     // GPU stays reserved for render + hands. opt out with preferCpu:false
     f._preferCpu = opts.preferCpu !== false;
+    f._bootMs = posMs(opts.bootMs, BOOT_MS);
+    f._stuckMs = posMs(opts.stuckMs, STUCK_MS);
+    f._respawnMs = posMs(opts.respawnMs, RESPAWN_MS);
     const spawnP = f._spawn();
-    let which = await Promise.race([spawnP, sleep(BOOT_MS).then(() => 'slow')]);
+    let which = await Promise.race([spawnP, sleep(f._bootMs).then(() => 'slow')]);
     // 'slow' = model download still in flight — don't race it with a second
     // inline fetch; extend the worker one grace window before covering (see
     // hands.js — same duplicate-download fix)
     if (which === 'slow')
-      which = await Promise.race([spawnP, sleep(BOOT_MS).then(() => 'slow')]);
-    // a stop() during the boot race must not resurrect an inline landmarker
+      which = await Promise.race([spawnP, sleep(f._bootMs).then(() => 'slow')]);
+    if (which === 'slow')
+      which = await Promise.race([spawnP, sleep(f._bootMs * 3).then(() => 'slow')]);
+    // 'fail' or a third 'slow' → cover the gap; see hands.js — the worker
+    // keeps booting either way so a late 'ready' still adopts
     if (f._stopped) return f;
-    if (which !== 'ok') await f._initLocal();   // 'fail' or 'slow' → cover the gap
+    if (which !== 'ok') await f._initLocal();
     if (f._stopped) return f;
     f._pump(video);
     return f;
@@ -64,28 +75,41 @@ export class Face {
       let w;
       try { w = new Worker(new URL('./track-worker.js', import.meta.url)); }   // classic worker — ESM in via import()
       catch { return res('fail'); }
+      /* until 'ready' adopts it the worker isn't in _worker — keep a handle
+         anyway so stop() (or a superseding spawn) can reap a still-booting
+         worker instead of letting its ~13MB download run for a dead tracker —
+         and if 'ready' never lands, it would leak forever */
+      f._bootW = w;
+      const done = () => { if (f._bootW === w) f._bootW = null; };
       w.onmessage = (e) => {
         const d = e.data || {};
         if (d.type === 'ready') {
-          if (d.error) { try { w.terminate(); } catch {} res('fail'); }
+          done();
+          /* 'ready'+error can also land on an already-ADOPTED worker (a stray
+             second init round-trip): route it through _workerDied so _worker
+             never dangles at a terminated worker — a bare terminate() would
+             wedge _inFlight until the STUCK watchdog noticed */
+          if (d.error) { f._workerDied(w, false); res('fail'); }
           else { f._adopt(w, d.delegate); res('ok'); }
         }
         else if (d.type === 'result') {
           if (f._worker !== w) return;   // zombie worker (errored but not yet reaped) — ignore its frames
           f._inFlight = false; f.inferMs = d.inferMs || 0;
-          f._ingest(d); f._onNew?.();
+          try { f._ingest(d); } catch {}   // a bad frame must never swallow the _onNew re-dispatch
+          f._onNew?.();
         }
         else if (d.type === 'fatal') {
-          f._workerDied(w, false);       // no respawn — the delegate itself is bad
+          done(); f._workerDied(w, false);       // no respawn — the delegate itself is bad
         }
       };
-      w.onerror = () => { f._workerDied(w); res('fail'); };
+      w.onerror = () => { done(); f._workerDied(w); res('fail'); };
       try { w.postMessage({ type: 'init', kind: 'face', vendorUrl: f._vendorUrl,
         preferCpu: f._preferCpu }); }
-      catch { res('fail'); }
+      catch { done(); res('fail'); }
     });
   }
   _adopt(w, delegate) {
+    if (this._bootW === w) this._bootW = null;   // ownership moves to _worker
     // a 'ready' landing after stop() would resurrect a worker on a dead
     // tracker — kill it instead of adopting
     if (this._stopped) { try { w.terminate(); } catch {} return; }
@@ -94,7 +118,13 @@ export class Face {
     this._worker = w;
     this.delegate = `${delegate}-worker`;
     this._rate = 1;   // offer every camera frame — _inFlight gates the pace
-    this.landmarker?.close?.(); this.landmarker = null;
+    /* close() CAN throw on a half-dead GL graph — escaping the onmessage
+       handler it would skip res('ok'), skip the onerror rewire, and leave
+       `landmarker` truthy: that stale ref then blocked every future
+       _initLocal early-return, so the NEXT worker death had no inline
+       fallback to land on */
+    try { this.landmarker?.close?.(); } catch {}
+    this.landmarker = null;
     w.onerror = () => this._workerDied(w);               // mid-game death → inline + one respawn
   }
   /* One place a worker goes to die. Idempotent: a zombie that already lost
@@ -109,7 +139,7 @@ export class Face {
     clearTimeout(this._retryT);
     if (respawn) this._retryT = setTimeout(() => {
       if (!this._worker && !this._stopped) this._spawn();
-    }, 3000);
+    }, this._respawnMs);
   }
   /* concurrent callers (fatal + onerror can fire together) must share ONE
      boot — two inline landmarkers meant leaked GPU/CPU graphs */
@@ -150,7 +180,7 @@ export class Face {
     const vw = v.videoWidth || 0, vh = v.videoHeight || 0;
     const post = (frame) => {
       try { this._worker.postMessage({ type: 'frame', frame }, [frame]); }
-      catch { frame.close?.(); this._inFlight = false; }
+      catch { try { frame.close?.(); } catch {} this._inFlight = false; }
     };
     // createImageBitmap itself may not exist, may reject, or may throw
     // SYNCHRONOUSLY — every path must land here, not in the rVFC callback
@@ -185,7 +215,7 @@ export class Face {
              (hung infer — a GPU deadlock fires no onerror): _inFlight would
              latch forever and tracking silently stops. The warm-up proved a
              detect CAN complete, so past the watchdog window it's dead. */
-          else if (this._sentAt && performance.now() - this._sentAt > STUCK_MS)
+          else if (this._sentAt && performance.now() - this._sentAt > this._stuckMs)
             this._workerDied(this._worker);
         }
         else if (this.landmarker) {
@@ -198,9 +228,14 @@ export class Face {
     // an exception inside onNew must never kill the chain — re-scheduling is
     // unconditional so one bad frame can't end tracking for the session
     if (v.requestVideoFrameCallback) {
-      const again = () => v.requestVideoFrameCallback(() => {
-        if (this._stopped) return;              // stop() must kill the chain, not just idle it
-        try { if (this._worker || this.landmarker) onNew(); } catch {} again(); });
+      const again = () => { try {
+        v.requestVideoFrameCallback(() => {
+          if (this._stopped) return;              // stop() must kill the chain, not just idle it
+          try { if (this._worker || this.landmarker) onNew(); } catch {} again(); });
+        /* re-registering can throw on a detached document — an escape from
+           inside the rVFC callback is an uncaught error AND a dead chain;
+           ending quietly is strictly better */
+      } catch {} };
       again();
     } else {
       const again = () => {
@@ -267,8 +302,12 @@ export class Face {
     this._stopped = true;
     clearTimeout(this._retryT);
     this._inFlight = false;
+    /* a still-booting worker isn't _worker yet — kill it too or it keeps
+       downloading ~13MB for a dead tracker (and leaks forever if its
+       'ready' never lands) */
+    try { this._bootW?.terminate(); } catch {} this._bootW = null;
     try { this._worker?.postMessage({ type: 'close' }); } catch {}
-    this._worker?.terminate(); this._worker = null;
+    try { this._worker?.terminate(); } catch {} this._worker = null;
     try { this.landmarker?.close?.(); } catch {} this.landmarker = null;
     this._okAt = -1;
     this.delegate = 'none';

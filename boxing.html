@@ -183,6 +183,34 @@
   .tut-time { margin-top: 6px; height: 5px; border-radius: 3px; background: rgba(43,33,24,.12); overflow: hidden; }
   .tut-time i { display: block; height: 100%; background: var(--sky); transform-origin: left; }
 
+  /* halftime corner card — slides up just over your health plate when the
+     bout stops for a coach tip: one urgent line, a sliver of break left,
+     then the next round bells in. Same paper-card family as .tutor but
+     tilted the other way and keyed leaf-green (your corner's got you) */
+  .coach { position: fixed; left: 50%; bottom: 148px; z-index: 34;
+    transform: translateX(-50%) translateY(26px) rotate(.8deg);
+    width: min(500px, calc(100vw - 32px)); padding: 12px 20px 13px; text-align: center;
+    background: var(--paper); color: var(--ink); border: 3px solid var(--ink); border-radius: 20px;
+    box-shadow: 0 8px 0 rgba(43,33,24,.5), 0 18px 44px rgba(0,0,0,.5);
+    opacity: 0; pointer-events: none;
+    transition: opacity .22s, transform .3s cubic-bezier(.34,1.56,.64,1); }
+  .coach.on { opacity: 1; transform: translateX(-50%) rotate(.8deg); pointer-events: auto; }
+  .coach .chead { font-size: 10px; font-weight: 800; letter-spacing: .3em; color: var(--leaf);
+    text-transform: uppercase; }
+  .coach .cbig { margin-top: 2px; font-size: 30px; font-weight: 900; letter-spacing: .05em;
+    color: var(--ink); }
+  .coach .ctip { margin: 6px auto 10px; max-width: 42ch; min-height: 2.6em;
+    font-size: 15px; font-weight: 700; line-height: 1.32; }
+  .coach .crow { display: flex; align-items: center; gap: 12px; }
+  .coach .cgo { flex: none; padding: 7px 16px; border: 2.5px solid var(--ink); border-radius: 999px;
+    background: var(--leaf); color: var(--paper); font: 800 12px inherit; letter-spacing: .12em;
+    text-transform: uppercase; cursor: pointer; box-shadow: 0 4px 0 var(--ink);
+    transition: transform .15s, box-shadow .15s; }
+  .coach .cgo:hover { transform: translateY(-2px); box-shadow: 0 6px 0 var(--ink); }
+  .coach .cgo:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+  .coach .ctime { flex: 1; height: 6px; border-radius: 4px; background: rgba(43,33,24,.12); overflow: hidden; }
+  .coach .ctime i { display: block; height: 100%; background: var(--leaf); transform-origin: left; }
+
   /* 3-2-1 before every round */
   .countdown { position: fixed; left: 50%; top: 42%; z-index: 32; pointer-events: none;
     transform: translate(-50%,-50%); text-align: center; display: none; }
@@ -252,6 +280,7 @@
     .feed { top: 280px; right: 14px; }
     .peep { left: 14px; bottom: 14px; width: 116px; }
     .callout { top: 36%; }
+    .coach { bottom: 118px; }
   }
 </style>
 </head>
@@ -274,6 +303,15 @@
     <div class="tele" data-tele></div>
   </div>
   <div class="tutor" data-tutor></div>
+  <div class="coach" data-coach>
+    <div class="chead">YOUR CORNER · <span data-coachrd>HALFTIME</span></div>
+    <div class="cbig">HALFTIME</div>
+    <div class="ctip" data-coachtip></div>
+    <div class="crow">
+      <button class="cgo" data-coachgo>Gloves up →</button>
+      <div class="ctime"><i data-coachtime></i></div>
+    </div>
+  </div>
   <div class="countdown" data-countdown><div class="rnd" data-cdround>ROUND 1</div><div class="n" data-cdn>3</div></div>
 
   <div class="score"><div class="n" data-score>0</div><div class="l">ringside pts</div><div class="combo" data-combo></div><div class="counter" data-counter>COUNTER READY</div></div>
@@ -301,13 +339,16 @@
 
   <script type="module">
     import * as THREE from 'three';
-    import Hands from './shared/hands.js';
-    import { Face } from './shared/face.js';
-    import { buildScene } from './shared/boxing/scene.js';
-    import { loadMitt } from './shared/boxing/mitts/index.js';
-    /* every slow load fires at once — mitt sprite, module graphs, and the
-       two tracker workers all warm up concurrently instead of serially */
-    const mittP = loadMitt();                                    // glove pick from the mitt rack
+    /* contract modules load dynamically — a failed dep degrades instead of
+       killing the whole page module (b4-pages): trackers → mouse mode,
+       mitt → bare-fist overlay, scene → readable fail card, tutorial →
+       straight fight. THREE stays static — without the render engine there
+       is no page to degrade to. */
+    const handsP = import('./shared/hands.js').catch(() => null);
+    const faceP = import('./shared/face.js').catch(() => null);
+    const sceneP = import('./shared/boxing/scene.js').catch(() => null);
+    const mittP = import('./shared/boxing/mitts/index.js')
+      .then(m => m.loadMitt()).catch(() => null);                 // glove pick from the mitt rack
     const gameModP = import('./shared/boxing/game.js');
     const audioModP = import('./shared/boxing/audio.js');
 
@@ -328,10 +369,27 @@
       plate: $('[data-plate]'), nhpGhost: $('[data-nhpghost]'), npcGas: $('[data-npcgas]'),
       nstam: $('[data-nstam]'), nstamW: $('[data-nstamwrap]'),
       countdown: $('[data-countdown]'), cdRound: $('[data-cdround]'), cdN: $('[data-cdn]'),
+      coach: $('[data-coach]'), coachRd: $('[data-coachrd]'), coachTip: $('[data-coachtip]'),
+      coachGo: $('[data-coachgo]'), coachTime: $('[data-coachtime]'),
     };
 
     /* ================= renderer / stage ================= */
     const cvs = $('#world');
+    /* park the module on a readable failure card — top-level module code
+       can't early-return, so a never-resolving await parks it here. */
+    async function parkFail(title, body) {
+      cvs.style.visibility = 'hidden';
+      const card = document.createElement('div');
+      card.style.cssText = 'position:fixed;inset:0;display:grid;place-items:center;' +
+        'z-index:50;pointer-events:none';
+      card.innerHTML = `<div style="background:#FFF8EC;color:#2B2118;border:4px solid #2B2118;
+        border-radius:18px;box-shadow:0 8px 0 #2B2118;padding:22px 30px;max-width:420px;
+        text-align:center;font-family:inherit">
+        <div style="font-size:34px;font-weight:800;letter-spacing:.04em">${title}</div>
+        <div style="margin-top:8px;font-weight:600">${body}</div></div>`;
+      document.body.appendChild(card);
+      await new Promise(() => {});
+    }
     // Probe the GPU BEFORE creating the real renderer: an iGPU/tile rasterizer
     // at 1600×900 pays ~4× fill for MSAA — the single biggest render cost.
     let gpuName = '';
@@ -358,20 +416,10 @@
     } else {
       /* No WebGL = no game, but never a dead black page: park the module on a
          readable failure card (top-level module code can't early-return). */
-      cvs.style.visibility = 'hidden';
       status.textContent = 'webgl unavailable';
-      const card = document.createElement('div');
-      card.style.cssText = 'position:fixed;inset:0;display:grid;place-items:center;' +
-        'z-index:50;pointer-events:none';
-      card.innerHTML = `<div style="background:#FFF8EC;color:#2B2118;border:4px solid #2B2118;
-        border-radius:18px;box-shadow:0 8px 0 #2B2118;padding:22px 30px;max-width:420px;
-        text-align:center;font-family:inherit">
-        <div style="font-size:34px;font-weight:800;letter-spacing:.04em">CAN'T FIND THE RING</div>
-        <div style="margin-top:8px;font-weight:600">This game needs WebGL and your browser
-        couldn't open a GPU context. Try a different browser, enable hardware
-        acceleration, or restart the GPU process.</div></div>`;
-      document.body.appendChild(card);
-      await new Promise(() => {});              // park here — nothing below can run
+      await parkFail("CAN'T FIND THE RING",
+        "This game needs WebGL and your browser couldn't open a GPU context. " +
+        "Try a different browser, enable hardware acceleration, or restart the GPU process.");
     }
     // iGPU render-scale: the scene is fill-bound at desktop sizes, so weak GPUs
     // draw .8× and let the compositor upscale — the 2D gloves/HUD stay 1:1 sharp.
@@ -380,8 +428,14 @@
     ren.shadowMap.enabled = true;
     ren.shadowMap.autoUpdate = false;            // refreshed every 2nd frame in loop()
     const cam = new THREE.PerspectiveCamera(68, 1, .05, 120);
-    cam.position.set(0, 1.7, 4.6); cam.lookAt(0, 1, 0);
+    cam.position.set(0, 1.7, 5.8); cam.lookAt(0, 1, 0);
 
+    const buildScene = (await sceneP)?.buildScene;
+    if (!buildScene) {              // arena module failed to load — degrade, don't die
+      status.textContent = 'ring failed to load';
+      await parkFail("CAN'T FIND THE RING",
+        "The arena module failed to load — hard-refresh (Ctrl+Shift+R) and try again.");
+    }
     const world = buildScene(THREE, ren, { low: weakGpu });
     const scene = world.scene;
 
@@ -390,8 +444,9 @@
     const video = $('[data-cam]');
     const noTrack = !!params.get('notrack');
     let handStatus = 'loading';
-    const trackWaitT0 = performance.now();   // deadline for the hold-the-bell wait
-    const TRACK_WAIT_MS = 35000;             // beyond this the link's too slow — fight anyway
+    let videoLive = false;                   // frames actually arriving — a bogus
+    const trackWaitT0 = performance.now();   // ?vid URL leaves video.src truthy but
+    const TRACK_WAIT_MS = 35000;             // dead: trackers + bell-hold must not fire
     if (!noTrack) try {
       if (params.get('vid')) {
         video.src = params.get('vid'); video.loop = true; video.muted = true; await video.play();
@@ -401,21 +456,24 @@
             frameRate: { ideal: 30, max: 30 } }, audio: false });
         await video.play();
       }
+      videoLive = true;
       status.textContent = 'camera live';
     } catch { status.textContent = 'mouse mode'; $('.peep').hidden = true; }
     if (noTrack) { status.textContent = 'synthetic mode'; $('.peep').hidden = true; }
     let hands = null, face = null;
-    if (!noTrack && (video.srcObject || video.src)) {
+    const Hands = (await handsP)?.default, Face = (await faceP)?.Face;
+    if (!noTrack && videoLive) {
       // each landmarker boots inside its own worker — fire both, wire in when ready.
       // Hands get the whole GPU budget: a tracked hand roughly doubles infer
       // cost, and two fists up is the exact moment tracking must keep 30Hz.
       // FaceLandmarker (~10-20ms on CPU) lives on spare cores instead of competing.
-      Face.create(video, './vendor/mediapipe', { preferCpu: true })
+      Face?.create(video, './vendor/mediapipe', { preferCpu: true })
         .then(f => { face = f; status.textContent = `face · ${f.delegate}`; }).catch(() => {});
-      Hands.create(video, './vendor/mediapipe', { preferCpu: false }).then(h => {
+      if (Hands) Hands.create(video, './vendor/mediapipe', { preferCpu: false }).then(h => {
         hands = h; handStatus = h.delegate === 'none' ? 'unavailable' : 'ready';
       }).catch(() => { handStatus = 'unavailable'; });
-    }
+      else handStatus = 'unavailable';   // module failed to load — no hold, mouse mode
+    } else handStatus = 'unavailable';   // no camera/trackers — never hold the bell
     // camera keeps streaming while the tab hides — pause the device, not the app
     addEventListener('visibilitychange', () => {
       const t = video.srcObject?.getVideoTracks?.()[0];
@@ -436,12 +494,12 @@
         skipIntro: true,
         fightOpts: { practice, ai: !tutorialMode } });   // tutorial scripts PIP itself
       game.skipIntro();                     // straight to the fight countdown (no walk-on intro / fighting pose)
-      if (tutorialMode) {
+      if (tutorialMode) try {
         const { Tutorial } = await import('./shared/boxing/tutorial.js');
         document.body.classList.add('tutorial');
         tutor = new Tutorial({ fight: game.fight, sim: game.sim, root: $('[data-tutor]'),
           onDone: passed => showTutorialEnd(passed) });
-      }
+      } catch {}                       // coach chunk failed — the fight still runs without it
       const nm = (game.fight.state.npc.name || game.npc.name || 'PIP').toUpperCase();
       el.npcName.textContent = nm;
       el.npcLbl.textContent = nm.split(' ')[0];   // tiny row label gets the short name
@@ -484,6 +542,7 @@
       'player-blocked': (s, lb) => lb?.special ? `${lb.special} — ON THE GLOVES` : 'BLOCKED IT',
       'player-dodged': (s, lb) => lb?.perfect ? 'PERFECT DODGE — UNLOAD!' : 'DODGED · COUNTER!',
       'counter': () => 'COUNTER! +35% POWER',
+      'corner': () => 'CORNER — LISTEN UP',
     };
     const FLASH = {
       'player-hit': 'POW!', 'npc-hit': 'POW!', 'player-hit-taken': 'TAGGED!',
@@ -665,6 +724,13 @@
         const lg = window.__boxing.log;
         if (lg.length < 4000) lg.push(e);          // debug trace — cap long sessions
         const f = FEED[e]; if (f) feed(f(st, st.lastBlow));
+        if (e === 'player-hit-taken') cstats.took++;
+        else if (e === 'player-blocked') cstats.blocked++;
+        else if (e === 'player-dodged') cstats.slipped++;
+        else if (e === 'player-dodge') cstats.slips++;
+        else if (e === 'player-hit') cstats.landed++;
+        else if (e === 'player-punch' && cstats.thrown[st.lastBlow?.kind] != null)
+          cstats.thrown[st.lastBlow.kind]++;
         if (FLASH[e]) flash(FLASH[e]);
         if (e === 'player-hit-taken' || (e === 'ko' && st.phase === 'playerdown')) vinT = performance.now();
         if (e === 'perfect-dodge') callout('PERFECT!', 'perfect', 650);
@@ -697,6 +763,140 @@
       const vin = Math.min(.92, blood * .55 + vinPulse * .75);
       if (Math.abs(vin - (hLast.vin ?? -1)) > .004) { hLast.vin = vin; el.vin.style.opacity = vin; }
     };
+
+    /* ================= halftime corner =================
+       On the ropes — two-thirds of the tank gone — the bout takes ONE coach
+       timeout per fight: the card slides up over your health plate with a
+       live corner tip (TensorMux glm-4-7-flash; canned wisdom when it's
+       unreachable) while cornerHold freezes the whole bout behind it, then
+       the next round bells in with a partial patch-up — never a full heal.
+       Off in practice/tutorial (scripted bout) and ?notrack (e2e soaks the
+       player — a mid-test freeze would hang the KO waits); ?coach=0 forces
+       it off, ?coach=1 forces it on. */
+    const COACH = {
+      url: '/api/coach',    // server.mjs proxies TensorMux — the key stays off the page
+      hold: 8000,           // break length — then the bell deals the next round
+      apiMs: 5000,          // the tip can never hold up the restart
+    };
+    const coachOn = params.get('coach') === '1'
+      || (params.get('coach') !== '0' && params.get('coach') !== 'off' && !practice && !noTrack);
+    const corner = { on: false, used: false, t0: 0, skip: false, voice: null };
+    /* what the corner actually SAW: punches by kind, where each glove sits
+       (guard level = hand raised into the face band, sampled every fighting
+       frame), slips/ducks attempted, hits eaten vs blocked vs landed. This is
+       the scouting report the tip is built on — not just the scoreline. */
+    const cstats = { took: 0, blocked: 0, slipped: 0, landed: 0, slips: 0,
+      thrown: { jab: 0, cross: 0, hook: 0, uppercut: 0 },
+      gL: 0, gR: 0, gN: 0, duckSum: 0 };
+    const cstatsReset = () => {
+      cstats.took = cstats.blocked = cstats.slipped = cstats.landed = cstats.slips = 0;
+      for (const k in cstats.thrown) cstats.thrown[k] = 0;
+      cstats.gL = cstats.gR = cstats.gN = cstats.duckSum = 0;
+    };
+    const COACH_TIPS = [    // offline corner wisdom — same voice, no network
+      'Hands up, chin down — make them miss before you make them pay.',
+      'Stop trading. Slip the jab, counter the hook, steal the round back.',
+      'Breathe. Jab in, touch and move — no more brawling.',
+      'Cover the side the hook keeps finding. Duck under it and unload.',
+    ];
+    let tipN = 0;
+    /* scouting report from the hands themselves: which glove drifts, what
+       gets thrown, whether they move their head. Reads like what a real
+       corner watched from the stool — the model turns it into the tip. */
+    const scoutReport = () => {
+      const th = cstats.thrown, tot = th.jab + th.cross + th.hook + th.uppercut;
+      const kinds = Object.keys(th).filter(k => th[k] > 0)
+        .sort((a, b) => th[b] - th[a]).map(k => `${th[k]} ${k}s`);
+      const gL = cstats.gN ? cstats.gL / cstats.gN : 0,
+            gR = cstats.gN ? cstats.gR / cstats.gN : 0;
+      const drifts = Math.abs(gL - gR) < .18 ? null : gL < gR ? 'left' : 'right';
+      const duckAvg = cstats.gN ? cstats.duckSum / cstats.gN : 0;
+      return `Fighter habits: ${tot ? `threw ${tot} punches (${kinds.join(', ')})` : 'threw almost nothing'}, ` +
+        `left glove up ${(gL * 100) | 0}% of the time, right ${(gR * 100) | 0}%` +
+        `${drifts ? ` — ${drifts} glove drifts` : ''}, slipped ${cstats.slips}x, ` +
+        `ducked ${(duckAvg * 100) | 0}% of the time.`;
+    };
+    async function coachAdvice(hpPct, st) {
+      const prompt =
+        `You are a boxing corner coach at halftime — ONE urgent tip, under 20 words, ` +
+        `plain speech, no quotes, never recite the stats back. ` +
+        `Your fighter: ${hpPct}% health, took ${cstats.took} clean hits, ` +
+        `blocked ${cstats.blocked}, dodged ${cstats.slipped}, landed ${cstats.landed}. ` +
+        `${scoutReport()} ` +
+        `Opponent ${st.npc.name || 'PIP'}: ${Math.round(st.npc.hp / (st.npc.maxHp || 1) * 100)}% health` +
+        `${st.npc.gassed ? ', winded' : ''}.`;
+      const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), COACH.apiMs);
+      try {
+        const r = await fetch(COACH.url, { method: 'POST', signal: ctl.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt }) });
+        const d = await r.json().catch(() => null);
+        const t = String(d?.tip || '').trim();
+        if (t) return t.slice(0, 140);
+      } catch {} finally { clearTimeout(to); }
+      return COACH_TIPS[tipN++ % COACH_TIPS.length];
+    }
+    /* the corner TALKS: tip text → mp3 via /api/coach-voice (ElevenLabs key
+       stays server-side). A muted game keeps a silent corner; a clip can't
+       outlive its own break (stale fetch → discarded, close → paused). */
+    async function coachVoice(t, myT0) {
+      if (audio?.muted) return;
+      try {
+        const r = await fetch('/api/coach-voice', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: t, voice: params.get('voice') || undefined }) });
+        if (!r.ok) return;                       // 501 no-key / 502 upstream — quiet card
+        const buf = await r.arrayBuffer();
+        if (!corner.on || corner.t0 !== myT0 || !buf.byteLength) return;
+        corner.voice?.pause?.();
+        const a = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' })));
+        corner.voice = a; a.play().catch(() => {});
+      } catch {}
+    }
+    /* trigger + break clock — runs every frame from the main loop:
+       fresh bout re-arms the one-time flag and wipes the prompt stats;
+       two-thirds gone while fighting → patch up + next round's countdown;
+       the card stays up COACH.hold ms (or until you wave it off) */
+    const cornerTick = (st, now) => {
+      if (st.phase === 'intro' || (st.phase === 'countdown' && st.round === 1 && !corner.on)) {
+        if (corner.on) { corner.on = false; corner.voice?.pause?.(); el.coach.classList.remove('on'); }   // rematch mid-break
+        corner.used = false;
+        cstatsReset();
+      }
+      // keep watching the gloves — the report's only honest if it's live
+      if (st.phase === 'fighting') {
+        const g = game?.tracker?.guard;
+        cstats.gL += g?.left || 0; cstats.gR += g?.right || 0; cstats.gN++;
+        cstats.duckSum += game?.tracker?.duck || 0;
+      }
+      if (coachOn && !corner.on && !corner.used && st.phase === 'fighting'
+          && st.player.hp > 0 && st.player.hp / (st.player.maxHp || 1) <= 1 / 3) {
+        corner.used = true;
+        const hpPct = Math.round(st.player.hp / (st.player.maxHp || 1) * 100);
+        if (game?.fight.corner?.()) {
+          corner.on = true; corner.skip = false; corner.t0 = now;
+          el.coachRd.textContent = `ROUND ${st.round} UP NEXT · PATCHED TO ${Math.round(st.player.hp / st.player.maxHp * 100)}%`;
+          txt('ctip', el.coachTip, '— your corner is shouting over the crowd —');
+          el.coach.classList.add('on');
+          feed('CORNER — LISTEN UP');
+          callout('HALFTIME', 'perfect', 1200);
+          audio?.handleEvent('corner', st);
+          const myT0 = corner.t0;         // a slow tip can't land into the NEXT break
+          coachAdvice(hpPct, st).then(t => {
+            if (corner.on && corner.t0 === myT0) { txt('ctip', el.coachTip, t); coachVoice(t, myT0); }
+          });
+        }
+      }
+      if (corner.on) {
+        const left = COACH.hold - (now - corner.t0);
+        bar('ctime', el.coachTime, left / COACH.hold);
+        if (left <= 0 || corner.skip) {
+          corner.on = false; corner.voice?.pause?.();
+          el.coach.classList.remove('on');
+        }
+      }
+    };
+    el.coachGo.onclick = () => { corner.skip = true; };
 
     /* ================= mouse fallback =================
        left-drag = left glove thrust, right-drag = right glove,
@@ -776,6 +976,7 @@
     $('[data-skip-intro]')?.addEventListener('click', () => game?.skipIntro());
     addEventListener('keydown', e => {
       const ph = game?.fight.state.phase;
+      if (corner.on && e.key === 'Enter') { corner.skip = true; e.preventDefault(); }
       if (ph === 'intro' && e.key === 'Enter') { game.skipIntro(); e.preventDefault(); }
       if (ph === 'win' || ph === 'lose') {
         const signs = { '1': 'wave', '2': 'hype', '3': 'point', '4': 'victory', '5': 'ready' };
@@ -1204,8 +1405,9 @@
         controls.sign = performance.now() < entranceInput.until ? entranceInput.sign : null;
         // hold the bell while the landmarker boots (deadline so a hopeless
         // link can't wedge the countdown forever — hands still adopt late)
-        controls.waitForHands = !noTrack && !!(video.srcObject || video.src)
+        controls.waitForHands = !noTrack && videoLive
           && handStatus === 'loading' && performance.now() - trackWaitT0 < TRACK_WAIT_MS;
+        controls.cornerHold = corner.on;         // halftime freezes the bout, not the page
         out = game.step(dt, hs, fs, controls);
         // distance trace while the NPC presses — __boxing.pressLog for tests
         if (out.state.phase === 'fighting' && game.fight.npcDir() === 'press') {
@@ -1213,6 +1415,7 @@
           if (pl.length < 600) pl.push(out.sim.distance());
         }
         hud(out);
+        cornerTick(out.state, now);
         if (audio) {
           for (const e of out.events) audio.handleEvent(e, out.state);
           audio.update(dt, out.state);
@@ -1234,7 +1437,7 @@
       if (frameI++ % (weakGpu ? 3 : 2) === 1) ren.shadowMap.needsUpdate = true;
       ren.render(scene, cam);
       if (++fpsN === 60) { const f = Math.round(60000 / (now - fpsT)); fpsN = 0; fpsT = now;
-        if (!noTrack && (video.srcObject || video.src)) {
+        if (!noTrack && videoLive) {
           const count = hands?.state?.hands?.length ?? 0;
           const tr = hands?.stats;
           status.textContent = handStatus === 'ready'

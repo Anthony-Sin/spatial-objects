@@ -24,7 +24,7 @@
                     all normalized 0–1, NOT selfie-mirrored — page handles that)
 */
 let landmarker = null, kind = null, model = null, lastTs = -1, warned = false,
-  failN = 0, tsOff = null;
+  failN = 0, tsOff = null, warnedFrame = false;
 
 /* init/close are async (they await import() + createFromOptions) — if two
    inits, or an init and a close, interleave at those awaits, the loser's
@@ -92,10 +92,20 @@ function doClose() { try { landmarker?.close?.(); } catch {} landmarker = null; 
 
 function handleFrame(m) {
   const frame = m.frame;
+  /* malformed envelope — a sender bug, not a dying delegate. Still post so
+     the page's _inFlight clears, but DON'T count failN: 35 of these used to
+     escalate a perfectly healthy landmarker to 'fatal' */
+  if (!frame || typeof frame !== 'object' || typeof frame.close !== 'function') {
+    if (!warnedFrame) { warnedFrame = true;
+      console.warn('track-worker: frame message with no usable frame — ignored'); }
+    self.postMessage({ type: 'result', landmarks: kind === 'hands' ? [] : null,
+      handedness: [], face: null });
+    return;
+  }
   if (!landmarker) {          // closed mid-flight — still post, or _inFlight wedges
     self.postMessage({ type: 'result', landmarks: kind === 'hands' ? [] : null,
       handedness: [], face: null });
-    frame?.close?.(); return;
+    try { frame?.close?.(); } catch {} return;
   }
   try {
     // VIDEO mode wants strictly increasing ms — the frame's own media
@@ -108,7 +118,10 @@ function handleFrame(m) {
     // preserves real inter-frame deltas; the lastTs floor keeps ordering
     // through seeks/underruns; untimestamped frames (ImageBitmap) just take
     // perf time, which already sits on the anchored scale.
-    const raw = frame.timestamp > 0 ? frame.timestamp / 1e3 : null;
+    // Guard the stamp itself too: Infinity used to anchor tsOff=-Inf and
+    // land NaN in lastTs, poisoning every later frame's ts with NaN.
+    const raw = Number.isFinite(frame.timestamp) && frame.timestamp > 0
+      ? frame.timestamp / 1e3 : null;
     if (raw != null && tsOff == null)
       tsOff = Math.max(lastTs + 1, performance.now()) - raw;
     const ts = Math.max(lastTs + 1,
@@ -146,7 +159,9 @@ function handleFrame(m) {
     self.postMessage({ type: 'result', landmarks: kind === 'hands' ? [] : null,
       handedness: [], face: null });
   } finally {
-    frame?.close?.();          // return the frame to the pool — leaks stall video
+    // return the frame to the pool — leaks stall video; a throwing close()
+    // here would mask the real outcome, so it stays wrapped
+    try { frame?.close?.(); } catch {}
   }
 }
 

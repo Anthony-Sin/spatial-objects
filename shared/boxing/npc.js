@@ -46,16 +46,20 @@ let protoP = null;
 const protoModule = () => (protoP ||= import('./protoBoxer.js').catch(() => null));
 
 const fetchManifest = async (opts) => {
-  if (opts.manifest) return opts.manifest;
-  const url = opts.manifestUrl || './shared/boxing/assetManifest.json';
-  try {
-    const r = await fetch(url);
-    if (!r.ok) return { candidates: [] };
-    const j = await r.json();
-    // a well-formed json body with the wrong shape (candidates:'oops') used to
-    // sail through here and explode later on manifest.candidates.find
-    return { candidates: Array.isArray(j?.candidates) ? j.candidates : [] };
-  } catch { return { candidates: [] }; }
+  let j = null;
+  if (opts.manifest) j = opts.manifest;
+  else {
+    const url = opts.manifestUrl || './shared/boxing/assetManifest.json';
+    try {
+      const r = await fetch(url);
+      if (!r.ok) return { candidates: [] };
+      j = await r.json();
+    } catch { return { candidates: [] }; }
+  }
+  // normalize HERE for both sources: an injected manifest ({candidates:'oops'},
+  // a primitive, a promise) used to sail through verbatim and explode later
+  // on manifest.candidates.find — taking the whole game glue down with it
+  return { candidates: Array.isArray(j?.candidates) ? j.candidates : [] };
 };
 
 /* garbage-in guard — one shared number sanitizer for the whole adapter:
@@ -250,20 +254,24 @@ const PUNCH_POSE = {
   upper: { left: 'upper', right: 'upperL' },
 };
 const ACT = { name: 'idle', t01: 0 };
-const punchPose = npc => PUNCH_POSE[npc._seenKind]?.[npc._seenSide] || 'jab';
-function mapAction(npc, striking) {
+/* the punch keeps the LAST telegraph it saw (a live swing drops telegraph
+   the moment it releases). Kept on a side object — stashing it on the
+   caller's fight-state node used to double as a hidden write contract:
+   a frozen ctx.npc made `npc._seenKind =` throw in strict mode. */
+const punchPose = seen => PUNCH_POSE[seen?.kind]?.[seen?.side] || 'jab';
+function mapAction(npc, striking, seen) {
   const A = ACT;
   if (!npc || typeof npc !== 'object') { A.name = 'idle'; A.t01 = 0; return A; }
   const t = Math.min(1, Math.max(0, fnum(npc.actionT) / .45));
   // a glove still planted on the lens / sailing past it holds the punch pose
   if (striking && npc.action !== 'punch' && npc.action !== 'hurt' && npc.action !== 'down') {
-    A.name = punchPose(npc); A.t01 = .5; return A;
+    A.name = punchPose(seen); A.t01 = .5; return A;
   }
   switch (npc.action) {
     case 'windup':    A.name = npc.telegraph?.side === 'right' ? 'windupL' : 'windup';
       A.t01 = Number.isFinite(+npc.telegraph?.t01)
         ? Math.min(1, Math.max(0, +npc.telegraph.t01)) : t; break;
-    case 'punch':     A.name = punchPose(npc); A.t01 = t; break;
+    case 'punch':     A.name = punchPose(seen); A.t01 = t; break;
     case 'block':     A.name = 'block';     A.t01 = t; break;
     case 'hurt':      A.name = 'hurt';      A.t01 = t; break;
     case 'down':      A.name = 'down';      A.t01 = Math.min(1, Math.max(0, fnum(npc.actionT) / .6)); break;
@@ -277,13 +285,15 @@ function mapAction(npc, striking) {
 
 export async function createNpc(THREE, opts = {}) {
   const group = new THREE.Group();
-  if (opts.scene) opts.scene.add(group);
+  opts.scene?.add?.(group);
   const pick = opts.id ?? pickId();
   const manifest = await fetchManifest(opts);
   // manifest "PROP" entries (ring/gloves/bag) are set dressing — the lineup
-  // never lists them, and a stored pick can't smuggle one in as a rival
-  const cand = pick ? manifest.candidates.find(c => c.id === pick
-    && c.type === 'glb' && !/^PROP/i.test(c.notes || '')) : null;
+  // never lists them, and a stored pick can't smuggle one in as a rival.
+  // Entries can be ANYTHING a hand-edited json carried — a null in the list
+  // used to throw on `c.id` before the fallback could even run.
+  const cand = pick ? manifest.candidates.find(c => c && typeof c === 'object'
+    && c.id === pick && c.type === 'glb' && !/^PROP/i.test(c.notes || '')) : null;
 
   let impl = null, kind = 'proto', id = pick || 'bubble', name = pretty(pick), protoMod = null;
   if (cand) {
@@ -336,6 +346,7 @@ export async function createNpc(THREE, opts = {}) {
   // shiner/lump/bandage carry the story; GLBs get the full bruise wash
   const wash = impl.setDamage ? .45 : 1;
   function setDamage(frac) {                      // frac 0..1 = hp fraction lost
+    if (dead) return;                             // same no-op rule as resetDamage
     /* a non-finite frac once slipped the monotone gate (NaN <= x is false),
        latched dmgCur=NaN and lerped EVERY material colour to NaN — the whole
        fighter went black/invisible until a rebuild. Sanitize before compare. */
@@ -358,6 +369,7 @@ export async function createNpc(THREE, opts = {}) {
   function resetDamage() {
     if (dead) return;
     dmgCur = 0;
+    if (!api.kick || typeof api.kick !== 'object') api.kick = { x: 0, y: 0, z: 0 };
     api.kick.x = api.kick.y = api.kick.z = 0;
     if (kind === 'proto' && protoMod?.buildBoxer && impl.setDamage) {
       try {
@@ -410,6 +422,7 @@ export async function createNpc(THREE, opts = {}) {
   }
 
   const STRIKE = { kind: null, reach: null, y: null };   // shared — no per-frame alloc
+  const SEEN = { kind: null, side: null };               // per-instance last-telegraph stash
   /* impl.gloveColor should be a hex int, but a string/THREE.Color/NaN used to
      flow straight into '#' + gc.toString(16) — malformed CSS for the smash
      overlay ('#NaN', '##ff0000', '#[object Object]'). Coerce or default. */
@@ -432,6 +445,10 @@ export async function createNpc(THREE, opts = {}) {
          Infinity once parked makeRig's clock at Infinity → position.y NaN
          forever (protoBoxer guards itself; rigs/emergency don't). */
       dt = Number.isFinite(+dt) && dt > 0 ? Math.min(+dt, .5) : 0;
+      /* api.kick is a documented mutation point — but if a consumer REPLACES
+         it with a non-object, `k[a] = 0` throws on a primitive in strict mode.
+         Re-seat it instead of trusting the shape. */
+      if (!api.kick || typeof api.kick !== 'object') api.kick = { x: 0, y: 0, z: 0 };
       const k = api.kick;
       for (const a of 'xyz') if (!Number.isFinite(k[a])) k[a] = 0;   // un-poison
       if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.z)) {
@@ -444,11 +461,11 @@ export async function createNpc(THREE, opts = {}) {
         if (Number.isFinite(ry)) group.rotation.y = ry;              // NaN yaw = invisible fighter
       }
       if (npc?.telegraph?.kind) {                                    // punch loses telegraph — stash it
-        npc._seenKind = npc.telegraph.kind; npc._seenSide = npc.telegraph.side;
+        SEEN.kind = npc.telegraph.kind; SEEN.side = npc.telegraph.side;
       }
       const striking = Number.isFinite(ctx.strike?.reach);
-      const p = mapAction(npc, striking);
-      STRIKE.kind = npc?.telegraph?.kind ?? npc?._seenKind ?? null;
+      const p = mapAction(npc, striking, SEEN);
+      STRIKE.kind = npc?.telegraph?.kind ?? SEEN.kind ?? null;
       STRIKE.reach = striking ? ctx.strike.reach : null;
       STRIKE.y = striking && Number.isFinite(ctx.strike.y) ? ctx.strike.y : null;
       impl.pose(p.name, p.t01, STRIKE);

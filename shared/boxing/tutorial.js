@@ -128,7 +128,9 @@ export class Tutorial {
     if (!this.root || !st || !st.npc) return;
     this.root.classList.toggle('on', !this.done && st.phase !== 'intro');
     if (this.done) return;
-    const s = this.step || STEPS[STEPS.length - 1];
+    // STEPS is exported and mutable — a caller emptying the array left
+    // STEPS[-1] === undefined and s.title threw on the render path
+    const s = this.step || STEPS[STEPS.length - 1] || { title: '', how: '' };
     const nice = this.niceUntil > 0;
     this._set('n', this._els.n, `${Math.min(this.i + 1, STEPS.length)} / ${STEPS.length}`);
     this._set('t', this._els.t, st.phase === 'countdown' ? 'GET READY' : nice ? '✓ NICE!' : s.title);

@@ -72,7 +72,9 @@ export const TUNING = {
   // ratio — seating distance, screen height and head position all cancel
   PITCH_SMOOTH: 15,     // /s — pitch EMA (same feel as the sway chain)
   PITCH_LO: .02,        // ratio dead zone — breathing and micro-nods don't step
-  PITCH_RANGE: .12,     // ratio change past the dead zone that maps to ±1
+  PITCH_RANGE: .09,     // ratio change past the dead zone that maps to ±1
+                        // (a chin-up moves the ratio less than a nod — keep
+                        // the band tight enough that a real tilt reaches ±1)
   DT_MAX: .1,           // s — clamp dt (tab-switch spikes)
 };
 
@@ -111,30 +113,38 @@ export class FistTracker {
          reach baseline=0 (reach = 0/0 = NaN), and a negative EMA rate turns
          smoothing into runaway amplification (GUARD_RATE:-8 → guard −1 in
          6 frames). Floors + band ordering keep every output in contract. */
-  _clean() {
+  _clean(depth = 0) {
     const T = this.T;
-    for (const k in TUNING) if (!Number.isFinite(T[k])) T[k] = TUNING[k];
-    // divisors / windows / counts that must stay positive
-    for (const k of ['MIN_SPAN', 'SWAY_RANGE', 'DUCK_RANGE', 'GUARD_NOSE_RANGE',
-      'DT_MAX', 'FIRE_VEL', 'MAX_THROW_T', 'PUNCH_MAX', 'PITCH_RANGE'])
-      if (!(T[k] > 0)) T[k] = TUNING[k];
-    // EMA rates + thresholds that must stay non-negative
-    for (const k of ['BASELINE_RATE', 'VEL_SMOOTH', 'PALM_SMOOTH', 'CALM_RV',
-      'CALM_PV', 'GUARD_RATE', 'GUARD_FALL', 'FACE_SMOOTH', 'SWAY_SMOOTH',
-      'CENTER_RATE', 'CENTER_ZONE', 'DUCK_LO', 'MISS_GRACE', 'RESNAP_MISS',
-      'PITCH_SMOOTH', 'PITCH_LO'])
-      if (!(T[k] >= 0)) T[k] = TUNING[k];
-    // velocities where only absurd negatives brick the machine (retract can
-    // legitimately dip below a small threshold — only unreachable is wrong)
-    if (!(T.EMIT_VEL > -50)) T.EMIT_VEL = TUNING.EMIT_VEL;
-    if (!(T.RESET_VEL > -50)) T.RESET_VEL = TUNING.RESET_VEL;
-    if (!(T.FIRE_FRAMES >= 1)) T.FIRE_FRAMES = TUNING.FIRE_FRAMES;
-    if (!(T.REACH_CAP > 1)) T.REACH_CAP = TUNING.REACH_CAP;   // ÷(REACH_CAP-1)
-    if (!(T.GUARD_Y_ZERO > T.GUARD_Y_FULL)) {                 // ordered band
-      T.GUARD_Y_ZERO = TUNING.GUARD_Y_ZERO; T.GUARD_Y_FULL = TUNING.GUARD_Y_FULL; }
-    if (!(T.GUARD_REACH_HI > T.GUARD_REACH_LO)) {             // ordered band
-      T.GUARD_REACH_HI = TUNING.GUARD_REACH_HI; T.GUARD_REACH_LO = TUNING.GUARD_REACH_LO; }
-    T.POWER_FLOOR = clamp(T.POWER_FLOOR, 0, 1);
+    try {
+      for (const k in TUNING) if (!Number.isFinite(T[k])) T[k] = TUNING[k];
+      // divisors / windows / counts that must stay positive
+      for (const k of ['MIN_SPAN', 'SWAY_RANGE', 'DUCK_RANGE', 'GUARD_NOSE_RANGE',
+        'DT_MAX', 'FIRE_VEL', 'MAX_THROW_T', 'PUNCH_MAX', 'PITCH_RANGE'])
+        if (!(T[k] > 0)) T[k] = TUNING[k];
+      // EMA rates + thresholds that must stay non-negative
+      for (const k of ['BASELINE_RATE', 'VEL_SMOOTH', 'PALM_SMOOTH', 'CALM_RV',
+        'CALM_PV', 'GUARD_RATE', 'GUARD_FALL', 'FACE_SMOOTH', 'SWAY_SMOOTH',
+        'CENTER_RATE', 'CENTER_ZONE', 'DUCK_LO', 'MISS_GRACE', 'RESNAP_MISS',
+        'PITCH_SMOOTH', 'PITCH_LO'])
+        if (!(T[k] >= 0)) T[k] = TUNING[k];
+      // velocities where only absurd negatives brick the machine (retract can
+      // legitimately dip below a small threshold — only unreachable is wrong)
+      if (!(T.EMIT_VEL > -50)) T.EMIT_VEL = TUNING.EMIT_VEL;
+      if (!(T.RESET_VEL > -50)) T.RESET_VEL = TUNING.RESET_VEL;
+      if (!(T.FIRE_FRAMES >= 1)) T.FIRE_FRAMES = TUNING.FIRE_FRAMES;
+      if (!(T.REACH_CAP > 1)) T.REACH_CAP = TUNING.REACH_CAP;   // ÷(REACH_CAP-1)
+      if (!(T.GUARD_Y_ZERO > T.GUARD_Y_FULL)) {                 // ordered band
+        T.GUARD_Y_ZERO = TUNING.GUARD_Y_ZERO; T.GUARD_Y_FULL = TUNING.GUARD_Y_FULL; }
+      if (!(T.GUARD_REACH_HI > T.GUARD_REACH_LO)) {             // ordered band
+        T.GUARD_REACH_HI = TUNING.GUARD_REACH_HI; T.GUARD_REACH_LO = TUNING.GUARD_REACH_LO; }
+      T.POWER_FLOOR = clamp(T.POWER_FLOOR, 0, 1);
+    } catch {
+      /* a frozen/sealed tuning table refuses every write (strict mode) —
+         rebase onto a writable copy so lockdown can't wedge the tracker */
+      if (depth) return;
+      try { this.T = { ...T }; } catch { return; }
+      this._clean(1);
+    }
   }
 
   _blank() {
@@ -217,7 +227,12 @@ export class FistTracker {
         const d = this._r - this._pr;
         const p = Math.sign(d) * clamp((Math.abs(d) - T.PITCH_LO) / T.PITCH_RANGE, 0, 1);
         this.pitch = ema(this.pitch, p, T.PITCH_SMOOTH, dt);
-        if (Math.abs(p) < T.CENTER_ZONE) this._pr = ema(this._pr, this._r, T.CENTER_RATE, dt);
+        /* neutral follows posture drift ONLY inside the dead zone — gating on
+           the raw delta, not |p|: with the old |p|<CENTER_ZONE gate a held
+           modest tilt sat inside the adapt band and neutral learned the
+           tilted pose within seconds, decaying the step back to zero. Any
+           real tilt freezes neutral until the head comes level again. */
+        if (Math.abs(d) < T.PITCH_LO) this._pr = ema(this._pr, this._r, T.CENTER_RATE, dt);
       } else this.pitch = ema(this.pitch, 0, T.PITCH_SMOOTH * .5, dt);
     } else {
       this.sway = ema(this.sway, 0, T.SWAY_SMOOTH * .5, dt);

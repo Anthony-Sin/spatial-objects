@@ -104,7 +104,8 @@ export async function createGame(opts = {}) {
      challenger walks on from the crowd edge only once you've had the stage.
      walk-on covers the middle of the intro, first-person blend unchanged. */
   const ENTER_AT = .5, ENTER_LEN = .28;
-  const entPos = { x: 0, z: -4.6 };               // crowd-side spawn point
+  const ENT_Z = -(sim.t.radius + 1.4);            // crowd-side spawn, just past
+  const entPos = { x: 0, z: ENT_Z };              // the ring posts at any radius
   // Third-person shots use the avatar's own gloves, which are solved to the
   // arms each frame. The first-person canvas is reserved for visible hands.
   const aGloves = [];
@@ -137,6 +138,12 @@ export async function createGame(opts = {}) {
     if (slowT > 0) slowT = Math.max(0, slowT - dt);
     const slow = slowT > 0 ? SLOW_SCALE + (1 - SLOW_SCALE) * Math.pow(1 - slowT / SLOW_LEN, 3) : 1;
     const fdt = hitStopT > 0 ? 0 : dt * slow;
+    /* cornerHold — the halftime pause. The whole bout freezes behind the
+       coach card (fight, sim, npc anim, world, fx) while tracking, camera
+       and the glove overlay stay live; punches thrown into the break are
+       dropped below so nothing lands through the pause. */
+    const cornerHold = !!controls.cornerHold;
+    const hdt = cornerHold ? 0 : fdt;
     if (holdT > 0) holdT = Math.max(0, holdT - dt);
     tracker.update(hs || EMPTY_HS, fs || null, dt);
     const punches = tracker.punches.length
@@ -170,16 +177,16 @@ export async function createGame(opts = {}) {
     simIn.sway = sw; simIn.playerDodge = dodge; simIn.playerStep = depthStep;
     simIn.npcDir = fight.npcDir();
     simIn.npcStunned = st.npc.action === 'hurt' || st.npc.action === 'down' || st.npc.action === 'stunned';
-    sim.step(fdt, simIn);
+    sim.step(hdt, simIn);
     // keyboard dodge is edge-triggered (a held key = one slip); duck holds
     const dKey = Math.sign(+controls.dodge || 0);
-    fightIn.dodge = dKey && dKey !== prevDodgeKey ? dKey : 0;
+    fightIn.dodge = cornerHold ? 0 : (dKey && dKey !== prevDodgeKey ? dKey : 0);
     prevDodgeKey = dKey;
-    fightIn.punches = punches; fightIn.sway = sw;
+    fightIn.punches = cornerHold ? NO_PUNCHES : punches; fightIn.sway = sw;
     fightIn.guard = controls.guard ? GUARD_UP : tracker.guard;   // F key = gloves up
-    fightIn.duck = Math.max(tracker.duck || 0, +controls.duck || 0);
+    fightIn.duck = cornerHold ? 0 : Math.max(tracker.duck || 0, +controls.duck || 0);
     fightIn.distance = sim.distance();
-    fight.step(waiting ? 0 : fdt, fightIn);
+    fight.step(waiting ? 0 : hdt, fightIn);
     // The entrance lasts six real seconds even when rendering runs slowly.
     // Start after fight.step so the bell event reaches the HUD this frame.
     const wallIntro = typeof performance !== 'undefined'
@@ -301,11 +308,11 @@ export async function createGame(opts = {}) {
     npc.setDamage?.(1 - st.npc.hp / (st.npc.maxHp || 1));
 
     worldIn.fight = st; worldIn.sim = sim; worldIn.events = events;
-    world.update(fdt, worldIn);
+    world.update(hdt, worldIn);
     if (entryU < 1) {                    // walk the aisle — visual only
       const ee = entryU * entryU * (3 - 2 * entryU);
       entPos.x = sim.npc.pos.x * ee;
-      entPos.z = -4.6 + (sim.npc.pos.z + 4.6) * ee;
+      entPos.z = ENT_Z + (sim.npc.pos.z - ENT_Z) * ee;
       npcIn.pos = entPos;
     } else npcIn.pos = sim.npc.pos;
     npcIn.vel = sim.npc.vel;
@@ -324,10 +331,10 @@ export async function createGame(opts = {}) {
       strike.y = EYE - .04;            // aimed where your head WAS — slip and it sails by
     } else strike.reach = null;
     npcIn.strike = strike;
-    npc.update(fdt, npcIn);
+    npc.update(hdt, npcIn);
     if (st.phase === 'intro' && entryU > 0 && entryU < 1)
       npc.pose('celebrate', tNow * 1.8);              // showboat strut
-    fx.update(fdt);
+    fx.update(hdt);
 
     /* first-person camera: eyes at the player's sim position, aimed down the
        bearing to the NPC. Sway slides the head laterally; hits shake; taking

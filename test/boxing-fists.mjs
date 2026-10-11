@@ -186,6 +186,22 @@ const settle = (ft, h, f = fc(), n = 30) => { for (let i = 0; i < n; i++) ft.upd
   const g2 = fcP(.6); g2.lm = 'x';
   for (let i = 0; i < 4; i++) ft.update(hs(), g2, DT);
   check('non-array lm → pitch stays finite', Number.isFinite(ft.pitch), String(ft.pitch));
+
+  /* held-tilt regression: a modest chin-up (r .40→.35, inside the OLD
+     |p|<CENTER_ZONE adapt band) used to get learned as neutral in seconds —
+     the step decayed back to zero. Now only true dead-zone drift adapts. */
+  const ht = new FistTracker();
+  for (let i = 0; i < 25; i++) ht.update(hs(), fcP(.60), DT);          // neutral latch
+  for (let i = 0; i < 150; i++) ht.update(hs(), fcP(.635), DT);        // hold a small tilt ~2.5s
+  check('held modest chin-up → pitch holds, not eaten', ht.pitch < -.25, ht.pitch.toFixed(2));
+  for (let i = 0; i < 60; i++) ht.update(hs(), fcP(.60), DT);          // level → releases
+  check('level again → pitch releases', Math.abs(ht.pitch) < .1, ht.pitch.toFixed(2));
+  /* slow tilt (ramp over ~2s) must still register — a deliberate retreat is
+     rarely as snappy as a nod */
+  const sl = new FistTracker();
+  for (let i = 0; i < 25; i++) sl.update(hs(), fcP(.60), DT);
+  for (let i = 0; i < 120; i++) sl.update(hs(), fcP(.60 + .14 * (i / 119)), DT);   // r .40 → .27
+  check('slow chin-up ramp → pitch still goes negative', sl.pitch < -.5, sl.pitch.toFixed(2));
 }
 
 // ---- 6. hand disappears mid-thrust → clean decay -----------------------------

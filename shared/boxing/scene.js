@@ -19,7 +19,7 @@ const C = {
   coral: 0xff6b57, sun: 0xffc53d, leaf: 0x4fb06d, sky: 0x5da9e9, berry: 0xb565d8,
   void_: 0x171c2a, apron: 0x30394a,
 };
-const RING = 2.95;          // post-to-post half-extent; sim plays inside ~r2.6
+const RING = 4.75;          // post-to-post half-extent; sim plays inside ~r4.4
 const ROPE_Y = [1.32, 1.0, .68];
 const ROPE_COL = [C.coral, C.paper, C.sky];
 
@@ -145,7 +145,7 @@ export function buildScene(THREE, renderer, opts = {}) {
   const dummy = new THREE.Object3D(), col = new THREE.Color();
   for (let i = 0; i < N; i++) {
     const lane = i % 3, a = (i / N) * Math.PI * 2 + lane * .7 + Math.random() * .12;
-    const r = 5.4 + lane * 1.5 + Math.random() * .7;
+    const r = RING + .85 + lane * 1.5 + Math.random() * .7;
     cd.push({ x: Math.cos(a) * r, z: Math.sin(a) * r,
       y: -.2 + lane * .75 + Math.random() * .35,
       ph: Math.random() * 6.28, sp: 1.6 + Math.random() * 1.6 });
@@ -262,9 +262,20 @@ export function buildScene(THREE, renderer, opts = {}) {
 
   /* teardown — dedupe first: the four ropes of a level share one material,
      the mat reuses apron on five faces, ink flats repeat across posts. */
+  let disposed = false;
   function dispose() {
+    /* idempotent: BufferGeometry.dispose() fires 'dispose' unconditionally —
+       a second call would decrement info.memory.geometries a second time and
+       drift the counter negative. */
+    if (disposed) return;
+    disposed = true;
     const seen = new Set();
     scene.traverse(o => {
+      /* InstancedMesh.dispose() is the ONLY path that frees the instanceMatrix/
+         instanceColor GL buffers (r170 onInstancedMeshDispose → attributes.remove).
+         Disposing the shared geometry alone leaks both buffers until context
+         loss — invisible in info.memory.geometries but real VRAM. */
+      if (o.isInstancedMesh) o.dispose();
       if (o.geometry && !seen.has(o.geometry)) { seen.add(o.geometry); o.geometry.dispose(); }
       const ms = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
       for (const m of ms) {

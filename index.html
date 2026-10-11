@@ -674,7 +674,10 @@
     set('[data-best]', num(get('boxing:best', 0)).toLocaleString());
     set('[data-wins]', num(get('boxing:wins', 0)));
     set('[data-kos]', koN);
-    set('[data-koavg]', koN ? (koSum / koN).toFixed(1) : '—');
+    /* a corrupt boxing:ko can carry an absurd sum — toFixed() prints every
+       digit of a <1e21 number and blows the pill out of a 320px screen.
+       It's an average KO ROUND, so clamp the display at a sane ceiling. */
+    set('[data-koavg]', koN ? Math.min(koSum / koN, 99.9).toFixed(1) : '—');
   })();
 
   // tutorial checkmark syncs with Enter the Ring destination
@@ -711,63 +714,67 @@
   const settingTutorial = document.getElementById('setting-tutorial');
 
   function openSettings() {
-    settingsModal.classList.add('open');
-    settingsModal.setAttribute('aria-hidden', 'false');
+    settingsModal?.classList.add('open');
+    settingsModal?.setAttribute('aria-hidden', 'false');
   }
   function closeSettings() {
-    settingsModal.classList.remove('open');
-    settingsModal.setAttribute('aria-hidden', 'true');
+    settingsModal?.classList.remove('open');
+    settingsModal?.setAttribute('aria-hidden', 'true');
   }
 
-  settingsOpenBtn.addEventListener('click', openSettings);
-  settingsCloseBtn.addEventListener('click', closeSettings);
-  settingsDoneBtn.addEventListener('click', closeSettings);
-  settingsModal.addEventListener('click', (e) => {
+  /* every control derefs defensively — a renamed id must degrade ONE
+     control, never abort the module and take the 3D boot down with it */
+  settingsOpenBtn?.addEventListener('click', openSettings);
+  settingsCloseBtn?.addEventListener('click', closeSettings);
+  settingsDoneBtn?.addEventListener('click', closeSettings);
+  settingsModal?.addEventListener('click', (e) => {
     if (e.target === settingsModal) closeSettings();
   });
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && settingsModal.classList.contains('open')) closeSettings();
+    if (e.key === 'Escape' && settingsModal?.classList.contains('open')) closeSettings();
   });
 
   // Load saved settings
   try {
-    if (localStorage.getItem('boxing:sound') !== null) {
+    if (settingSound && localStorage.getItem('boxing:sound') !== null) {
       settingSound.checked = localStorage.getItem('boxing:sound') === '1';
     }
-    if (localStorage.getItem('boxing:volume') !== null) {
+    if (settingVolume && localStorage.getItem('boxing:volume') !== null) {
       settingVolume.value = localStorage.getItem('boxing:volume');
-      settingVolumeVal.textContent = settingVolume.value + '%';
+      if (settingVolumeVal) settingVolumeVal.textContent = settingVolume.value + '%';
     }
-    if (localStorage.getItem('boxing:mirror') !== null) {
+    if (settingMirror && localStorage.getItem('boxing:mirror') !== null) {
       settingMirror.checked = localStorage.getItem('boxing:mirror') === '1';
     }
-    if (localStorage.getItem('boxing:fps') !== null) {
+    if (settingFps && localStorage.getItem('boxing:fps') !== null) {
       settingFps.checked = localStorage.getItem('boxing:fps') === '1';
     }
-    settingTutorial.checked = tutToggle.checked;
+    if (settingTutorial && tutToggle) settingTutorial.checked = tutToggle.checked;
   } catch {}
 
   // Save settings on change
-  settingSound.addEventListener('change', () => {
+  settingSound?.addEventListener('change', () => {
     try { localStorage.setItem('boxing:sound', settingSound.checked ? '1' : '0'); } catch {}
   });
-  settingVolume.addEventListener('input', () => {
-    settingVolumeVal.textContent = settingVolume.value + '%';
+  settingVolume?.addEventListener('input', () => {
+    if (settingVolumeVal) settingVolumeVal.textContent = settingVolume.value + '%';
     try { localStorage.setItem('boxing:volume', settingVolume.value); } catch {}
   });
-  settingMirror.addEventListener('change', () => {
+  settingMirror?.addEventListener('change', () => {
     try { localStorage.setItem('boxing:mirror', settingMirror.checked ? '1' : '0'); } catch {}
   });
-  settingFps.addEventListener('change', () => {
+  settingFps?.addEventListener('change', () => {
     try { localStorage.setItem('boxing:fps', settingFps.checked ? '1' : '0'); } catch {}
   });
-  settingTutorial.addEventListener('change', () => {
-    tutToggle.checked = settingTutorial.checked;
-    syncTutorial();
-    try { localStorage.setItem('boxing:tutorial', tutToggle.checked ? '1' : '0'); } catch {}
+  settingTutorial?.addEventListener('change', () => {
+    if (tutToggle) {
+      tutToggle.checked = settingTutorial.checked;
+      syncTutorial();
+      try { localStorage.setItem('boxing:tutorial', tutToggle.checked ? '1' : '0'); } catch {}
+    }
   });
   tutToggle?.addEventListener('change', () => {
-    settingTutorial.checked = tutToggle.checked;
+    if (settingTutorial) settingTutorial.checked = tutToggle.checked;
   });
 
   // 3D Animated Ring & Boxing Characters — decorative backdrop: if WebGL,

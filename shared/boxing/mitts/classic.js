@@ -88,6 +88,12 @@ const lmOk = lm => {
 
 export function draw(ctx, pos, o = {}) {
   if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+  /* finite-but-absurd origins (±1e308) stay finite through every guard yet
+     still overflow the centroid sums inside blobPalm/the rescale (6×1e308
+     = Infinity → -Infinity path args). A mitt centered past ±1e6px is far
+     off any screen — clamp the local copy, keep the caller's pos pristine. */
+  const px = Math.min(1e6, Math.max(-1e6, pos.x));
+  const py = Math.min(1e6, Math.max(-1e6, pos.y));
   const reach = Math.max(0, Math.min(2.4, Number.isFinite(o.reach) ? o.reach : 1));
   // Landmarks determine the shape, while this cap prevents a close hand from
   // swallowing the whole opponent on small screens. (o.cap raises it for
@@ -110,33 +116,39 @@ export function draw(ctx, pos, o = {}) {
     /* o.arm = {x,y} px anchor up the arm: the same fist mitt, rotated so its
        wrist rides down the arm — drawn over a sleeve that runs the glove's
        forearm back onto the stub arm so the hand can't float off it. */
-    const adx = pos.x - o.arm.x, ady = pos.y - o.arm.y;
+    const adx = px - o.arm.x, ady = py - o.arm.y;
     const ad = Math.hypot(adx, ady) || 1, ux = adx / ad, uy = ady / ad;
     const a = Math.atan2(uy, ux) + Math.PI / 2;
     const ca = Math.cos(a), sa = Math.sin(a);
-    const x0 = pos.x - ux * size * 1.02, y0 = pos.y - uy * size * 1.02;
-    const x1 = pos.x - ux * size * .1, y1 = pos.y - uy * size * .1;
+    const x0 = px - ux * size * 1.02, y0 = py - uy * size * 1.02;
+    const x1 = px - ux * size * .1, y1 = py - uy * size * .1;
+    /* try/finally on EVERY save: a mid-path throw (missing ctx method, a
+       hostile ctx) must restore what was pushed — a leaked save would smear
+       alpha/transform over every later overlay cue on the shared canvas. */
     ctx.save();
-    ctx.globalAlpha = dim; ctx.lineCap = 'round';
-    ctx.save(); ctx.translate(0, 5);
-    ctx.strokeStyle = SHADOW; ctx.lineWidth = size * .5;
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-    ctx.restore();
-    ctx.strokeStyle = INK; ctx.lineWidth = size * .5 + 8;
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-    ctx.strokeStyle = RED; ctx.lineWidth = size * .5;
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-    ctx.restore();
+    try {
+      ctx.globalAlpha = dim; ctx.lineCap = 'round';
+      ctx.save();
+      try {
+        ctx.translate(0, 5);
+        ctx.strokeStyle = SHADOW; ctx.lineWidth = size * .5;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      } finally { ctx.restore(); }
+      ctx.strokeStyle = INK; ctx.lineWidth = size * .5 + 8;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      ctx.strokeStyle = RED; ctx.lineWidth = size * .5;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    } finally { ctx.restore(); }
     P = SCR_FIST;
     for (let i = 0; i < 21; i++) {
       const u = ARM_FIST[i];
-      P[i].x = pos.x + (u[0] * ca - u[1] * sa) * size;
-      P[i].y = pos.y + (u[0] * sa + u[1] * ca) * size;
+      P[i].x = px + (u[0] * ca - u[1] * sa) * size;
+      P[i].y = py + (u[0] * sa + u[1] * ca) * size;
     }
   } else if (o.lm && o.lm.length >= 21 && lmOk(o.lm)) { P = o.lm; tracked = true; }
   else {
     P = SCR_FIST;
-    for (let i = 0; i < 21; i++) { P[i].x = pos.x + FIST[i][0] * size; P[i].y = pos.y + FIST[i][1] * size; }
+    for (let i = 0; i < 21; i++) { P[i].x = px + FIST[i][0] * size; P[i].y = py + FIST[i][1] * size; }
   }
 
   // rescale the hand around its palm center so the mitt matches pos.size
@@ -145,7 +157,21 @@ export function draw(ctx, pos, o = {}) {
   cx /= 6; cy /= 6;
   const span = Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y) || 1;
   const k = (size * 1.35) / span;
-  for (let i = 0; i < 21; i++) { SCR_P[i].x = pos.x + (P[i].x - cx) * k; SCR_P[i].y = pos.y + (P[i].y - cy) * k; }
+  for (let i = 0; i < 21; i++) { SCR_P[i].x = px + (P[i].x - cx) * k; SCR_P[i].y = py + (P[i].y - cy) * k; }
+  /* a landmark set can pass lmOk (every joint finite) yet still poison the
+     rescale: |x|~1e308 joints overflow the palm-centre sum and the span —
+     (P−cx)·k then writes NaN/Infinity into the scratch cloud, and every
+     path call below silently no-ops → the mitt blanks for the frame (A7
+     violation). Check the WHOLE cloud (one hot joint is enough to poison a
+     single finger chain while the anchors stay finite) and drop to the
+     fist cloud. */
+  let poisoned = false;
+  for (let i = 0; i < 21; i++)
+    if (!Number.isFinite(SCR_P[i].x) || !Number.isFinite(SCR_P[i].y)) { poisoned = true; break; }
+  if (poisoned) {
+    for (let i = 0; i < 21; i++) { SCR_P[i].x = px + FIST[i][0] * size; SCR_P[i].y = py + FIST[i][1] * size; }
+    tracked = false;                 // generated cloud — gets pos.ang below
+  }
   P = SCR_P;
 
   // A fist still follows each knuckle, but the finger tips fold into one
@@ -165,31 +191,33 @@ export function draw(ctx, pos, o = {}) {
   const ang = Math.atan2(P[9].y - P[0].y, P[9].x - P[0].x);
 
   ctx.save();
-  ctx.globalAlpha = dim;
-  ctx.translate(pos.x, pos.y);
-  // The landmarks already contain the hand's angle. The generated fallback
-  // needs the pose angle because it has no tracked orientation of its own.
-  // `(ang || 0)` lets truthy garbage through — Infinity/'x' puts NaN into
-  // rotate(), which poisons the canvas transform and blanks every draw
-  // until the restore (mitt gone for the frame — A7 violation).
-  if (!tracked) ctx.rotate(Number.isFinite(pos.ang) ? pos.ang * .35 : 0);
-  ctx.translate(-pos.x, -pos.y);
-  if (sq > 0) {                            // punch smear along the thrust
-    ctx.translate(0, -size * .3 * sq);
-    ctx.scale(1 - sq * .14, 1 + sq * .28);
-  }
+  try {
+    ctx.globalAlpha = dim;
+    ctx.translate(px, py);
+    // The landmarks already contain the hand's angle. The generated fallback
+    // needs the pose angle because it has no tracked orientation of its own.
+    // `(ang || 0)` lets truthy garbage through — Infinity/'x' puts NaN into
+    // rotate(), which poisons the canvas transform and blanks every draw
+    // until the restore (mitt gone for the frame — A7 violation).
+    if (!tracked) ctx.rotate(Number.isFinite(pos.ang) ? pos.ang * .35 : 0);
+    ctx.translate(-px, -py);
+    if (sq > 0) {                          // punch smear along the thrust
+      ctx.translate(0, -size * .3 * sq);
+      ctx.scale(1 - sq * .14, 1 + sq * .28);
+    }
 
   // one solid glove: INK pass silhouettes fingers + palm as one shape;
   // RED pass paints it slightly smaller — ink survives only at the edge.
   // Fake drop shadow first: one offset silhouette pass ≈ free vs shadowBlur.
   ctx.save();
-  ctx.translate(0, 5);
-  ctx.strokeStyle = ctx.fillStyle = SHADOW;
-  ctx.lineWidth = fw + 5;
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  strokeFingers(ctx, P);
-  blobPalm(ctx, P, SHADOW);
-  ctx.restore();
+  try {
+    ctx.translate(0, 5);
+    ctx.strokeStyle = ctx.fillStyle = SHADOW;
+    ctx.lineWidth = fw + 5;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    strokeFingers(ctx, P);
+    blobPalm(ctx, P, SHADOW);
+  } finally { ctx.restore(); }
   for (const pass of PASSES) {
     ctx.strokeStyle = ctx.fillStyle = pass.c;
     ctx.lineWidth = fw + pass.dw;
@@ -214,21 +242,27 @@ export function draw(ctx, pos, o = {}) {
   ctx.strokeStyle = SHINE; ctx.lineWidth = Math.max(2.5, fw * .18); ctx.stroke();
 
   // cuff band + red lace ticks (worn like the old rim stripe)
-  ctx.save(); ctx.translate(P[0].x, P[0].y); ctx.rotate(ang);
-  ctx.beginPath(); ctx.roundRect(-fw * 1.7, -fw * 1.05, fw * 1.6, fw * 2.1, fw * .45);
-  ctx.fillStyle = CUFF; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.stroke();
-  ctx.lineWidth = 2; ctx.strokeStyle = LACE;
-  ctx.beginPath();
-  for (const lx of LACES) {
-    ctx.moveTo(-fw * 1.55 + lx * fw, -fw * .8);
-    ctx.lineTo(-fw * 1.55 + lx * fw, fw * .8);
-  }
-  ctx.stroke();
-  ctx.restore();
+  ctx.save();
+  try {
+    ctx.translate(P[0].x, P[0].y); ctx.rotate(ang);
+    ctx.beginPath();
+    /* roundRect is Blink ≥99 / Safari ≥16 — a ctx without it threw mid-path
+       (TypeError → leaked saves + a pageerror per frame). Rect fallback. */
+    if (ctx.roundRect) ctx.roundRect(-fw * 1.7, -fw * 1.05, fw * 1.6, fw * 2.1, fw * .45);
+    else ctx.rect(-fw * 1.7, -fw * 1.05, fw * 1.6, fw * 2.1);
+    ctx.fillStyle = CUFF; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.stroke();
+    ctx.lineWidth = 2; ctx.strokeStyle = LACE;
+    ctx.beginPath();
+    for (const lx of LACES) {
+      ctx.moveTo(-fw * 1.55 + lx * fw, -fw * .8);
+      ctx.lineTo(-fw * 1.55 + lx * fw, fw * .8);
+    }
+    ctx.stroke();
+  } finally { ctx.restore(); }
 
   // sheen arc across the knuckle bumps
   ctx.beginPath();
   ctx.arc(P[9].x - fw * .4, P[9].y - fw * .6, fw * 1.1, Math.PI * 1.05, Math.PI * 1.6);
   ctx.strokeStyle = SHINE; ctx.lineWidth = Math.max(2, fw * .22); ctx.lineCap = 'round'; ctx.stroke();
-  ctx.restore();
+  } finally { ctx.restore(); }
 }

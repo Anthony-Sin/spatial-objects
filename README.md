@@ -4,7 +4,14 @@ Hold an object up to your webcam. The scanner (YOLOv8, local) finds it, an AR
 ghost of its primitive forms over the live feed, and it drops into a 3D CAD
 bench you drive with your hands. On top of that sit three job-training rooms —
 real 3D environments where a foreman, surgeon, or dispatcher calls out tasks
-and scores your hands. Everything runs locally; no cloud, no keys.
+and scores your hands. Everything runs locally; no cloud, no keys — except
+the boxing halftime corner card, which asks a remote coach model for one tip
+per bout (`server.mjs` proxies `api.tensormux.com`, `TENSOR_KEY` env
+overrides the demo key, and the bout falls back to canned advice offline).
+Set `ELEVENLABS_KEY` (plus optional `ELEVENLABS_VOICE`) in the env or a
+`spatial-objects/.env` and `POST /api/coach-voice` speaks the tip in a
+gravelly corner voice (Clyde by default, `?voice=<id>` auditions others) —
+unset, the corner simply stays quiet.
 
 ## Run
 

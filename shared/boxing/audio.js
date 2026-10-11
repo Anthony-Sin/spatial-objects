@@ -33,6 +33,7 @@ export const EVENT_SFX = {
   'counter': 'dodge',           // bright cue on the reply punch
   'player-hit-taken': 'hurt',   // heavy low thud + little "oof" chirp
   'ko': 'ko',                   // buzzer + slow-mo pitch drop + crowd swell
+  'corner': 'bell',             // halftime break — one ding while the corner talks
   'win': 'win',
   'lose': 'lose',
 };
@@ -130,6 +131,8 @@ export class BoxingAudio {
         return this.play('bell', { times: 3 });
       case 'npc-special':   // signature move telegraph — the warning ding
         return this.play('bell', { times: 1 });
+      case 'corner':        // halftime card — a single ding over the coach's shoulder
+        return this.play('bell', { times: 1 });
       case 'countdown':
         return this.play('thud', { beep: state?.countdown || 1 });
       case 'ko':
@@ -143,11 +146,14 @@ export class BoxingAudio {
 
   play(name, opts = {}) {   // → true if anything was scheduled
     if (!this.ctx || this._muted) return false;
-    const fn = {
+    const PRESETS = {
       bell: this._bell, whoosh: this._whoosh, thwack: this._thwack,
       thud: this._thud, dodge: this._dodge, hurt: this._hurt,
       ko: this._ko, win: this._arp, lose: this._arp,
-    }[name];
+    };
+    // own-key test, not truthiness: '__proto__' resolved to Object.prototype —
+    // truthy, so fn.call didn't exist and a garbage preset name threw TypeError
+    const fn = Object.prototype.hasOwnProperty.call(PRESETS, name) ? PRESETS[name] : undefined;
     if (!fn) return false;
     fn.call(this, { delay: 0, ...opts, _lose: name === 'lose' });
     return true;

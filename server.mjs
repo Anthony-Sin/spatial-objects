@@ -3,12 +3,22 @@
    No dependencies — serves the folder on http://127.0.0.1:8791
    (localhost = secure context, so getUserMedia works). */
 import { createServer } from 'node:http';
-import { open, stat, realpath } from 'node:fs/promises';
+import { open, readFile, stat, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { networkInterfaces } from 'node:os';
 
 const ROOT = import.meta.dirname;
+/* drop KEY=value lines from ./.env into process.env (real env wins) — the
+   coach proxies read their upstream keys from here, and the DENY list below
+   keeps the file itself from ever being served. */
+try {
+  for (const line of (await readFile(join(ROOT, '.env'), 'utf8')).split('\n')) {
+    const m = /^\s*([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
+    if (m && process.env[m[1]] === undefined)
+      process.env[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
+  }
+} catch { /* no .env — fine */ }
 const ROOT_REAL = await realpath(ROOT);   // resolve once — ROOT itself may be linked
 const VENDOR_PREFIX = ROOT_REAL + sep + 'vendor' + sep;
 // resolved-path denylist — never web content. The 0.0.0.0 bind makes these
@@ -34,6 +44,96 @@ const MIME = {
   '.tflite': 'application/octet-stream', '.bin': 'application/octet-stream',
 };
 
+/* the halftime corner card can't call TensorMux from the page — the API
+   sends no CORS header on preflight, so any authenticated browser request
+   dies there. The tip rides through this one POST route instead; the key
+   stays server-side (TENSOR_KEY env overrides the baked-in demo key). */
+const TENSOR = {
+  url: 'https://api.tensormux.com/v1/chat/completions',
+  key: process.env.TENSOR_KEY || 'tmx_af21566252975c8498a877ceed4eb7b5',
+  model: 'glm-4-7-flash',
+};
+async function coachTip(req, res) {
+  const j = (code, obj) => {
+    res.writeHead(code, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(obj));
+  };
+  try {
+    // a corner prompt is a paragraph — anything bigger is drained then refused
+    let body = '', big = false;
+    for await (const c of req) {
+      body += c;
+      if (body.length > 8192) { big = true; break; }
+    }
+    if (big) { req.resume(); return j(413, { error: 'too big' }); }
+    let prompt = '';
+    try { prompt = String(JSON.parse(body)?.prompt || '').slice(0, 2000); } catch {}
+    if (!prompt) return j(400, { error: 'no prompt' });
+    const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 8000);
+    try {
+      const r = await fetch(TENSOR.url, { method: 'POST', signal: ctl.signal,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TENSOR.key}` },
+        body: JSON.stringify({ model: TENSOR.model, reasoning_effort: 'none', max_tokens: 80,
+          messages: [{ role: 'user', content: prompt }] }) });
+      const d = await r.json().catch(() => null);
+      const tip = String(d?.choices?.[0]?.message?.content || '')
+        .replace(/^[\s"'`*]+|[\s"'`*]+$/g, '').slice(0, 240);   // models wrap tips in *""* flourishes — strip the wrapping
+      if (!r.ok || !tip) return j(502, { error: `upstream ${r.status}` });
+      j(200, { tip });
+    } catch { j(502, { error: 'coach unreachable' }); }
+    finally { clearTimeout(to); }
+  } catch { j(500, { error: 'coach route failed' }); }
+}
+
+/* same problem for the voice: the tip is spoken in a gravelly corner voice
+   (ElevenLabs). Same route shape — page posts {text, voice?}, gets mp3 back.
+   ELEVENLABS_KEY / ELEVENLABS_VOICE in env or .env; no key → a clean 501 and
+   the page just stays quiet instead of failing the break. */
+const ELEVEN = {
+  key: process.env.ELEVENLABS_KEY || '',
+  voice: process.env.ELEVENLABS_VOICE || '2EiwWnXFnvU5JabPnvig',  // Clyde — war-vet rasp, born for corners
+  model: 'eleven_turbo_v2_5',                                   // fast enough to land mid-break
+};
+async function coachVoice(req, res) {
+  const j = (code, obj) => {
+    res.writeHead(code, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(obj));
+  };
+  try {
+    if (!ELEVEN.key) return j(501, { error: 'no ELEVENLABS_KEY configured' });
+    let body = '', big = false;
+    for await (const c of req) {
+      body += c;
+      if (body.length > 4096) { big = true; break; }
+    }
+    if (big) { req.resume(); return j(413, { error: 'too big' }); }
+    let text = '', voice = ELEVEN.voice;
+    try {
+      const d = JSON.parse(body);
+      text = String(d?.text || '').slice(0, 400);
+      // a caller can audition voices via ?voice= — voice ids are opaque
+      // alnum strings, nothing else gets through
+      if (/^[a-zA-Z0-9]{15,30}$/.test(d?.voice || '')) voice = d.voice;
+    } catch {}
+    if (!text) return j(400, { error: 'no text' });
+    const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 10000);
+    try {
+      const r = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voice}?output_format=mp3_44100_64`,
+        { method: 'POST', signal: ctl.signal,
+          headers: { 'xi-api-key': ELEVEN.key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, model_id: ELEVEN.model,
+            voice_settings: { stability: .45, similarity_boost: .75, style: .4, speed: 1.05 } }) });
+      if (!r.ok) return j(502, { error: `upstream ${r.status}` });
+      const buf = Buffer.from(await r.arrayBuffer());
+      res.writeHead(200, { 'content-type': 'audio/mpeg', 'content-length': buf.length,
+        'cache-control': 'no-store' });
+      res.end(buf);
+    } catch { j(502, { error: 'voice unreachable' }); }
+    finally { clearTimeout(to); }
+  } catch { j(500, { error: 'voice route failed' }); }
+}
+
 const server = createServer(async (req, res) => {
   try {
     // a reset socket must never take the process down — client aborts can
@@ -41,12 +141,21 @@ const server = createServer(async (req, res) => {
     // no listener throws
     req.on('error', () => {});
     res.on('error', () => {});
+    // the two POST routes — everything below stays read-only static
+    const api = req.method === 'POST' ? req.url.split('?')[0] : '';
+    if (api === '/api/coach') return coachTip(req, res);
+    if (api === '/api/coach-voice') return coachVoice(req, res);
     // read-only server — anything but GET/HEAD is a clean 405. Previously a
     // POST fell through to a 200 + body, and its payload was never drained
     // off the socket.
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405, { allow: 'GET, HEAD' });
       return res.end('method not allowed');
+    }
+    // node itself 400s a MISSING Host on HTTP/1.1 but `Host:` with an empty
+    // value sails through — an empty authority is equally useless (§7.2)
+    if (req.headers.host === '') {
+      res.writeHead(400); return res.end('bad request');
     }
     let path;
     try {
@@ -118,10 +227,15 @@ const server = createServer(async (req, res) => {
       // prefix but lands outside it, and must not borrow the immutable policy
       // (or the 304 skip) for a file that isn't actually under vendor/.
       const cacheable = real.startsWith(VENDOR_PREFIX);
+      // strong entity tag: identical size + identical mtime ⇔ identical bytes.
+      // A bare Last-Modified only carries second granularity and can't gate
+      // If-Match / If-None-Match / If-Range — those need a real validator.
+      const etag = `"${st.size.toString(16)}-${st.mtimeMs.toString(16)}"`;
       const hdrs = {
         'content-type': MIME[extname(file).toLowerCase()] || 'application/octet-stream',
         'cache-control': cacheable ? 'max-age=86400, immutable' : 'no-cache',
         'last-modified': st.mtime.toUTCString(),
+        'etag': etag,
         'accept-ranges': 'bytes',
         'cross-origin-opener-policy': 'same-origin',
         'cross-origin-embedder-policy': 'credentialless',
@@ -129,7 +243,35 @@ const server = createServer(async (req, res) => {
         'origin-agent-cluster': '?1',
       };
       const range = req.headers.range;
-      const ims = Date.parse(req.headers['if-modified-since'] || 0);
+      // Conditional preconditions in RFC 9110 §13.2.2 order: If-Match →
+      // If-Unmodified-Since → If-None-Match → If-Modified-Since → (If-Range is
+      // evaluated with the Range below). A malformed date NaNs out → ignored,
+      // not failed — a client can't be faulted for a validator we never issued.
+      const tagList = v => v.split(',').map(t => t.trim()).filter(Boolean);
+      const im = req.headers['if-match'];
+      const imTags = im === undefined ? [] : tagList(im);
+      if (imTags.length && !imTags.some(t => t === '*' || t === etag)) {   // strong compare — weak never matches
+        res.writeHead(412, hdrs); return res.end('precondition failed');
+      }
+      // If-Unmodified-Since is ignored when If-Match is present (§13.1.4).
+      // Presence-gated: Date.parse(0) → Jan 2000, which is truthy — the
+      // `|| 0` fallback would invent a validator the client never sent.
+      const iusHdr = im === undefined ? req.headers['if-unmodified-since'] : undefined;
+      const ius = iusHdr === undefined ? NaN : Date.parse(iusHdr);
+      if (ius && st.mtimeMs > ius + 999) {                       // file IS newer → precondition fails
+        res.writeHead(412, hdrs); return res.end('precondition failed');
+      }
+      const inm = req.headers['if-none-match'];
+      const inmTags = inm === undefined ? [] : tagList(inm);
+      if (inmTags.length
+          && inmTags.some(t => t === '*' || t.replace(/^W\//, '') === etag)) {   // weak compare (§13.1.2)
+        res.writeHead(304, hdrs); return res.end();
+      }
+      // If-Modified-Since is ignored when If-None-Match is present (§13.1.3).
+      // The vendor exemption stays: immutable files revalidate by freshness,
+      // not by conditional date. (Presence-gated like IUS — see above.)
+      const imsHdr = inm === undefined ? req.headers['if-modified-since'] : undefined;
+      const ims = imsHdr === undefined ? NaN : Date.parse(imsHdr);
       if (!range && !cacheable && ims && st.mtimeMs <= ims + 999) {   // 1s slack for sec-granularity
         res.writeHead(304, hdrs); return res.end();
       }
@@ -141,10 +283,21 @@ const server = createServer(async (req, res) => {
       // body. Only a syntactically broken or unsatisfiable bytes= spec 416s.
       let status = 200, start = 0, end = st.size - 1;
       if (range) {
+        // If-Range (RFC 9110 §14.3): the range applies only while the
+        // client's cached validator still matches. A stale one means the
+        // file changed under it — serving the 206 splice would silently
+        // corrupt a resumed download, so the whole representation goes out.
+        // Weak etags can never gate a range; an HTTP-date must equal our
+        // Last-Modified exactly (HTTP-dates only carry second granularity).
+        const ifr = req.headers['if-range']?.trim();
+        const ifrOk = ifr === undefined ? true
+          : ifr.startsWith('W/') ? false
+          : ifr.startsWith('"') ? ifr === etag
+          : Math.floor(Date.parse(ifr) / 1000) === Math.floor(st.mtimeMs / 1000);
         const spec = range.trim();
         const isBytes = /^bytes\s*=/i.test(spec);
         const m = /^bytes=(\d*)-(\d*)$/i.exec(spec);
-        if (isBytes && m && (m[1] !== '' || m[2] !== '') && !spec.includes(',')) {
+        if (ifrOk && isBytes && m && (m[1] !== '' || m[2] !== '') && !spec.includes(',')) {
           if (m[1] === '') {                       // suffix: last N bytes
             start = Math.max(0, st.size - (+m[2] || 0));
           } else {
@@ -157,13 +310,13 @@ const server = createServer(async (req, res) => {
           }
           status = 206;
           hdrs['content-range'] = `bytes ${start}-${end}/${st.size}`;
-        } else if (isBytes && !spec.includes(',')) {
+        } else if (ifrOk && isBytes && !spec.includes(',')) {
           // bytes= spec that isn't a usable single range (bytes=abc, bytes=-)
           res.writeHead(416, { ...hdrs, 'content-range': `bytes */${st.size}` });
           return res.end();
         }
-        // else: unknown unit (items=…) or a multi-range set — ignored, the
-        // client receives the whole 200 body
+        // else: unknown unit (items=…) / multi-range set / failed If-Range —
+        // all ignored, the client receives the whole 200 body
       }
 
       // read BEFORE writeHead — a file that vanishes between fstat() and here

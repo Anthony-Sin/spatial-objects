@@ -27,7 +27,9 @@
 */
 
 export const TUNING = {
-  radius: 2.6,           // ring radius to the ropes (world units)
+  radius: 4.4,           // ring radius to the ropes (world units) — big canvas:
+                         // the rival can orbit and retreat and the player has a
+                         // real retreat lane behind the corner stance
   bodyRadius: 0.34,      // fighter footprint radius (collision + rope clamp)
   npcRadius: 0,          // npc footprint — 0 = same as bodyRadius; bigger rivals
                          // keep more separation and clamp to the ropes sooner
@@ -47,9 +49,12 @@ export const TUNING = {
   orbitFlipMin: 2.0,     // seconds, min/max between circle direction flips
   orbitFlipMax: 4.2,
   // Small forward/back steps preserve the first-person corner framing.
-  playerLeash: 0.72,     // max |pos − spawn| including collision pushes
+  playerLeash: 1.6,      // max |pos − spawn| including collision pushes — the
+                         // real roam allowance: a retreat can run most of the
+                         // way to the ropes instead of stalling on a short leash
   stepForward: 0.65,     // lean in to enter range
-  stepBack: 0.25,        // lean out to create breathing room
+  stepBack: 1.0,         // lean out to create breathing room — a real retreat
+                         // down the bigger canvas, not a half-step shuffle
   anchorGain: 10,        // approach rate toward the chosen step position
   anchorSpeed: 1.5,      // responsive but still bounded footwork
   playerPushShare: 0.08, // fraction of body separation the player absorbs
@@ -83,16 +88,24 @@ export class RingSim {
      construct, reset, and atop step(): live mutation of this.t (devtools
      tweaking) used to slip NaN past the per-key read guards and poison
      positions permanently. */
-  _clean() {
+  _clean(depth = 0) {
     const t = this.t;
-    for (const k in TUNING) {
-      const v = t[k];
-      if (!Number.isFinite(v) || v < 0) t[k] = TUNING[k];
+    try {
+      for (const k in TUNING) {
+        const v = t[k];
+        if (!Number.isFinite(v) || v < 0) t[k] = TUNING[k];
+      }
+      t.playerPushShare = clamp(t.playerPushShare, 0, 1);
+      // the ring must fit both bodies side by side, else separation is impossible
+      t.radius = Math.max(t.radius, t.bodyRadius + (t.npcRadius || t.bodyRadius) + .3);
+      if (t.orbitFlipMax < t.orbitFlipMin) t.orbitFlipMax = t.orbitFlipMin;
+    } catch {
+      /* a frozen/sealed tuning table refuses every write (strict mode) —
+         rebase onto a writable copy so lockdown can't wedge or NaN the sim */
+      if (depth) return;
+      try { this.t = { ...t }; } catch { return; }
+      this._clean(1);
     }
-    t.playerPushShare = clamp(t.playerPushShare, 0, 1);
-    // the ring must fit both bodies side by side, else separation is impossible
-    t.radius = Math.max(t.radius, t.bodyRadius + (t.npcRadius || t.bodyRadius) + .3);
-    if (t.orbitFlipMax < t.orbitFlipMin) t.orbitFlipMax = t.orbitFlipMin;
   }
 
   reset() {
@@ -103,7 +116,7 @@ export class RingSim {
     // arrives in well under a second of footwork.
     // _home stays inside the ropes even when `radius` is shrunk — a corner
     // mark outside the ring had the leash dragging the player out of bounds.
-    this._home = { x: 0, z: Math.min(1.5, Math.max(0, (t.radius - t.bodyRadius) * .9)) };
+    this._home = { x: 0, z: Math.min(2.0, Math.max(0, (t.radius - t.bodyRadius) * .9)) };
     this.player = { pos: { x: this._home.x, z: this._home.z }, vel: { x: 0, z: 0 }, radius: t.bodyRadius, heading: Math.PI };
     this.npc    = { pos: { x: 0, z: -0.4 }, vel: { x: 0, z: 0 }, radius: t.npcRadius || t.bodyRadius, heading: 0 };
     this._rng = mulberry32(this._seed);

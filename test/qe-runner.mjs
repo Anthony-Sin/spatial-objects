@@ -48,7 +48,13 @@ const name = (opt('name', null) ||
   (url || 'run').replace(/^https?:\/\//, '').replace(/[^\w.-]+/g, '_').slice(0, 60))
   .replace(/[^\w.-]+/g, '_');
 const seconds = +opt('seconds', 15);
-const useGpu = args.includes('--gpu');
+/* --gpu requested real-Vulkan flags, but on this box Vulkan makes WebGL2
+   unavailable outright (SwiftShader-only env per wave rules). The flag is
+   accepted for CLI compatibility but now warns and stays on SwiftShader. */
+const gpuRequested = args.includes('--gpu');
+const useGpu = false;
+if (gpuRequested)
+  console.warn('[qe-run] --gpu ignored: Vulkan unavailable here (WebGL2 breaks) — using SwiftShader');
 
 if (!url) {
   console.error('usage: node test/qe-runner.mjs <url> [--name <n>] [--seconds <n>] [--gpu]');
@@ -130,7 +136,7 @@ function niceChromium() {
 /* ---------- run ---------- */
 const log = (...a) => console.log('[qe-run]', ...a);
 const result = {
-  tool: 'qe-runner', name, url, gpu: useGpu,
+  tool: 'qe-runner', name, url, gpu: useGpu, gpuRequested,
   startedAt: new Date().toISOString(), gate: null, fps: null,
   ramMB: { peak: null, samples: [] }, events: ev,
   aborted: null, loadError: null, exitCode: 0,

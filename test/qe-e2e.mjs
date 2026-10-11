@@ -33,13 +33,28 @@
         telegraph sprite sans glove parts, idempotent dispose, NaN damage,
         css gloveColor, null update ctx.
      K  multi-round — round-start each round, clock resets, late KO → win.
+     L  corrupt 'boxing:ko' primitives (5 / "x" / {n:"a"} / {n:1e308}) +
+        a valid control — REAL KOs via real-time rAF-driven punches so the
+        hud() drain runs recordKo → stat increments sanely, no rAF crash,
+        endcard shows. (wave-3 fix regression-verify)
+     M  waitForHands hold — controls.waitForHands injected for EVERY caller
+        (rAF loop included) via a game.step wrap: intro + countdown freeze,
+        'FINDING YOUR HANDS' hint on the countdown slot, release resumes.
+     N  endcard same-tick re-arm — reset()+skipIntro() in ONE evaluate while
+        the card is up → card clears + 'ended' unlatches on the fresh-bout
+        countdown frame, and the new bout re-latches its OWN verdict.
+     O  corrupt 'boxing:volume'/'sound'/'best'/'wins' — clean boot, master
+        gain finite at default after unlock, endcard BEST + stored stats sane.
+     P  npc.js manifest normalization + residual torture — injected-manifest
+        candidates ('oops'/null/primitive entries), frozen ctx.npc, kick
+        replacement, dispose mid-telegraph, dt extremes at action boundaries.
 
    NOTE on event draining: fight.state.events is single-consumer — whoever
    calls game.step gets that frame's events. Manual step bursts are used for
    determinism, but terminal events ('ko'→npcdown→'win'/'lose') are left for
    the page's own rAF loop so the HUD endcard path runs for real.
 
-   Writes .teamwork/qe/w7-e2e.json. Non-zero exit on any failed check.
+   Writes .teamwork/qe/b4-e2e.json. Non-zero exit on any failed check.
 */
 import puppeteer from 'puppeteer-core';
 import { spawn } from 'node:child_process';
@@ -161,6 +176,18 @@ const DRIVER = `(() => {
       for (const s of [.04, .055, .07, .09, .11]) { this.hands(HS([hand(side, .38, cy, s)])); this.step(6); }
       this.hands(HS([hand(side, .38, cy, .11)])); this.step(22);
       this.hands(EMPTY); this.step(10);
+    },
+    /* same punch but paced by REAL time, no manual steps — the page's own
+       rAF loop resolves the swing. Needed when the test cares about what
+       rAF drains: 'ko'/'win'/'lose' events only reach hud() (→ recordKo /
+       showEnd / localStorage writes) when the rAF step emptied them.
+       Stage dwell is generous (120ms) — on a loaded box rAF can run at
+       ~15fps and a fast ramp would give the tracker <2 samples/stage. */
+    async punchRT(side = 'left', cy = .55) {
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      for (const s of [.04, .055, .07, .09, .11]) { this.hands(HS([hand(side, .38, cy, s)])); await sleep(120); }
+      this.hands(HS([hand(side, .38, cy, .11)])); await sleep(340);
+      this.hands(EMPTY); await sleep(160);
     },
     dist() { return window.__boxing.sim.distance(); },
   };
@@ -664,11 +691,21 @@ try {
       };
       return { l: box(.3, .6), r: box(.7, .6) };
     })()`;
-    /* real gloves at known spots first — pxOn proves the boxes had mitts */
+    /* real gloves at known spots first — pxOn proves the boxes had mitts.
+       Bounded retry: on a saturated box the fist-EMA needs a few extra
+       frames to settle into the probe boxes — retrying the READ keeps the
+       assertion identical (gloves must still appear), just paint-tolerant.
+       And park the NPC brain first (same _npc park F uses): a live PIP can
+       land a hit mid-probe → the wave-4 hitFx ink-burst fills BOTH boxes →
+       a false "ghost gloves" fail. Pixel probes need a quiet canvas. */
+    await pg.evaluate(() => { window.__boxing.fight._npc = () => {}; });
     await pg.evaluate(`window.__forceHands = ((Q)=>Q.HS([Q.hand('left',.3,.6,.05),Q.hand('right',.7,.6,.05)]))(window.__qe)`);
-    await pg.evaluate(() => window.__qe.step(12));
-    await delay(320);
-    const pxOn = await pg.evaluate(spotProbe);
+    let pxOn = { l: 0, r: 0 };
+    for (let i = 0; i < 10 && (pxOn.l < 60 || pxOn.r < 60); i++) {
+      await pg.evaluate(() => window.__qe.step(10));
+      await delay(220);
+      pxOn = await pg.evaluate(spotProbe);
+    }
     await pg.evaluate(() => { window.__forceHands = { hands: [] }; });
     await pg.evaluate(() => {
       const Q = window.__qe, B = window.__boxing;
@@ -1113,6 +1150,417 @@ try {
       errs.length === 0, errs.slice(0, 3).join(' | '));
     detach();
   }
+
+  /* ================= L. corrupt boxing:ko → real KO =====================
+     recordKo reads user-editable JSON live at KO time — the wave-3 fix
+     shape-checks it ('5' / '"x"' / '{n:"a"}' / '{n:1e308}' used to crash
+     `ko.n +=` inside the rAF events loop). These KOs MUST resolve on the
+     page's own rAF loop: hud() is the only caller of recordKo/showEnd, and
+     it only sees events the rAF step drained — hence punchRT + parked AI
+     (deterministic KO on schedule, real hit detection all the way). */
+  {
+    const { errs, detach } = await boot(pg, `${base}/boxing.html?notrack=1`);
+    await pg.evaluate(() => localStorage.removeItem('boxing:npc'));
+    /* one KO per corrupt shape + a valid control proving increments survive */
+    const KO_CASES = [
+      ['primitive 5', '5', { n: 1, sum: 1 }],
+      ['"x"', '"x"', { n: 1, sum: 1 }],
+      ['{n:"a"}', '{"n":"a"}', { n: 1, sum: 1 }],
+      ['{n:1e308}', '{"n":1e308}', { n: 1, sum: 1 }],
+      ['valid {n:2,sum:5}', '{"n":2,"sum":5}', { n: 3, sum: 6 }],
+    ];
+    const koRes = [];
+    for (const [nm, raw, want] of KO_CASES) {
+      let rec, pre;
+      try {
+        pre = await pg.evaluate(async (v) => {
+          const Q = window.__qe, B = window.__boxing;
+          localStorage.setItem('boxing:ko', v);
+          for (let i = 0; i < 80 && B.state.phase !== 'fighting'; i++) { B.game.skipIntro(); Q.step(10); }
+          if (B.state.phase !== 'fighting') return { fail: 'no-fight', phase: B.state.phase };
+          /* park PIP's brain AND its feet: 'hold' means stand ground, and
+             the corner-parked player can't close distance — so teleport the
+             NPC to punch range along its current bearing. The hit itself is
+             100% real: landmarks → tracker → fight range check → _ko. */
+          B.fight._npc = () => {};
+          B.state.npc.hp = 4;
+          const P = B.sim.player.pos, N = B.sim.npc.pos;
+          const d = Math.hypot(N.x - P.x, N.z - P.z) || 1;
+          N.x = P.x + (N.x - P.x) / d * .95; N.z = P.z + (N.z - P.z) / d * .95;
+          const ml = (B.log || []).length;
+          for (let s = 0; s < 6 && B.state.phase === 'fighting'
+            && !B.log.slice(ml).includes('ko'); s++)
+            await Q.punchRT(s % 2 ? 'right' : 'left');   // rAF lands it → hud drains 'ko'
+          return { phase: B.state.phase, dist: Q.dist(),
+            koSeen: B.log.slice(ml).includes('ko'),
+            ev: B.log.slice(ml).filter(e => /^player-/.test(e)).slice(-5) };
+        }, raw);
+        if (pre.fail) { rec = { fail: pre.fail }; }
+        else {
+          try {
+            await pg.waitForFunction(() => window.__boxing.state.phase === 'win',
+              { timeout: 20000 });
+            await delay(400);                       // a few hud frames → showEnd paints
+          } catch { }
+          rec = await pg.evaluate(() => ({
+            phase: window.__boxing.state.phase,
+            ko: JSON.parse(localStorage.getItem('boxing:ko') || 'null'),
+            endOn: document.querySelector('[data-end]').classList.contains('on'),
+            title: document.querySelector('[data-endtitle]').textContent }));
+        }
+      } catch (e) { rec = { fail: String(e).slice(0, 80) }; }
+      koRes.push({ nm, pre, want, rec });
+      /* fresh bout for the next value — same-tick reset+skipIntro (the N
+         section asserts the re-arm semantics; here it's just the reset) */
+      await pg.evaluate(() => { const B = window.__boxing; B.game.reset(); B.game.skipIntro(); });
+      await delay(500);                               // rAF hud frame must see countdown → re-arm
+    }
+    for (const r of koRes) {
+      const ko = r.rec?.ko;
+      check(`L: boxing:ko = ${r.nm} → real KO records sanely + endcard shows`,
+        !!ko && ko.n === r.want.n && ko.sum === r.want.sum
+          && Number.isFinite(ko.n) && Number.isFinite(ko.sum)
+          && r.rec.phase === 'win' && r.rec.endOn && /YOU WIN/i.test(r.rec.title || ''),
+        JSON.stringify(r).slice(0, 220));
+    }
+    check('L: zero page errors across 5 corrupt-stat KOs',
+      errs.length === 0, errs.slice(0, 3).join(' | '));
+    detach();
+  }
+
+  /* ================= M. waitForHands — hold the bell ===================
+     controls.waitForHands is the page's "landmarker still booting" hold —
+     the rAF loop computes it from handStatus/trackWaitT0 (never true under
+     ?notrack, so we can't ride the real formula). Inject it the way the
+     loop does: wrap game.step so EVERY caller — rAF included — presents
+     controls.waitForHands=true. That drives the REAL hud path: the
+     countdown slot shows 'FINDING YOUR HANDS' while the clock holds. */
+  {
+    const { errs, detach } = await boot(pg, `${base}/boxing.html?notrack=1`);
+    /* leg 1 — hold while still in the fresh-bout phases right after boot
+       (intro runs ~6s wall): the bell must not ring while held */
+    const m1 = await pg.evaluate(`(() => new Promise(res => {
+      const B = window.__boxing, out = { phase0: B.state.phase };
+      const orig = B.game.step; let waits = 0;
+      B.game.step = (dt, hs, fs, c) => {
+        const o = orig.call(B.game, dt, hs, fs, { ...(c || {}), waitForHands: true });
+        if (o?.entranceWaiting) waits++;
+        return o;
+      };
+      setTimeout(() => {
+        out.held = { phase: B.state.phase, waits,
+          cdOn: document.querySelector('[data-countdown]').classList.contains('on'),
+          cdRound: document.querySelector('[data-cdround]').textContent,
+          cdN: document.querySelector('[data-cdn]').textContent };
+        B.game.step = orig;
+        res(out);
+      }, 1600);
+    }))()`);
+    check('M: intro/countdown held under waitForHands — no phase advance',
+      (m1.phase0 === 'intro' || m1.phase0 === 'countdown') && m1.held.phase === m1.phase0
+        && m1.held.waits > 3,
+      JSON.stringify(m1));
+    check("M: countdown slot shows 'FINDING YOUR HANDS' while held",
+      m1.held.cdOn && /FINDING YOUR HANDS/.test(m1.held.cdRound || '')
+        && m1.held.cdN === '…',
+      JSON.stringify(m1.held));
+
+    /* leg 2 — hold DURING the countdown: the numbers must freeze, not tick */
+    const m2 = await pg.evaluate(`(() => new Promise(res => {
+      const Q = window.__qe, B = window.__boxing, out = {};
+      B.game.skipIntro();
+      for (let i = 0; i < 80 && B.state.phase !== 'countdown'; i++) Q.step(10);
+      for (let i = 0; i < 30 && B.state.countdown === 0; i++) Q.step(2);
+      out.cd0 = { phase: B.state.phase, cd: B.state.countdown };
+      const orig = B.game.step; let waits = 0;
+      B.game.step = (dt, hs, fs, c) => {
+        const o = orig.call(B.game, dt, hs, fs, { ...(c || {}), waitForHands: true });
+        if (o?.entranceWaiting) waits++;
+        return o;
+      };
+      setTimeout(() => {
+        out.held = { phase: B.state.phase, cd: B.state.countdown, waits,
+          cdOn: document.querySelector('[data-countdown]').classList.contains('on'),
+          cdRound: document.querySelector('[data-cdround]').textContent,
+          cdN: document.querySelector('[data-cdn]').textContent };
+        B.game.step = orig;
+        res(out);
+      }, 1500);
+    }))()`);
+    check('M: countdown number frozen under the hold (dt=0 to fight.step)',
+      m2.cd0.phase === 'countdown' && m2.held.phase === 'countdown'
+        && m2.held.cd === m2.cd0.cd && m2.cd0.cd > 0 && m2.held.waits > 3,
+      JSON.stringify(m2));
+
+    /* release → the bell resumes, round 1 rings, hint swaps back */
+    let m3 = { phase: 'timeout' };
+    try {
+      await pg.waitForFunction(() => window.__boxing.state.phase === 'fighting',
+        { timeout: 15000 });
+      await delay(300);
+      m3 = await pg.evaluate(() => ({
+        phase: window.__boxing.state.phase,
+        rs: (window.__boxing.log || []).includes('round-start'),
+        cdRound: document.querySelector('[data-cdround]').textContent,
+        cdOn: document.querySelector('[data-countdown]').classList.contains('on') }));
+    } catch { }
+    check('M: releasing waitForHands resumes → ROUND 1 bell + fighting',
+      m3.phase === 'fighting' && m3.rs === true && !m3.cdOn,
+      JSON.stringify(m3));
+    check('M: zero page errors through waitForHands injection',
+      errs.length === 0, errs.slice(0, 3).join(' | '));
+    detach();
+  }
+
+  /* ================= N. endcard same-tick re-arm ======================
+     The wave-3 fix re-arms `ended` on a fresh-bout phase (intro OR
+     countdown@round1) — a same-tick reset()+skipIntro() never renders an
+     'intro' frame, so before the fix the card stayed latched and the next
+     verdict was swallowed. Verdicts here also go through the rAF drain. */
+  {
+    const { errs, detach } = await boot(pg, `${base}/boxing.html?notrack=1`);
+    const driveKo = `(() => {
+      const Q = window.__qe, B = window.__boxing;
+      return (async () => {
+        for (let i = 0; i < 80 && B.state.phase !== 'fighting'; i++) { B.game.skipIntro(); Q.step(10); }
+        if (B.state.phase !== 'fighting') return { fail: 'no-fight', phase: B.state.phase };
+        /* parked AI + parked feet: 'hold' stands ground and the player can't
+           close distance — teleport PIP to punch range on its own bearing.
+           The punch itself is the real landmark→tracker→fight hit path. */
+        B.fight._npc = () => {};
+        B.state.npc.hp = 4;
+        const P = B.sim.player.pos, N = B.sim.npc.pos;
+        const d = Math.hypot(N.x - P.x, N.z - P.z) || 1;
+        N.x = P.x + (N.x - P.x) / d * .95; N.z = P.z + (N.z - P.z) / d * .95;
+        const ml = (B.log || []).length;
+        for (let s = 0; s < 6 && B.state.phase === 'fighting'
+          && !B.log.slice(ml).includes('ko'); s++)
+          await Q.punchRT(s % 2 ? 'right' : 'left');
+        return { phase: B.state.phase, koSeen: B.log.slice(ml).includes('ko'),
+          ev: B.log.slice(ml).filter(e => /^player-/.test(e)).slice(-5) };
+      })();
+    })()`;
+    const n0 = await pg.evaluate(driveKo);
+    let n1 = { phase: 'timeout' };
+    try {
+      await pg.waitForFunction(() => window.__boxing.state.phase === 'win', { timeout: 20000 });
+      await delay(500);
+      n1 = await pg.evaluate(() => ({
+        phase: window.__boxing.state.phase,
+        endOn: document.querySelector('[data-end]').classList.contains('on'),
+        ended: document.body.classList.contains('ended') }));
+    } catch { }
+    check('N: first bout resolves win + endcard latched',
+      n1.phase === 'win' && n1.endOn && n1.ended, JSON.stringify({ n0, n1 }));
+
+    /* the regression input: reset()+skipIntro() in ONE evaluate while the
+       card is up — hud never sees 'intro', must still re-arm on countdown */
+    const n2 = await pg.evaluate(() => {
+      const B = window.__boxing;
+      B.game.reset(); B.game.skipIntro();
+      return { phase: B.state.phase };
+    });
+    await delay(900);                                  // let rAF hud frames run
+    const n3 = await pg.evaluate(() => ({
+      phase: window.__boxing.state.phase, round: window.__boxing.state.round,
+      endOn: document.querySelector('[data-end]').classList.contains('on'),
+      ended: document.body.classList.contains('ended') }));
+    check('N: same-tick reset+skipIntro → card + ended cleared on re-arm',
+      !n3.endOn && !n3.ended && n3.round === 1
+        && (n3.phase === 'countdown' || n3.phase === 'fighting' || n3.phase === 'intro'),
+      JSON.stringify({ n2, n3 }));
+
+    /* and the fresh bout must latch its OWN verdict — not stay swallowed */
+    const n4 = await pg.evaluate(driveKo);
+    let n5 = { phase: 'timeout' };
+    try {
+      await pg.waitForFunction(() => window.__boxing.state.phase === 'win', { timeout: 20000 });
+      await delay(500);
+      n5 = await pg.evaluate(() => ({
+        phase: window.__boxing.state.phase,
+        endOn: document.querySelector('[data-end]').classList.contains('on'),
+        ended: document.body.classList.contains('ended'),
+        title: document.querySelector('[data-endtitle]').textContent }));
+    } catch { }
+    check('N: fresh bout re-latches its own verdict — YOU WIN card again',
+      n5.phase === 'win' && n5.endOn && n5.ended && /YOU WIN/i.test(n5.title || ''),
+      JSON.stringify({ n4, n5 }));
+    check('N: zero page errors through same-tick re-arm',
+      errs.length === 0, errs.slice(0, 3).join(' | '));
+    detach();
+  }
+
+  /* ============== O. corrupt volume/sound/best/wins ===================
+     boxing:volume 'abc' → Number()=NaN — the wave-3 guard skips setVolume
+     so the default .8 survives; 'loud' ≠ '0' → unmuted. 'best'/'wins' go
+     through num() → non-finite falls to 0 → sane writes. The audio object
+     is page-closure: capture every GainNode via evaluateOnNewDocument —
+     gains[0] is BoxingAudio's master (first createGain in unlock()). */
+  {
+    await pg.evaluateOnNewDocument(() => {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC || AC.prototype.__qeGainWrap) return;
+      const og = AC.prototype.createGain;
+      AC.prototype.createGain = function () {
+        const g = og.call(this);
+        (window.__qeGains ||= []).push(g);
+        return g;
+      };
+      AC.prototype.__qeGainWrap = true;
+    });
+    await pg.evaluate(() => {
+      localStorage.setItem('boxing:volume', 'abc');      // NaN → must be rejected
+      localStorage.setItem('boxing:sound', 'loud');      // !=='0' → unmuted
+      localStorage.setItem('boxing:best', '"oops"');     // → num → 0 → best=score
+      localStorage.setItem('boxing:wins', '"x"');        // → num → 0 → wins=1
+    });
+    const { errs, detach } = await boot(pg, `${base}/boxing.html?notrack=1`);
+    check('O: boots clean under corrupt audio/stats storage',
+      errs.length === 0, errs.slice(0, 3).join(' | '));
+    await pg.keyboard.press('x');                        // gesture → audio.unlock()
+    await delay(600);
+    const aud = await pg.evaluate(() => ({
+      n: (window.__qeGains || []).length,
+      v: window.__qeGains?.[0]?.gain?.value }));
+    check('O: master gain finite at the .8 default (NaN volume rejected)',
+      aud.n >= 1 && Number.isFinite(aud.v) && Math.abs(aud.v - .8) < .01,
+      JSON.stringify(aud));
+
+    /* real KO → win → recordEnd stores sane numbers, endcard BEST reads */
+    const o1 = await pg.evaluate(`(() => {
+      const Q = window.__qe, B = window.__boxing;
+      return (async () => {
+        for (let i = 0; i < 80 && B.state.phase !== 'fighting'; i++) { B.game.skipIntro(); Q.step(10); }
+        if (B.state.phase !== 'fighting') return { fail: 'no-fight', phase: B.state.phase };
+        B.fight._npc = () => {};
+        B.state.npc.hp = 4;
+        const P = B.sim.player.pos, N = B.sim.npc.pos;
+        const d = Math.hypot(N.x - P.x, N.z - P.z) || 1;
+        N.x = P.x + (N.x - P.x) / d * .95; N.z = P.z + (N.z - P.z) / d * .95;
+        const ml = (B.log || []).length;
+        for (let s = 0; s < 6 && B.state.phase === 'fighting'
+          && !B.log.slice(ml).includes('ko'); s++)
+          await Q.punchRT(s % 2 ? 'right' : 'left');
+        return { phase: B.state.phase, koSeen: B.log.slice(ml).includes('ko'),
+          ev: B.log.slice(ml).filter(e => /^player-/.test(e)).slice(-5) };
+      })();
+    })()`);
+    let o2 = { phase: 'timeout' };
+    try {
+      await pg.waitForFunction(() => window.__boxing.state.phase === 'win', { timeout: 20000 });
+      await delay(500);
+      o2 = await pg.evaluate(() => ({
+        phase: window.__boxing.state.phase,
+        sub: document.querySelector('[data-endsub]').textContent,
+        best: JSON.parse(localStorage.getItem('boxing:best') || 'null'),
+        wins: JSON.parse(localStorage.getItem('boxing:wins') || 'null'),
+        score: window.__boxing.state.player.score }));
+    } catch { }
+    check('O: win with corrupt stats → endcard BEST sane + stored values finite',
+      o2.phase === 'win' && /BEST [\d,]+/.test(o2.sub || '')
+        && o2.best === o2.score && o2.wins === 1 && Number.isFinite(o2.best),
+      JSON.stringify({ o1, o2 }));
+    check('O: zero page errors through corrupt-audio bout',
+      errs.length === 0, errs.slice(0, 3).join(' | '));
+    detach();
+    await pg.evaluate(() => {                            // leave storage clean for P
+      for (const k of ['boxing:volume', 'boxing:sound', 'boxing:best', 'boxing:wins',
+        'boxing:ko', 'boxing:npc']) localStorage.removeItem(k);
+    });
+  }
+
+  /* ============ P. npc.js manifest + residual torture (live) ==========
+     Injected manifests are verbatim — wave-4 normalized them like the
+     fetched path. Then the residual hunts: frozen ctx.npc (the old
+     _seenKind stash write), api.kick replaced by a primitive, dispose
+     mid-telegraph, dt extremes at every action boundary. */
+  {
+    const { errs, detach } = await boot(pg, `${base}/boxing.html?notrack=1`);
+    const tort = await pg.evaluate(async () => {
+      const B = window.__boxing, T = B.THREE;
+      const out = { mani: [] };
+      const { createNpc } = await import('./shared/boxing/npc.js');
+      const pFin = n => Number.isFinite(n.group.position.x + n.group.position.y
+        + n.group.position.z + n.group.rotation.x + n.group.rotation.y);
+      const BAG = 'vendor/models/glb/boxing/punching-bag.glb';
+      for (const [nm, man, id] of [
+        ['candidates:"oops"', { candidates: 'oops' }, 'x'],
+        ['candidates:{}', { candidates: { a: 1 } }, 'x'],
+        ['candidates:null', { candidates: null }, 'x'],
+        ['manifest:7', 7, 'x'],
+        ['entries:[null,5,"x"]', { candidates: [null, undefined, 5, 'x'] }, 'x'],
+        ['glb-entry-no-path', { candidates: [{ id: 'g', type: 'glb' }] }, 'g'],
+        ['prop-only-pick', { candidates: [
+          { id: 'bg', type: 'glb', notes: 'PROP dressing', path: BAG, scale: 45 }] }, 'bg'],
+        ['valid-glb-control', { candidates: [
+          { id: 'bg', type: 'glb', name: 'BAG', path: BAG, scale: 45 }] }, 'bg'],
+      ]) {
+        try {
+          const m = await createNpc(T, { manifest: man, id });
+          out.mani.push([nm, m.kind, m.id]);
+          m.dispose();
+        } catch (e) { out.mani.push([nm, 'THROW', String(e).slice(0, 70)]); }
+      }
+      /* frozen ctx.npc — the telegraph stash used to write onto it */
+      out.frozen = (() => { try {
+        B.npc.update(.016, { pos: { x: 0, z: 0 }, npc: Object.freeze(
+          { action: 'windup', actionT: .2, telegraph: { kind: 'hook', side: 'left', t01: .5 } }) });
+        B.npc.update(.016, { pos: { x: 0, z: 0 }, npc: Object.freeze({ action: 'punch', actionT: .3 }) });
+        B.npc.update(.016, { pos: { x: 0, z: 0 }, npc: Object.freeze({ action: 'idle' }) });
+        return pFin(B.npc); } catch (e) { return String(e).slice(0, 70); } })();
+      /* api.kick REPLACED by a primitive — k[a]=0 on a string threw strict */
+      out.kick = (() => { try {
+        B.npc.kick = 42;
+        B.npc.update(.016, { pos: { x: 0, z: 0 } });
+        const reseated = typeof B.npc.kick === 'object';
+        B.npc.resetDamage();
+        return reseated && pFin(B.npc); } catch (e) { return String(e).slice(0, 70); } })();
+      /* dispose MID-TELEGRAPH — then keep driving it: dead means dead */
+      const d = await createNpc(T, { manifest: { candidates: [] }, id: 'proto:bubble' });
+      d.update(.016, { pos: { x: 0, z: 0 }, npc: { action: 'windup', actionT: .3,
+        telegraph: { kind: 'upper', side: 'right', t01: .7 } } });
+      out.disp = (() => { try {
+        d.dispose(); d.dispose();
+        d.update(.016, { pos: { x: 1, z: 1 }, npc: { action: 'punch', actionT: .5 } });
+        d.pose('jab', .5); d.setDamage(.9); d.resetDamage();
+        return d.group.parent === null && pFin(d); } catch (e) { return String(e).slice(0, 70); } })();
+      /* dt torture AT the action boundaries — every pose × extreme dt ×
+         boundary actionT, on a fresh throwaway instance */
+      const d2 = await createNpc(T, { manifest: { candidates: [] }, id: 'proto:bubble' });
+      out.dt = (() => { try {
+        for (const a of ['idle', 'windup', 'punch', 'block', 'hurt', 'down',
+          'celebrate', 'stunned', 'whiff', 'bogus'])
+          for (const dt of [0, -1, NaN, Infinity, 1e9])
+            for (const at of [0, .45, 1e9, NaN])
+              d2.update(dt, { pos: { x: 0, z: 0 }, npc: { action: a, actionT: at,
+                telegraph: a === 'windup' ? { kind: 'jab', side: 'left', t01: NaN } : null } });
+        return pFin(d2); } catch (e) { return String(e).slice(0, 70); } })();
+      d2.dispose();
+      return out;
+    });
+    const maniBad = tort.mani.filter(m => m[1] === 'THROW'
+      || (m[0] === 'valid-glb-control' ? m[1] !== 'glb' : m[1] !== 'proto'));
+    check('P: injected-manifest shapes resolve to a fighter — never throw',
+      maniBad.length === 0 && tort.mani.length === 8,
+      JSON.stringify(tort.mani));
+    check('P: frozen ctx.npc through telegraph→punch stays clean',
+      tort.frozen === true, JSON.stringify({ frozen: tort.frozen }));
+    check('P: api.kick replaced by primitive → re-seated, no throw',
+      tort.kick === true, JSON.stringify({ kick: tort.kick }));
+    check('P: dispose mid-telegraph → dead api is a true no-op',
+      tort.disp === true, JSON.stringify({ disp: tort.disp }));
+    check('P: dt torture at action boundaries keeps transforms finite',
+      tort.dt === true, JSON.stringify({ dt: tort.dt }));
+    /* the 'glb-entry-no-path' candidate fetches './undefined' → ONE 404
+       console entry — that IS the fallback path working, not a defect.
+       Everything else must be silent. */
+    const pErrs = errs.filter(e => !/Failed to load resource.*404/.test(e));
+    const p404 = errs.length - pErrs.length;
+    check('P: zero page errors through npc residual torture (1 expected GLB 404)',
+      pErrs.length === 0 && p404 === 1,
+      `unexpected=${JSON.stringify(pErrs.slice(0, 3))} glb404s=${p404}`);
+    detach();
+  }
 } catch (e) {
   artifact.fatal = String(e && e.stack || e);
   console.error('[qe-e2e] fatal:', artifact.fatal);
@@ -1126,8 +1574,8 @@ try {
 const failed = results.filter(r => !r.ok);
 artifact.durationMs = Date.now() - new Date(artifact.startedAt).getTime();
 mkdirSync(OUT_DIR, { recursive: true });
-writeFileSync(join(OUT_DIR, 'w7-e2e.json'), JSON.stringify(artifact, null, 1));
+writeFileSync(join(OUT_DIR, 'b4-e2e.json'), JSON.stringify(artifact, null, 1));
 console.log('---- qe-e2e summary ----');
-console.log(`${results.length - failed.length}/${results.length} checks passed · json → ${join(OUT_DIR, 'w7-e2e.json')}`);
+console.log(`${results.length - failed.length}/${results.length} checks passed · json → ${join(OUT_DIR, 'b4-e2e.json')}`);
 console.log(failed.length ? `${failed.length} check(s) FAILED` : 'ALL CHECKS PASSED');
 process.exit(failed.length ? 1 : 0);

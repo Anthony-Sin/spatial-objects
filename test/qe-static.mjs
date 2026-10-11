@@ -18,7 +18,7 @@
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync,
   readdirSync, statSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
@@ -39,18 +39,33 @@ const note = m => { notes.push(m); console.log('note  ' + m); };
 const flag = (owned, file, line, msg) =>
   owned ? fail(file, line, msg) : note(`${file}:${line} ${msg}`);
 const lineOf = (src, idx) => src.slice(0, idx).split('\n').length;
-/* `try` somewhere in the lookback window = "guarded" (heuristic — a parse
-   right after a }catch{ slips through, but unguarded top-level calls are
-   the crash class this targets). Deeper second pass: a long try block can
-   exceed the window — if an open `try` has no `catch` yet between it and
-   the call, the call is inside it ('.catch(' is a promise method, not a
-   catch clause, so it's excluded from the count). */
-const nearTry = (code, i, back = 500) => {
-  if (/\btry\b/.test(code.slice(Math.max(0, i - back), i))) return true;
-  const seg = code.slice(Math.max(0, i - 2400), i);
-  const tries = (seg.match(/\btry\b/g) || []).length;
-  const catches = (seg.match(/(?:^|[}\s])catch\s*[({]/gm) || []).length;
-  return tries > catches;
+/* is `i` lexically inside an OPEN `try { …` block? Walk try-keywords back
+   and brace-count: if the nearest try's block is still unclosed at i the
+   call is try-guarded; a catch/finally that already balanced the block
+   does NOT count (a call inside `catch {}` isn't protected by that try).
+   Supersedes the crude "try in a 500-char window / tries>catches" guess —
+   that one wrongly cancelled an enclosing try whenever an earlier try…catch
+   pair sat inside the lookback. */
+const nearTry = (code, i, back = 4000) => {
+  const lo = Math.max(0, i - back);
+  for (let t = code.lastIndexOf('try', i); t !== -1 && t >= lo; ) {
+    const b4 = code[t - 1], af = code[t + 3];
+    if ((b4 && /[\w$]/.test(b4)) || (af && /[\w$]/.test(af))) {
+      t = t > 0 ? code.lastIndexOf('try', t - 1) : -1;   // entry/retry — not the keyword
+      continue;
+    }
+    const brace = code.indexOf('{', t + 3);
+    if (brace === -1 || brace >= i) {
+      t = t > 0 ? code.lastIndexOf('try', t - 1) : -1;
+      continue;
+    }
+    let d = 1;
+    for (let j = brace + 1; j < i && d > 0; j++)
+      d += code[j] === '{' ? 1 : code[j] === '}' ? -1 : 0;
+    if (d > 0) return true;                            // try's block still open → i is inside
+    t = t > 0 ? code.lastIndexOf('try', t - 1) : -1;   // this try closed before i — look back
+  }
+  return false;
 };
 
 /* ---- wave-3 generic hardening checks — run over inline module bodies, all
@@ -119,6 +134,15 @@ function hardenChecks(code0, line0, file, owned) {
   for (const m of code.matchAll(/\b(?:Number|parseFloat|parseInt)\s*\(\s*localStorage\.getItem/g))
     flag(owned, file, line0 + lineOf(code, m.index) - 1,
       'Number()/parseFloat()/parseInt() directly on getItem — validate, NaN leaks');
+
+  // teardown calls that can throw must be try-guarded — an escaping
+  // landmarker.close()/worker.terminate() abandons every cleanup line after
+  // it (the _adopt class: close threw → landmarker stayed truthy → every
+  // future _initLocal early-returned → no inline fallback on the next death)
+  for (const m of code.matchAll(/\.(?:close|terminate)\s*(?:\?\.)?\s*\(/g))
+    if (!nearTry(code, m.index))
+      flag(owned, file, line0 + lineOf(code, m.index) - 1,
+        `'${m[0].replace(/\s*\($/, '')}' outside try/catch — a throwing teardown abandons the rest of cleanup`);
 
   // storage objects mutated in place need shape validation first — a corrupt
   // JSON value (null/42/"x") then throws on property set (boxing:ko class)
@@ -365,6 +389,492 @@ try {
   }
 } finally {
   rmSync(tmp, { recursive: true, force: true });
+}
+
+/* ================= wave-4 (b4-pages) dynamic probes =================
+   Static regexes can't prove the double-grace boot races, stop() reaping a
+   still-booting worker, _initLocal-vs-'ready' ordering, or track-worker's
+   protocol robustness — those are behavioral. This section runs the REAL
+   shared/{hands,face,track-worker}.js in Node under stubbed browser
+   globals + a file-backed fake vision bundle. The grace/stuck/respawn
+   clocks shrink via the create() {bootMs,stuckMs,respawnMs} opts and every
+   assertion keys on an observable OUTCOME (adopted? delegate? state?), not
+   on which timer fired — so a loaded box can't flake the ordering. */
+const probe = (ok, file, msg) => {
+  if (ok) return;
+  fail(file, 0, `probe: ${msg}`);
+};
+const ptick = (ms = 15) => new Promise(r => setTimeout(r, ms));
+const puntil = async (pred, ms = 3000) => {
+  const t0 = Date.now();
+  while (!pred()) { if (Date.now() - t0 > ms) return false; await ptick(8); }
+  return true;
+};
+let unhandled = 0;
+process.on('unhandledRejection', () => unhandled++);
+
+async function dynamicProbes() {
+  const VEND = mkdtempSync(join(tmpdir(), 'qe-vend-'));
+  try {
+    writeFileSync(join(VEND, 'vision_bundle.mjs'), `
+      /* fake MediaPipe bundle — stands in for the ~13MB download. Timing and
+         failure hooks ride globalThis so the probe controls ordering. */
+      const mk = async (o) => {
+        globalThis.__lmPending = (globalThis.__lmPending || 0) + 1;
+        try {
+          if (globalThis.__lmDelay)
+            await new Promise(r => setTimeout(r, globalThis.__lmDelay));
+          if (globalThis.__lmFail) throw new Error('createFromOptions boom');
+          const lm = { o, closed: 0,
+            close() { this.closed++;
+              if (globalThis.__lmCloseThrow) throw new Error('close boom'); },
+            detectForVideo(frame, ts) {
+              (globalThis.__detectLog ||= []).push(ts);
+              if (globalThis.__detectThrow) throw new Error('detect boom');
+              return { landmarks: [], handedness: [], detections: [] };
+            } };
+          (globalThis.__lmLog ||= []).push(lm);
+          return lm;
+        } finally { globalThis.__lmPending--; }
+      };
+      export const FilesetResolver = { forVisionTasks: async () => ({}) };
+      export class HandLandmarker { static createFromOptions(fs, o) { return mk(o); } }
+      export class FaceLandmarker { static createFromOptions(fs, o) { return mk(o); } }
+      export class FaceDetector { static createFromOptions(fs, o) { return mk(o); } }
+    `);
+    const VEND_URL = pathToFileURL(VEND).href.replace(/\/$/, '');
+    const DEAD_URL = 'http://127.0.0.1:1/none';   // unsupported scheme → instant import failure
+
+    /* ---- browser-global stubs (set BEFORE the real modules import) ---- */
+    const fakeWorkers = [];
+    const RealWorker = class {
+      constructor(url) { this.url = String(url); this.msgs = []; this.terminated = false;
+        this.onmessage = null; this.onerror = null; fakeWorkers.push(this); }
+      postMessage(m) { if (globalThis.__failPost) throw new Error('post boom');
+        this.msgs.push(m); }
+      terminate() { this.terminated = true; }
+      emit(d) { this.onmessage?.({ data: d }); }
+      err() { this.onerror?.(new Event('error')); }
+    };
+    globalThis.Worker = RealWorker;
+    globalThis.location ??= { href: 'http://qe.local/index.html' };
+    globalThis.requestAnimationFrame ??= (cb) => setTimeout(() => cb(performance.now()), 16);
+    globalThis.VideoFrame ??= class {
+      constructor(v) { this.timestamp = (v?.currentTime ?? 0) * 1e6;
+        this.displayWidth = v?.videoWidth || 0; this.displayHeight = v?.videoHeight || 0;
+        this.closed = 0; }
+      close() { this.closed++; }
+    };
+    globalThis.OffscreenCanvas ??= class { constructor(w, h) { this.width = w; this.height = h; } };
+
+    const fakeVideo = () => {
+      const v = { readyState: 2, currentTime: 0, videoWidth: 640, videoHeight: 480,
+        _rvc: null, requestVideoFrameCallback(cb) { v._rvc = cb; return 1; } };
+      v.step = (t = .04) => { v.currentTime += t; const cb = v._rvc; v._rvc = null;
+        cb?.(performance.now(), {}); };
+      return v;
+    };
+
+    const { Hands } = await import(new URL('../shared/hands.js', import.meta.url).href);
+    const { Face } = await import(new URL('../shared/face.js', import.meta.url).href);
+    const VALID_HAND = Array.from({ length: 21 }, (_, i) => ({ x: .1 + i * .01, y: .3, z: 0 }));
+    const OPTS = { bootMs: 60, stuckMs: 70, respawnMs: 40 };
+    const make = async (Ctor, vid, vend = VEND_URL) => {
+      const r = await Promise.race([Ctor.create(vid, vend, OPTS), ptick(4000).then(() => 'TIMEOUT')]);
+      return r === 'TIMEOUT' ? null : r;
+    };
+    const isHands = (Ctor) => Ctor.name === 'Hands';
+    const gotHands = (h) => isHands(h.constructor) ? h.state.hands.length : h.state.found;
+    const resetFlags = () => { globalThis.__lmDelay = 0; globalThis.__lmCloseThrow = false;
+      globalThis.__lmFail = false; globalThis.__failPost = false; };
+
+    for (const Ctor of [Hands, Face]) {
+      const F = `shared/${Ctor.name.toLowerCase()}.js`;
+
+      /* A) 'ready' inside grace-1 → immediate adopt, frames flow, results
+            clear the flight gate, stop() reaps the adopted worker */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        probe(w.msgs.some(m => m.type === 'init'), F,
+          `${Ctor.name}: boot worker never got its init message`);
+        w.emit({ type: 'ready', delegate: 'gpu' });
+        const h = await p;
+        probe(h && h._worker === w && h.delegate === 'gpu-worker' && h._bootW === null,
+          F, `${Ctor.name}: grace-1 adopt failed (worker=${!!h?._worker}, delegate=${h?.delegate})`);
+        v.step();
+        probe(w.msgs.some(m => m.type === 'frame'), F,
+          `${Ctor.name}: adopted worker never received a frame`);
+        w.emit({ type: 'result', landmarks: [], handedness: [], inferMs: 4 });
+        probe(h._inFlight === false, F, `${Ctor.name}: result did not clear _inFlight`);
+        h.stop();
+        probe(w.terminated && h._stopped, F, `${Ctor.name}: stop() did not reap adopted worker`);
+      }
+
+      /* B) 'ready' landing between the two grace races (past the first
+            BOOT_MS, before the second expires) → still 'ok', no inline */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        await ptick(OPTS.bootMs + 30);                     // past grace-1
+        w.emit({ type: 'ready', delegate: 'cpu' });
+        const h = await p;
+        probe(h && h._worker === w && h.delegate === 'cpu-worker',
+          F, `${Ctor.name}: 'ready' in grace-2 was not adopted (delegate=${h?.delegate})`);
+        probe(h && h.landmarker === null, F,
+          `${Ctor.name}: inline landmarker built despite worker 'ok'`);
+        h?.stop();
+      }
+
+      /* C) spawnP 'fail' inside race-2 (onerror) → create falls back to
+            inline via _initLocal */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        await ptick(OPTS.bootMs + 30);                     // inside race-2
+        w.err();
+        const h = await p;
+        probe(h && h._worker === null && !!h.landmarker
+          && (h.delegate === 'cpu' || h.delegate === 'gpu'),
+          F, `${Ctor.name}: race-2 'fail' did not land on inline (delegate=${h?.delegate})`);
+        probe(w.terminated, F, `${Ctor.name}: failed boot worker not reaped`);
+        h?.stop();
+      }
+
+      /* D) double-'slow' → create() waits the worker's real verdict instead
+            of spawning a competing ~13MB fetch (b4-soak: at 60s both realms
+            fetched anyway — the inline cover itself was the bug). While the
+            worker still boots NO inline landmarker may be built; a late
+            'ready' still adopts. */
+      {
+        const v = fakeVideo(), lmN = (globalThis.__lmLog || []).length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > 0);
+        const w = fakeWorkers.at(-1);
+        await ptick(OPTS.bootMs * 2 + 40);              // past both grace windows
+        probe((globalThis.__lmLog || []).length === lmN,
+          F, `${Ctor.name}: inline fetch started while worker still booting`);
+        w.emit({ type: 'ready', delegate: 'gpu' });
+        const h = await p;
+        probe(!!h && h._worker === w && h.delegate === 'gpu-worker' && !h.landmarker,
+          F, `${Ctor.name}: late 'ready' after graces not adopted (delegate=${h?.delegate})`);
+        h.stop();
+      }
+
+      /* D2) a late 'fail' after the graces still lands on inline cover —
+            the worker's verdict, not a timer, decides the fallback */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        await ptick(OPTS.bootMs * 2 + 40);
+        w.err();
+        const h = await p;
+        probe(!!h && (h.delegate === 'cpu' || h.delegate === 'gpu'),
+          F, `${Ctor.name}: late 'fail' after graces never reached inline (delegate=${h?.delegate})`);
+        h?.stop();
+      }
+
+      /* E) 'ready' lands while _initLocal's createFromOptions is still
+            in flight → the pending landmarker is closed, never installed.
+            (Under wait-for-verdict, inline only starts after 'fail' — so
+            the racy worker errors first, then reports ready anyway.) */
+      {
+        globalThis.__lmPending = 0;
+        globalThis.__lmDelay = 120;                        // inline build outlives the adopt
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        w.err();                                            // verdict 'fail' → _initLocal starts
+        const inflight = await puntil(() => (globalThis.__lmPending || 0) > 0, 2500);
+        probe(inflight, F, `${Ctor.name}: _initLocal never reached createFromOptions`);
+        if (inflight) w.emit({ type: 'ready', delegate: 'gpu' });
+        const h = await p;
+        globalThis.__lmDelay = 0;
+        const lm = (globalThis.__lmLog || []).at(-1);
+        probe(h && h._worker === w && h.delegate === 'gpu-worker',
+          F, `${Ctor.name}: 'ready' during pending _initLocal not adopted`);
+        probe(lm && lm.closed === 1 && h.landmarker === null,
+          F, `${Ctor.name}: pending inline landmarker installed over the adopted worker`);
+        h?.stop();
+      }
+
+      /* F) a stray 'ready'+error on an ADOPTED worker must not leave
+            _worker dangling at a terminated worker (wedges _inFlight) */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        w.emit({ type: 'ready', delegate: 'gpu' });
+        const h = await p;
+        probe(h._worker === w, F, `${Ctor.name}: setup adopt failed`);
+        w.emit({ type: 'ready', error: 'stray second init' });
+        probe(h._worker === null && w.terminated,
+          F, `${Ctor.name}: 'ready'+error on adopted worker left _worker dangling`);
+        const rearmed = await puntil(() => !!h.landmarker, 1500);
+        probe(rearmed, F, `${Ctor.name}: adopted-worker death did not re-arm inline`);
+        h.stop();
+      }
+
+      /* G) landmarker.close() throwing inside _adopt must not lose the
+            adoption, skip the onerror rewire, or leave a stale landmarker
+            that blocks every future _initLocal */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        w.err();                                            // 'fail' → inline cover (no timer path)
+        const h = await p;
+        probe(!!h && !!h.landmarker, F, `${Ctor.name}: setup inline failed`);
+        globalThis.__lmCloseThrow = true;
+        let threw = false;
+        try { w.emit({ type: 'ready', delegate: 'gpu' }); } catch { threw = true; }
+        globalThis.__lmCloseThrow = false;
+        probe(!threw, F, `${Ctor.name}: landmarker.close() throw escaped _adopt/onmessage`);
+        probe(h && h._worker === w && h.landmarker === null && h.delegate === 'gpu-worker',
+          F, `${Ctor.name}: adopt incomplete after close() throw`);
+        // and the next worker death must still find an inline fallback
+        w.err();
+        const rearmed = await puntil(() => !!h.landmarker, 1500);
+        probe(rearmed, F, `${Ctor.name}: stale landmarker ref blocked _initLocal after death`);
+        h?.stop();
+      }
+
+      /* H) hung infer (frame taken, never answered, never errored) → the
+            STUCK watchdog reaps and a replacement worker respawns */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        w.emit({ type: 'ready', delegate: 'gpu' });
+        const h = await p;
+        v.step();                                          // send a frame — never answer it
+        probe(h._inFlight === true, F, `${Ctor.name}: frame never reached _send`);
+        await ptick(OPTS.stuckMs + 60);
+        v.step();                                          // watchdog check lives in onNew
+        probe(h._worker === null && w.terminated,
+          F, `${Ctor.name}: hung infer not reaped by the STUCK watchdog`);
+        const respawned = await puntil(() => fakeWorkers.length > n0 + 1, OPTS.respawnMs + 2500);
+        probe(respawned, F, `${Ctor.name}: dead worker never respawned`);
+        const w2 = fakeWorkers.at(-1);
+        probe(w2 !== w && w2.msgs.some(m => m.type === 'init'),
+          F, `${Ctor.name}: respawned worker never got init`);
+        h.stop();
+      }
+
+      /* I) a 'result' from a replaced (zombie) worker must be ignored */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        w.emit({ type: 'ready', delegate: 'gpu' });
+        const h = await p;
+        h._workerDied(w);                                  // manual reap → respawn scheduled
+        await puntil(() => fakeWorkers.at(-1) !== w, OPTS.respawnMs + 2000);
+        const w2 = fakeWorkers.at(-1);
+        probe(w2 !== w, F, `${Ctor.name}: zombie setup — no respawn`);
+        w2.emit({ type: 'ready', delegate: 'gpu' });
+        probe(h._worker === w2, F, `${Ctor.name}: respawned worker did not adopt`);
+        const before = gotHands(h);
+        w.emit({ type: 'result', landmarks: [VALID_HAND],
+          handedness: [[{ categoryName: 'Left' }]], inferMs: 1 });
+        probe(gotHands(h) === before, F, `${Ctor.name}: zombie result mutated state`);
+        h.stop();
+      }
+
+      /* J) stop() must reap a still-booting worker that never answered —
+            before _bootW it kept downloading ~13MB (or leaked forever if
+            'ready' never landed) */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const h = await make(Ctor, v, DEAD_URL);           // inline can't boot either → 'none'
+        probe(h && h.delegate === 'none', F,
+          `${Ctor.name}: dead-everything boot should resolve 'none' (got ${h?.delegate})`);
+        probe(h && !!v._rvc, F,
+          `${Ctor.name}: pump never armed — a late 'ready' could never adopt`);
+        const w = fakeWorkers.at(-1);
+        probe(!!w && !w.terminated && fakeWorkers.length === n0 + 1,
+          F, `${Ctor.name}: boot worker missing before stop()`);
+        h.stop();
+        probe(w.terminated && h._bootW === null,
+          F, `${Ctor.name}: stop() left the still-booting worker running`);
+      }
+
+      /* K) stop() is idempotent; post-stop 'result' is ignored */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        w.emit({ type: 'ready', delegate: 'gpu' });
+        const h = await p;
+        h.stop(); h.stop();
+        w.emit({ type: 'result', landmarks: [VALID_HAND],
+          handedness: [[{ categoryName: 'Left' }]] });
+        probe(!gotHands(h), F, `${Ctor.name}: post-stop result mutated state`);
+      }
+
+      /* L) malformed 'result' payloads are dropped at _ingest — hands take
+            landmarks as [mesh,…], face as the flat mesh itself */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        w.emit({ type: 'ready', delegate: 'gpu' });
+        const h = await p;
+        const bad = Array.from({ length: 20 }, () => ({ x: NaN, y: 0 }));
+        w.emit({ type: 'result', landmarks: 'oops', handedness: 7, inferMs: 'x' });
+        w.emit({ type: 'result',
+          landmarks: isHands(Ctor) ? [bad] : bad, handedness: [] });
+        w.emit({ type: 'result',
+          landmarks: isHands(Ctor) ? [VALID_HAND] : VALID_HAND,
+          handedness: [[{ categoryName: 'Left' }]] });
+        const got = gotHands(h);
+        probe(isHands(Ctor) ? got === 1 && h.state.hands[0].side === 'right' : got === true,
+          F, `${Ctor.name}: malformed payloads not dropped / valid payload lost (got=${got})`);
+        h.stop();
+      }
+
+      /* M) Worker ctor/postMessage throwing at spawn → 'fail' → inline */
+      {
+        const v = fakeVideo();
+        globalThis.Worker = class { constructor() { throw new Error('no workers'); } };
+        let h = await make(Ctor, v);
+        globalThis.Worker = RealWorker;
+        probe(h && !!h.landmarker && h._worker === null,
+          F, `${Ctor.name}: Worker ctor throw did not fall back to inline`);
+        h?.stop();
+        const v2 = fakeVideo();
+        globalThis.__failPost = true;
+        h = await make(Ctor, v2);
+        globalThis.__failPost = false;
+        probe(h && !!h.landmarker && h._worker === null,
+          F, `${Ctor.name}: init-post throw did not fall back to inline`);
+        h?.stop();
+      }
+      resetFlags();
+    }
+
+    /* ---------- shared/track-worker.js — protocol fuzz on the real module */
+    {
+      const F = 'shared/track-worker.js';
+      const outbox = [];
+      globalThis.self = { onmessage: null, postMessage: (m) => outbox.push(m) };
+      globalThis.__detectLog = []; globalThis.__detectThrow = false;
+      await import(new URL('../shared/track-worker.js', import.meta.url).href);
+      const post = (m) => self.onmessage({ data: m });
+      const readyErr = () => outbox.filter(m => m.type === 'ready' && m.error);
+      const readyOk = () => outbox.filter(m => m.type === 'ready' && !m.error);
+      const results = () => outbox.filter(m => m.type === 'result');
+      const fatals = () => outbox.filter(m => m.type === 'fatal');
+      const lastTs = () => (globalThis.__detectLog || []).at(-1);
+      const frame = (over = {}) => Object.assign({
+        timestamp: 5_000_000, displayWidth: 640, displayHeight: 480,
+        close() { this.closed = (this.closed || 0) + 1; } }, over);
+
+      // garbage envelopes — ignored without crashing the handler
+      post(42); post('x'); post(null); post({ type: 'nope' });
+      probe(true, F, 'garbage envelopes crashed the worker handler');   // reaching here = pass
+      post({ type: 'init', kind: 'bogus', vendorUrl: VEND_URL });
+      probe(await puntil(() => readyErr().length === 1), F,
+        "init kind='bogus' did not post ready+error");
+      post({ type: 'init', kind: 'hands', vendorUrl: 'javascript:alert(1)' });
+      probe(await puntil(() => readyErr().length === 2), F,
+        'init with bogus vendorUrl did not post ready+error');
+      post({ type: 'init', kind: 'hands', vendorUrl: 'file:///no/such/dir' });
+      probe(await puntil(() => readyErr().length === 3), F,
+        'init with missing bundle did not post ready+error');
+      // a garbage preferCpu is just truthiness — it orders delegates, it
+      // can't poison anything; init must still succeed
+      post({ type: 'init', kind: 'hands', vendorUrl: VEND_URL, preferCpu: { oops: 1 } });
+      probe(await puntil(() => readyOk().length === 1), F,
+        'init with garbage preferCpu did not post ready');
+      post({ type: 'init', kind: 'hands', vendorUrl: VEND_URL });
+      probe(await puntil(() => readyOk().length === 2), F, 'good init never posted ready');
+      probe((globalThis.__lmLog || []).length > 0, F, 'init never built a landmarker');
+      probe((globalThis.__detectLog || []).includes(1), F, 'warm-up detect never ran');
+      // monotonic-ts is a per-LANDMARKER invariant — each init resets lastTs
+      // and re-warms at ts=1, so only frames after this init count
+      const logBase = (globalThis.__detectLog || []).length;
+
+      // real frame + timestamp-edge frames — every ts reaching detect must stay finite
+      let n0 = results().length;
+      post({ type: 'frame', frame: frame() });
+      probe(results().length === n0 + 1, F, 'a real frame got no result');
+      probe(Number.isFinite(lastTs()), F, 'media-stamped frame produced a non-finite ts');
+      post({ type: 'frame', frame: frame({ timestamp: Infinity }) });
+      probe(Number.isFinite(lastTs()), F,
+        'Infinity timestamp poisoned the ts pipeline');
+      post({ type: 'frame', frame: frame({ timestamp: NaN }) });
+      probe(Number.isFinite(lastTs()), F, 'NaN timestamp poisoned the ts pipeline');
+      post({ type: 'frame', frame: frame({ timestamp: -9 }) });
+      probe(Number.isFinite(lastTs()), F, 'negative timestamp broke the ts pipeline');
+      post({ type: 'frame', frame: frame({ timestamp: undefined }) });
+      probe(Number.isFinite(lastTs()), F, 'untimestamped frame broke the ts pipeline');
+      const log = (globalThis.__detectLog || []).slice(logBase);
+      probe(log.every((t, i) => i === 0 || t > log[i - 1]),
+        F, 'infer timestamps not strictly increasing');
+
+      // malformed frames on a LIVE landmarker — answer (clears _inFlight)
+      // but must NOT count failN → never escalate a healthy landmarker
+      const fatalBefore = fatals().length;
+      for (let i = 0; i < 35; i++) {
+        post({ type: 'frame' });                              // no frame at all
+        post({ type: 'frame', frame: 'definitely not a frame' });
+        post({ type: 'frame', frame: { timestamp: 1 } });     // no close() — not a real frame
+      }
+      probe(fatals().length === fatalBefore,
+        F, '105 malformed frame envelopes escalated a healthy landmarker to fatal');
+
+      // genuine detect faults still escalate — failN exists for a dying delegate
+      globalThis.__detectThrow = true;
+      for (let i = 0; i < 32; i++) post({ type: 'frame', frame: frame() });
+      probe(fatals().length === 1, F, 'sustained detect failure never escalated to fatal');
+      globalThis.__detectThrow = false;
+      n0 = results().length;
+      post({ type: 'frame', frame: frame() });
+      probe(results().length === n0 + 1, F, 'post-fatal frame got no clearing result');
+
+      // second init re-boots cleanly (kind switch hands→face), close quiets it
+      post({ type: 'init', kind: 'face', vendorUrl: VEND_URL });
+      probe(await puntil(() => readyOk().length === 3), F,
+        'second init (kind switch) did not post ready');
+      n0 = results().length;
+      post({ type: 'frame', frame: frame() });
+      probe(results().length === n0 + 1, F, 'post-reinit frame got no result');
+      post({ type: 'close' });
+      await ptick(40);                                       // doClose rides the serial chain
+      post({ type: 'frame', frame: frame() });
+      probe(results().at(-1)?.face === null && results().at(-1)?.landmarks === null,
+        F, 'post-close frame did not get the empty result');
+    }
+
+    /* the whole point of res()-only spawnP + .catch'd _initLocal: no tracker
+       path may ever produce an unhandled rejection */
+    probe(unhandled === 0, 'shared/hands.js',
+      `${unhandled} unhandled promise rejection(s) leaked from tracker paths`);
+  } finally {
+    rmSync(VEND, { recursive: true, force: true });
+  }
+}
+
+try {
+  await dynamicProbes();
+} catch (e) {
+  fail('qe-static', 0, `dynamic probe harness threw: ${e?.stack || e}`);
 }
 
 console.log('---- qe-static summary ----');

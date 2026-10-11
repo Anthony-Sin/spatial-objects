@@ -20,11 +20,19 @@
    Section J (added wave 3) is the CONCURRENCY/TIME matrix: parallel range
    storms, delete/truncate mid-flight, trickle readers, abort storms,
    keep-alive + pipelining, Expect:100-continue, slow-loris, fd exhaustion.
-   Scratch-server only — it would hammer the live instance. */
+   Scratch-server only — it would hammer the live instance.
+
+   Wave 4 adds: K conditional-request edges (ETag / If-Range / If-Match /
+   If-None-Match / If-Unmodified-Since / IMS-on-HEAD — live-safe, tolerant of
+   the pre-fix build), L method+protocol oddballs (OPTIONS/TRACE/CONNECT/
+   Upgrade/HTTP-1.0/absolute-form/missing-Host), M request-smuggling
+   robustness (dup-CL, CL+TE, negative/huge CL, trailers, desync framing),
+   N URL normalization (encoded slashes, //, ./, overlong UTF-8, confusables)
+   and O keep-alive lifecycle + fd hygiene. L/M/O are scratch-only. */
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile, symlink, rm, readFile, open } from 'node:fs/promises';
+import { mkdir, writeFile, symlink, rm, readFile, open, utimes, readdir } from 'node:fs/promises';
 import { request } from 'node:http';
 import { connect } from 'node:net';
 import { join } from 'node:path';
@@ -85,6 +93,14 @@ const rssKB = async () => {
     const s = await readFile(`/proc/${child.pid}/status`, 'utf8');
     return +(/VmRSS:\s*(\d+)/.exec(s)?.[1] || 0);
   } catch { return 0; }
+};
+
+/* open-fd count of the scratch child via /proc/<pid>/fd (linux-only, same
+   constraint as the server's own /proc/self/fd check); -1 = unavailable —
+   fd probes then degrade to recording -1 */
+const fdCount = async () => {
+  try { return (await readdir(`/proc/${child.pid}/fd`)).length; }
+  catch { return -1; }
 };
 
 /* persistent-connection wrapper: buffers the socket, hands out parsed
@@ -220,6 +236,7 @@ try {
   await wf('x.png', 'not really a png');            // MIME keys off the ext only
   await wf('UPPER.HTML', '<b>up</b>');
   await wf('dir/index.html', '<!doctype html><title>qe-dir</title><p>dir index</p>');
+  await wf('cond.bin', 'conditional bytes');
   let symlinks = true;
   try {
     await symlink('/etc/passwd', join(FIX, 'escape.lnk'));   // escapes root
@@ -936,6 +953,531 @@ try {
       check('fd exhaustion (48-fd server, 160-socket flood)', 'survives + recovers',
         `flooded=${flooded} dead=${ldead} recovered=${survived}`, up && !ldead && survived);
       lchild.kill('SIGKILL');
+    }
+  }
+
+  /* ================ K. conditional-request edges ================
+     wave-4 server emits a strong etag ("sizeHEX-mtimeHEX") and honors
+     If-Match / If-Unmodified-Since / If-None-Match / If-Range. The live
+     pre-fix build ignores them all → tolerated alternates on --live. */
+  {
+    const one = await req(FIX_URL + 'blob.bin');
+    const et = one.headers['etag'], lm = one.headers['last-modified'];
+    check('etag validator emitted', LIVE ? '"<hex>" (fixed) / absent (pre-fix live)' : '"sizeHEX-mtimeHEX"',
+      `etag=${et || 'absent'}`,
+      LIVE ? true : /^"[0-9a-f]+-[0-9a-f.]+"$/.test(et || ''));
+
+    let r = await req(FIX_URL + 'blob.bin', { headers: { 'if-none-match': et || '"x"' } });
+    check('INM matching etag', LIVE ? '304 (fixed) / 200 (pre-fix live)' : '304 empty',
+      `${r.status} len=${r.body.length}`,
+      LIVE ? (r.status === 304 || r.status === 200)
+           : r.status === 304 && r.body.length === 0);
+    r = await req(FIX_URL + 'blob.bin', { headers: { 'if-none-match': '*' } });
+    check('INM * → 304', LIVE ? '304 / 200 (pre-fix live)' : '304', `${r.status}`,
+      LIVE ? (r.status === 304 || r.status === 200) : r.status === 304);
+    r = await req(FIX_URL + 'blob.bin', { headers: { 'if-none-match': 'W/' + (et || '"x"') } });
+    check('INM weak W/etag matches (weak compare)', LIVE ? '304 / 200 (pre-fix live)' : '304',
+      `${r.status}`, LIVE ? (r.status === 304 || r.status === 200) : r.status === 304);
+    r = await req(FIX_URL + 'blob.bin', { headers: { 'if-none-match': '"deadbeef"' } });
+    check('INM bogus → 200', '200', `${r.status}`, r.status === 200);
+    r = await req(FIX_URL + 'blob.bin', { headers: { 'if-none-match': `"deadbeef", ${et || '"x"'}` } });
+    check('INM list containing ours → 304', LIVE ? '304 / 200 (pre-fix live)' : '304',
+      `${r.status}`, LIVE ? (r.status === 304 || r.status === 200) : r.status === 304);
+    r = await req(FIX_URL + 'blob.bin', { method: 'HEAD', headers: { 'if-none-match': et || '"x"' } });
+    check('INM on HEAD → 304', LIVE ? '304 / 200 (pre-fix live)' : '304 empty',
+      `${r.status} len=${r.body.length}`,
+      LIVE ? (r.status === 304 || r.status === 200) : r.status === 304 && r.body.length === 0);
+    // RFC 9110 §13.1.3: a present INM (even non-matching) suppresses IMS
+    r = await req(FIX_URL + 'blob.bin',
+      { headers: { 'if-none-match': '"deadbeef"', 'if-modified-since': lm } });
+    check('IMS ignored when INM present', LIVE ? '200 (fixed) / 304 (pre-fix live: no INM)' : '200',
+      `${r.status}`, LIVE ? (r.status === 200 || r.status === 304) : r.status === 200);
+    // precondition beats range: matching INM + Range → 304, not 206
+    r = await req(FIX_URL + 'blob.bin',
+      { headers: { 'if-none-match': et || '"x"', range: 'bytes=0-9' } });
+    check('matching INM + Range → 304 wins', LIVE ? '304 / 206 (pre-fix live)' : '304',
+      `${r.status}`, LIVE ? (r.status === 304 || r.status === 206) : r.status === 304);
+
+    r = await req(FIX_URL + 'blob.bin', { headers: { 'if-match': '*' } });
+    check('If-Match * → 200', '200', `${r.status}`, r.status === 200);
+    r = await req(FIX_URL + 'blob.bin', { headers: { 'if-match': et || '"x"' } });
+    check('If-Match own etag → 200', '200', `${r.status}`, r.status === 200);
+    r = await req(FIX_URL + 'blob.bin', { headers: { 'if-match': '"deadbeef"' } });
+    check('If-Match bogus → 412', LIVE ? '412 / 200 (pre-fix live)' : '412', `${r.status}`,
+      LIVE ? (r.status === 412 || r.status === 200) : r.status === 412);
+    r = await req(FIX_URL + 'blob.bin', { headers: { 'if-match': 'W/' + (et || '"x"') } });
+    check('If-Match weak tag → 412 (strong compare)', LIVE ? '412 / 200 (pre-fix live)' : '412',
+      `${r.status}`, LIVE ? (r.status === 412 || r.status === 200) : r.status === 412);
+
+    const past = 'Wed, 01 Jan 2020 00:00:00 GMT';
+    const future = new Date(Date.now() + 3600e3).toUTCString();
+    r = await req(FIX_URL + 'blob.bin', { headers: { 'if-unmodified-since': past } });
+    check('IUS stale → 412', LIVE ? '412 / 200 (pre-fix live)' : '412', `${r.status}`,
+      LIVE ? (r.status === 412 || r.status === 200) : r.status === 412);
+    r = await req(FIX_URL + 'blob.bin', { headers: { 'if-unmodified-since': future } });
+    check('IUS future → 200', '200', `${r.status}`, r.status === 200);
+    r = await req(FIX_URL + 'blob.bin', { headers: { 'if-unmodified-since': 'not a date' } });
+    check('IUS malformed → ignored → 200', '200', `${r.status}`, r.status === 200);
+    r = await req(FIX_URL + 'blob.bin', { headers: { 'if-match': '*', 'if-unmodified-since': past } });
+    check('IUS ignored when If-Match present', '200', `${r.status}`, r.status === 200);
+
+    // If-Range — the wave-4 defect: a stale validator used to get a 206
+    // splice of the CHANGED file; now the Range is ignored → whole 200
+    r = await req(FIX_URL + 'blob.bin', { headers: { range: 'bytes=0-9', 'if-range': lm } });
+    check('If-Range matching Last-Modified → 206', '206 len=10',
+      `${r.status} len=${r.body.length}`, r.status === 206 && r.body.length === 10);
+    r = await req(FIX_URL + 'blob.bin', { headers: { range: 'bytes=0-9', 'if-range': et || '"x"' } });
+    check('If-Range matching etag → 206', '206 len=10', `${r.status} len=${r.body.length}`,
+      r.status === 206 && r.body.length === 10);
+    r = await req(FIX_URL + 'blob.bin', { headers: { range: 'bytes=0-9', 'if-range': past } });
+    check('If-Range stale date → 200 whole', LIVE ? '200 (fixed) / 206 splice (pre-fix live)' : '200 len=5000',
+      `${r.status} len=${r.body.length}`,
+      LIVE ? (r.status === 200 || r.status === 206) : r.status === 200 && r.body.equals(BLOB));
+    r = await req(FIX_URL + 'blob.bin', { headers: { range: 'bytes=0-9', 'if-range': '"deadbeef"' } });
+    check('If-Range unknown etag → 200 whole', LIVE ? '200 (fixed) / 206 (pre-fix live)' : '200 len=5000',
+      `${r.status} len=${r.body.length}`,
+      LIVE ? (r.status === 200 || r.status === 206) : r.status === 200 && r.body.equals(BLOB));
+    r = await req(FIX_URL + 'blob.bin', { headers: { range: 'bytes=0-9', 'if-range': 'W/' + (et || '"x"') } });
+    check('If-Range WEAK etag → 200 (never gates)', LIVE ? '200 / 206 (pre-fix live)' : '200',
+      `${r.status}`, LIVE ? (r.status === 200 || r.status === 206) : r.status === 200);
+    r = await req(FIX_URL + 'blob.bin', { headers: { range: 'bytes=0-9', 'if-range': 'garbage-value' } });
+    check('If-Range garbage → 200', LIVE ? '200 / 206 (pre-fix live)' : '200',
+      `${r.status}`, LIVE ? (r.status === 200 || r.status === 206) : r.status === 200);
+    r = await req(FIX_URL + 'blob.bin', { headers: { range: 'bytes=abc', 'if-range': '"deadbeef"' } });
+    check('failed If-Range ignores malformed Range → 200', LIVE ? '200 / 416 (pre-fix live)' : '200',
+      `${r.status}`, LIVE ? (r.status === 200 || r.status === 416) : r.status === 200);
+    r = await req(FIX_URL + 'empty.bin', { headers: { range: 'bytes=0-9', 'if-range': '"deadbeef"' } });
+    check('failed If-Range on empty file → 200 cl=0', LIVE ? '200 / 416 (pre-fix live)' : '200 cl=0',
+      `${r.status} cl=${r.headers['content-length']}`,
+      LIVE ? (r.status === 200 || r.status === 416)
+           : r.status === 200 && +r.headers['content-length'] === 0);
+    r = await req(FIX_URL + 'blob.bin',
+      { method: 'HEAD', headers: { range: 'bytes=0-9', 'if-range': '"deadbeef"' } });
+    check('HEAD + failed If-Range → 200 full cl', LIVE ? '200 / 206 (pre-fix live)' : '200 cl=5000 empty',
+      `${r.status} cl=${r.headers['content-length']} len=${r.body.length}`,
+      LIVE ? (r.status === 200 || r.status === 206)
+           : r.status === 200 && +r.headers['content-length'] === BLOB.length && r.body.length === 0);
+
+    // mid-write mtime: deterministic via utimes — the etag must track it,
+    // catching changes the second-granularity Last-Modified can't see
+    const condPath = join(FIX, 'cond.bin');
+    await utimes(condPath, new Date(), new Date('2024-06-01T12:00:00.000Z'));
+    const c1 = await req(FIX_URL + 'cond.bin');
+    await utimes(condPath, new Date(), new Date('2024-06-01T12:00:01.500Z'));
+    const c2 = await req(FIX_URL + 'cond.bin');
+    check('etag tracks mid-write mtime', LIVE ? 'etag changed / absent (pre-fix live)' : 'etag1 ≠ etag2',
+      `${c1.headers.etag || 'none'} → ${c2.headers.etag || 'none'}`,
+      LIVE ? true : !!c1.headers.etag && !!c2.headers.etag && c1.headers.etag !== c2.headers.etag);
+    if (!LIVE && c1.headers.etag && c2.headers.etag) {
+      r = await req(FIX_URL + 'cond.bin', { headers: { 'if-none-match': c1.headers.etag } });
+      check('INM pre-write etag → 200 (revalidate catches mtime)', '200', `${r.status}`,
+        r.status === 200);
+      r = await req(FIX_URL + 'cond.bin', { headers: { 'if-none-match': c2.headers.etag } });
+      check('INM current etag → 304', '304', `${r.status}`, r.status === 304);
+      r = await req(FIX_URL + 'cond.bin',
+        { headers: { range: 'bytes=0-3', 'if-range': c1.headers['last-modified'] } });
+      check('If-Range pre-write LM → 200 (mtime moved 1.5s)', '200', `${r.status} len=${r.body.length}`,
+        r.status === 200);
+      r = await req(FIX_URL + 'cond.bin',
+        { headers: { range: 'bytes=0-3', 'if-range': c2.headers['last-modified'] } });
+      check('If-Range current LM → 206', '206 len=4', `${r.status} len=${r.body.length}`,
+        r.status === 206 && r.body.length === 4);
+      r = await req(FIX_URL + 'cond.bin',
+        { headers: { range: 'bytes=0-3', 'if-range': c1.headers.etag } });
+      check('If-Range pre-write etag → 200 whole', '200', `${r.status} len=${r.body.length}`,
+        r.status === 200);
+      r = await req(FIX_URL + 'cond.bin',
+        { headers: { range: 'bytes=0-3', 'if-range': c2.headers.etag } });
+      check('If-Range current etag → 206', '206 len=4', `${r.status} len=${r.body.length}`,
+        r.status === 206 && r.body.length === 4);
+    }
+
+    // conditionals never mask a miss — 404 before precondition eval
+    r = await req(FIX_URL + 'nope.bin', { headers: { 'if-none-match': '*', 'if-match': '*' } });
+    check('conditionals never mask a 404', '404', `${r.status}`, r.status === 404);
+
+    // vendor files: immutable policy skips IMS, but the etag still applies
+    const v = await req('/vendor/mediapipe/wasm/vision_wasm_internal.js');
+    r = await req('/vendor/mediapipe/wasm/vision_wasm_internal.js',
+      { headers: { 'if-none-match': v.headers.etag || '"x"' } });
+    check('vendor INM → 304 (etag works under immutable)', LIVE ? '304 / 200 (pre-fix live)' : '304',
+      `${r.status}`, LIVE ? (r.status === 304 || r.status === 200) : r.status === 304);
+    // HEAD + IMS → 304 with no body (IMS path covered for GET already)
+    r = await req(FIX_URL + 'blob.bin', { method: 'HEAD', headers: { 'if-modified-since': lm } });
+    check('IMS on HEAD → 304 empty', '304 len=0', `${r.status} len=${r.body.length}`,
+      r.status === 304 && r.body.length === 0);
+    r = await req(FIX_URL + 'blob.bin',
+      { method: 'HEAD', headers: { 'if-modified-since': 'Tue, 99 Foo 9999 99:99:99 GMT' } });
+    check('malformed IMS on HEAD → 200', '200', `${r.status}`, r.status === 200);
+  }
+
+  /* ================ L. method / protocol oddballs (scratch only) ================ */
+  if (!LIVE) {
+    const alive = async tag => {
+      const r = await req('/package.json');
+      check(`server alive after ${tag}`, '200', `${r.status}`, r.status === 200);
+    };
+    const allowHdr = s => (String(s).match(/allow: [^\r\n]*/i) || ['-'])[0];
+
+    let resp = await raw('OPTIONS /package.json HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    check('OPTIONS / → 405 + allow', '405 allow=GET, HEAD', `${statusOf(resp)} ${allowHdr(resp)}`,
+      statusOf(resp) === 405 && /GET/.test(resp) && /HEAD/.test(resp));
+
+    resp = await raw('TRACE /package.json HTTP/1.1\r\nHost: x\r\nX-Echo: secret-token\r\nConnection: close\r\n\r\n');
+    check('TRACE → 405, request not echoed', '405 no echo', `${statusOf(resp)} echoed=${/X-Echo|secret-token/i.test(resp)}`,
+      statusOf(resp) === 405 && !/X-Echo|secret-token/i.test(resp));
+    await alive('TRACE');
+
+    resp = await raw(`CONNECT 127.0.0.1:${PORT} HTTP/1.1\r\nHost: x\r\n\r\n`);
+    check('CONNECT refused (no tunnel)', 'closed or ≥400', `${statusOf(resp) || 'closed'}`,
+      statusOf(resp) === 0 || statusOf(resp) >= 400);
+    await alive('CONNECT');
+
+    resp = await raw('UPGRADE /package.json HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    check('UPGRADE method refused', '405/400/closed', `${statusOf(resp) || 'closed'}`,
+      statusOf(resp) === 405 || statusOf(resp) === 400 || statusOf(resp) === 0);
+    resp = await raw('GET /package.json HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: websocket\r\nConnection: close\r\n\r\n');
+    check('GET w/ Upgrade hdrs (no upgrade listener)', 'served-as-GET or closed — never 101',
+      `${statusOf(resp) || 'closed'} got101=${/HTTP\/\d\.\d 101/.test(resp)}`,
+      !/HTTP\/\d\.\d 101/.test(resp));
+    await alive('upgrade probes');
+
+    resp = await raw('GET /package.json HTTP/1.0\r\n\r\n');
+    const connHdr = (resp.match(/connection: [^\r\n]*/i) || ['-'])[0];
+    check('HTTP/1.0 GET → 200 + close', '200 connection: close', `${statusOf(resp)} ${connHdr}`,
+      statusOf(resp) === 200 && /close/i.test(connHdr));
+    {
+      const c = conn(); await c.ready;
+      c.write('GET /package.json HTTP/1.0\r\nConnection: keep-alive\r\n\r\n');
+      const r1 = await c.readResp();
+      c.write('GET /package.json HTTP/1.0\r\n\r\n');
+      const r2 = await c.readResp();
+      check('HTTP/1.0 + Connection: keep-alive honored', 'two 200s on one socket',
+        `${r1.status}→${r2.status} conn=${r1.headers.connection || '-'}`,
+        r1.status === 200 && r2.status === 200 && /keep-alive/i.test(r1.headers.connection || ''));
+      c.close();
+    }
+    resp = await raw('GET /package.json HTTP/1.0\r\n\r\nGET /package.json HTTP/1.0\r\n\r\n');
+    // node refuses the ambiguous second request-line as a single 400 — the
+    // contract is "exactly one response, then close", whichever status it is
+    check('HTTP/1.0 pipelined w/o keep-alive → 1 response', 'one response then close',
+      `${(resp.match(/HTTP\/\d\.\d \d+/g) || []).length}x → ${statusOf(resp)}`,
+      (resp.match(/HTTP\/\d\.\d \d+/g) || []).length === 1);
+    await alive('HTTP/1.0 probes');
+
+    resp = await raw(`GET http://other.host:${PORT}/package.json HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    check('absolute-form foreign host (host ignored)', '200', `${statusOf(resp)}`, statusOf(resp) === 200);
+    resp = await raw('GET https://example.com/package.json HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    check('absolute-form https URI', '200', `${statusOf(resp)}`, statusOf(resp) === 200);
+    resp = await raw('GET http://x/%2e%2e%2fetc%2fpasswd HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    check('absolute-form traversal still guarded', '403 no leak', `${statusOf(resp)} leaked=${/root:/.test(resp)}`,
+      statusOf(resp) === 403 && !/root:/.test(resp));
+    resp = await raw('GET example.com:80 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    check('authority-form on GET refused', '400/closed', `${statusOf(resp) || 'closed'}`,
+      statusOf(resp) === 400 || statusOf(resp) === 0);
+    resp = await raw('GET * HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    check('asterisk-form on GET', '404/400', `${statusOf(resp)}`,
+      statusOf(resp) === 404 || statusOf(resp) === 400);
+    await alive('request-target forms');
+
+    resp = await raw('GET /package.json HTTP/1.1\r\nConnection: close\r\n\r\n');
+    check('HTTP/1.1 missing Host → 400', '400', `${statusOf(resp)}`, statusOf(resp) === 400);
+    resp = await raw('GET /package.json HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n');
+    check('HTTP/1.1 EMPTY Host → 400', '400', `${statusOf(resp)}`, statusOf(resp) === 400);
+    resp = await raw('GET /package.json HTTP/1.1\r\nHost: \t \r\nConnection: close\r\n\r\n');
+    check('HTTP/1.1 whitespace-only Host → 400', '400', `${statusOf(resp)}`, statusOf(resp) === 400);
+    resp = await raw('GET /package.json HTTP/1.0\r\n\r\n');   // 1.0 is exempt from Host
+    check('HTTP/1.0 no Host tolerated', '200', `${statusOf(resp)}`, statusOf(resp) === 200);
+    await alive('Host probes');
+
+    for (const [tag, wire] of [
+      ['HTTP/1.2', 'GET /package.json HTTP/1.2\r\nHost: x\r\nConnection: close\r\n\r\n'],
+      ['HTTP/2.0 text', 'GET /package.json HTTP/2.0\r\nHost: x\r\nConnection: close\r\n\r\n'],
+      ['HTTP/0.9', 'GET /package.json HTTP/0.9\r\nHost: x\r\nConnection: close\r\n\r\n'],
+      ['HTTP/9.9', 'GET /package.json HTTP/9.9\r\nHost: x\r\nConnection: close\r\n\r\n'],
+    ]) {
+      // llhttp is version-lenient: 1.2/2.0/0.9 get served as 1.x (documented
+      // leniency), 9.9 is refused. Anything sane goes — never a wedge.
+      resp = await raw(wire);
+      check(`${tag} version tolerated or refused`, '200 / 4xx / closed', `${statusOf(resp) || 'closed'}`,
+        statusOf(resp) === 200 || statusOf(resp) === 0 || (statusOf(resp) >= 400 && statusOf(resp) < 600));
+    }
+    await alive('bogus versions');
+  }
+
+  /* ================ M. request-smuggling robustness (scratch only) ================
+     llhttp does the front-line parsing; what we assert here is the server.mjs
+     contract: never serve smuggled bytes, never wedge, stay alive. */
+  if (!LIVE) {
+    const ping = async () => (await req('/package.json')).status;
+    const smug = async (name, wire, okStatuses) => {
+      const resp = await raw(wire);
+      check(name, okStatuses.join('/') + ' or closed', `${statusOf(resp) || 'closed'}`,
+        okStatuses.includes(statusOf(resp)) || statusOf(resp) === 0);
+      return resp;
+    };
+    const pingAfter = async tag => {
+      const s = await ping();
+      check(`server alive after ${tag}`, '200', `${s}`, s === 200);
+    };
+
+    await smug('duplicate Content-Length (identical)',
+      'POST /package.json HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nContent-Length: 4\r\n\r\nxxxx',
+      [400, 405]);
+    await smug('duplicate Content-Length (conflicting)',
+      'POST /package.json HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nContent-Length: 6\r\n\r\nxxxx',
+      [400]);
+    await smug('Content-Length: -5',
+      'POST /package.json HTTP/1.1\r\nHost: x\r\nContent-Length: -5\r\n\r\n', [400]);
+    await smug('Content-Length: huge (overflow)',
+      'POST /package.json HTTP/1.1\r\nHost: x\r\nContent-Length: 99999999999999999999\r\n\r\n', [400]);
+    await smug('Content-Length: 0x10 (non-decimal)',
+      'POST /package.json HTTP/1.1\r\nHost: x\r\nContent-Length: 0x10\r\n\r\n', [400]);
+    await smug('Content-Length : space before colon',
+      'POST /package.json HTTP/1.1\r\nHost: x\r\nContent-Length : 4\r\n\r\nxxxx', [400]);
+    await smug('CL + TE: chunked conflict',
+      'POST /package.json HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n',
+      [400]);
+    await smug('TE + CL (reversed order)',
+      'POST /package.json HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n0\r\n\r\n',
+      [400]);
+    await smug('Transfer-Encoding: chunked ×2',
+      'POST /package.json HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n',
+      [400]);
+    await pingAfter('CL/TE conflict probes');
+
+    // trailers must not bleed into the response
+    const resp = await smug('chunked POST + trailer fields',
+      'POST /package.json HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nabcde\r\n0\r\nX-Smuggled: yes\r\n\r\n',
+      [405]);
+    check('trailer never reaches response headers', 'no x-smuggled in resp',
+      `echoed=${/x-smuggled/i.test(resp)}`, !/x-smuggled/i.test(resp));
+
+    // obs-fold line continuation must not smuggle a header
+    await smug('obs-fold header continuation',
+      'GET /package.json HTTP/1.1\r\nHost: x\r\nX-Fold: a\r\n b\r\nConnection: close\r\n\r\n', [400]);
+    await pingAfter('trailer/obs-fold probes');
+
+    // the desync probe that matters on a non-proxy server: a declared body
+    // must be consumed EXACTLY so the pipelined next request stays aligned
+    {
+      const c = conn(); await c.ready;
+      c.write('GET /package.json HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\n');
+      c.write('XXXX');
+      c.write('GET /package.json?second HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+      const r1 = await c.readResp();
+      const r2 = await c.readResp();
+      check('GET + CL body + pipelined: framing aligned', '200 then 200',
+        `${r1.status}→${r2.status}`, r1.status === 200 && r2.status === 200);
+      c.close();
+    }
+    // a whole request embedded in a declared body is consumed as bytes —
+    // only the 405 and the real next request come back, never the smuggled one
+    {
+      const smugReq = 'GET /index.html HTTP/1.1\r\nHost: x\r\n\r\n';       // consumed as body
+      const c = conn(); await c.ready;
+      c.write(`POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: ${smugReq.length}\r\n\r\n`);
+      c.write(smugReq);
+      c.write('GET /package.json?legit HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+      const r1 = await c.readResp('POST');
+      const r2 = await c.readResp();
+      const r3 = await c.readResp();
+      check('smuggled request inside CL body never dispatched', '405→200→(closed), no 3rd resp',
+        `${r1.status}→${r2.status}→${r3.status}`,
+        r1.status === 405 && r2.status === 200 && r3.status === 0);
+      c.close();
+    }
+    // chunked GET body + trailers + pipelined GET — chunk framing must not desync
+    {
+      const c = conn(); await c.ready;
+      c.write('GET /package.json HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n');
+      c.write('4\r\nWXYZ\r\n0\r\nX-Trailer: nope\r\n\r\n');
+      c.write('GET /package.json?after HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+      const r1 = await c.readResp();
+      const r2 = await c.readResp();
+      check('chunked GET + trailers + pipelined → aligned', '200 then 200',
+        `${r1.status}→${r2.status}`, r1.status === 200 && r2.status === 200);
+      c.close();
+    }
+    // declared huge body never sent, then RST — must not wedge the parser
+    {
+      const s = connect(PORT, '127.0.0.1');
+      s.on('error', () => {});
+      await new Promise(r => { s.once('connect', r); s.once('error', r); });
+      s.write('POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 500000\r\n\r\n' + 'x'.repeat(32));
+      await delay(300);
+      s.destroy();
+      const r = await req('/package.json');
+      check('partial body + RST does not wedge', '200', `${r.status}`, r.status === 200);
+    }
+    await pingAfter('smuggling probes');
+  }
+
+  /* ================ N. URL normalization 2.0 (live-safe) ================
+     decoded path must always stay inside root — and map predictably. */
+  {
+    let r = await req(FIX_URL + './blob.bin');
+    check('./ segment collapses', '200 blob', `${r.status}`, r.status === 200 && r.body.equals(BLOB));
+    r = await req(FIX_URL + 'dir/../blob.bin');
+    check('in-root dir/../ collapses', '200 blob', `${r.status}`, r.status === 200 && r.body.equals(BLOB));
+    r = await req('/test//.qe-server-tmp//blob.bin');
+    check('// inside path = separators', '200 blob', `${r.status}`, r.status === 200 && r.body.equals(BLOB));
+    r = await req('//test/.qe-server-tmp/blob.bin');
+    check('//host prefix eaten → in-root miss', '404', `${r.status}`, r.status === 404);
+    r = await req(FIX_URL + 'blob.bin%23frag');
+    check('%23 → literal # in filename', '404', `${r.status}`, r.status === 404);
+    r = await req('/%EF%BC%8E%EF%BC%8E/package.json');                    // fullwidth dots ．．
+    check('unicode confusable dots ≠ traversal', '404', `${r.status}`, r.status === 404);
+    r = await req('/%D0%B5%2e%2e%2fpackage.json');                        // cyrillic е + ../
+    check('cyrillic lookalike + encoded .. → in-root only', '403/404, no leak',
+      `${r.status}`, (r.status === 403 || r.status === 404) && !r.body.includes('"scripts"'));
+    r = await req('/%C0%AE%C0%AE/package.json');                          // overlong UTF-8 '..'
+    check('overlong UTF-8 %C0%AE → 400', '400', `${r.status}`, r.status === 400);
+    r = await req('/%ED%A0%80/x');                                        // lone surrogate
+    check('lone surrogate %ED%A0%80 → 400', '400', `${r.status}`, r.status === 400);
+    r = await req('/%F0%28%8C%BC/x');                                     // invalid UTF-8 seq
+    check('invalid UTF-8 %F0%28 → 400', '400', `${r.status}`, r.status === 400);
+    r = await req('/%FE%FE/x');                                           // never-valid bytes
+    check('invalid UTF-8 %FE → 400', '400', `${r.status}`, r.status === 400);
+    r = await req('/test/%2e%2e/%2e%2e/x');
+    check('%2e%2e collapses inside root', '404/403', `${r.status}`, r.status === 404 || r.status === 403);
+    r = await req(FIX_URL + 'dir%2f%2e%2e%2fblob.bin');
+    check('encoded-slash in-root traversal resolves inside', '200 blob', `${r.status}`,
+      r.status === 200 && r.body.equals(BLOB));
+    r = await req('/a/./b');
+    check('/a/./b collapses', '404', `${r.status}`, r.status === 404);
+    r = await req('/a//../b');
+    check('/a//../b collapses in root', '404', `${r.status}`, r.status === 404);
+    r = await req('/..;/x');
+    check('..; is a literal name', '404', `${r.status}`, r.status === 404);
+    r = await req('/%2f');
+    check('bare %2f → //index.html stays in root', '200/404', `${r.status}`,
+      r.status === 200 || r.status === 404);
+    r = await req(FIX_URL + 'blob.bin%00.txt');
+    check('NUL mid-filename', '4xx', `${r.status}`, r.status === 404 || r.status === 400);
+    const bf = await readFile(join(ROOT, 'test', 'boxing-fight.mjs'));
+    r = await req('/test/.qe-server-tmp/../boxing-fight.mjs');
+    check('in-root ../ serves real file', '200 bytes == file', `${r.status} eq=${r.body.equals(bf)}`,
+      r.status === 200 && r.body.equals(bf));
+    r = await req('/%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd');
+    check('deep encoded traversal → refused, no leak', '403/404 no root:', `${r.status} leaked=${r.body.includes('root:')}`,
+      (r.status === 403 || r.status === 404) && !r.body.includes('root:'));
+    r = await req('/%2E%2E%2F%2E%2E%2Fetc%2Fpasswd');                     // uppercase hex
+    check('uppercase-hex traversal → refused, no leak', '403/404 no root:', `${r.status} leaked=${r.body.includes('root:')}`,
+      (r.status === 403 || r.status === 404) && !r.body.includes('root:'));
+  }
+
+  /* ================ O. keep-alive lifecycle + fd hygiene (scratch only) ================ */
+  if (!LIVE) {
+    const fd0 = await fdCount();
+
+    // 100 half-open sockets — connected, never send a byte. Bounded by the
+    // parser's headersTimeout (60s) — well beyond the probe window, so what
+    // we assert is: responsive while held, and fds reclaimed once they die.
+    const held = [];
+    for (let i = 0; i < 100; i++) {
+      const s = connect(PORT, '127.0.0.1');
+      s.on('error', () => {});
+      held.push(s);
+    }
+    await Promise.all(held.map(s => new Promise(r => { s.once('connect', r); s.once('error', r); })));
+    await delay(400);
+    const fdHeld = await fdCount();
+    const rMid = await req('/package.json');
+    held.forEach(s => s.destroy());
+    await delay(900);
+    const fdAfter = await fdCount();
+    check('100 half-open sockets: responsive while held', '200, fds rose ~100',
+      `fd ${fd0}→${fdHeld} req=${rMid.status}`,
+      rMid.status === 200 && (fdHeld < 0 || fd0 < 0 || fdHeld >= fd0 + 50));
+    check('fds reclaimed after half-open sockets die', '≈ baseline +15',
+      `fd ${fd0}→${fdAfter}`, fdAfter < 0 || fd0 < 0 || fdAfter <= fd0 + 15);
+
+    // clean FIN mid-headers — refused or closed, never a wedge
+    {
+      const s = connect(PORT, '127.0.0.1');
+      s.on('error', () => {});
+      const out = [];
+      s.on('data', d => out.push(d));
+      await new Promise(r => s.once('connect', r));
+      s.end('GET /package.json HTTP/1.1\r\nHost: x');                  // FIN mid-headers
+      await delay(700);
+      const resp = Buffer.concat(out).toString('latin1');
+      check('FIN mid-headers refused cleanly', '400 or closed', `${statusOf(resp) || 'closed'}`,
+        statusOf(resp) === 400 || statusOf(resp) === 0);
+      s.destroy();
+    }
+
+    // complete request then immediate FIN — node's http layer drops the
+    // response on a half-closed socket (verified vs stock node http) —
+    // the invariant we own: no crash, no fd held open afterwards
+    {
+      const fdB = await fdCount();
+      let responded = 0;
+      for (let i = 0; i < 20; i++) {
+        const s = connect(PORT, '127.0.0.1');
+        s.on('error', () => {});
+        const out = [];
+        s.on('data', d => out.push(d));
+        await new Promise(r => { s.once('connect', r); s.once('error', r); });
+        s.end('GET /package.json HTTP/1.1\r\nHost: x\r\n\r\n');
+        await new Promise(r => { s.once('close', r); setTimeout(r, 800); });
+        if (Buffer.concat(out).toString('latin1').includes('200')) responded++;
+        s.destroy();
+      }
+      await delay(400);
+      const r = await req('/package.json');
+      const fdC = await fdCount();
+      check('20× FIN-after-request: alive, no fd leak', '200 + fds back',
+        `responded=${responded}/20 next=${r.status} fd ${fdB}→${fdC}`,
+        r.status === 200 && (fdC < 0 || fdB < 0 || fdC <= fdB + 15));
+    }
+
+    // idle keep-alive socket — keepAliveTimeout (5s) must reap it, else an
+    // idle conn pins an fd forever
+    {
+      const c = conn();
+      await c.ready;
+      c.write('GET /package.json HTTP/1.1\r\nHost: x\r\n\r\n');
+      const r = await c.readResp();
+      const t0 = Date.now();
+      let closedIn = 0;
+      await new Promise(res => {
+        c.s.once('close', () => { closedIn = Date.now() - t0; res(); });
+        setTimeout(res, 7500);
+      });
+      check('idle keep-alive reaped by keepAliveTimeout', 'closed within ~7s',
+        `resp=${r.status} closedIn=${closedIn || '>7500'}ms`,
+        r.status === 200 && closedIn > 500 && closedIn <= 7500);
+      c.close();
+    }
+
+    // Connection: close must actually close on 1.1
+    {
+      const c = conn();
+      await c.ready;
+      c.write('GET /package.json HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+      const r = await c.readResp();
+      const closed = await Promise.race([
+        new Promise(rr => c.s.once('close', () => rr(true))),
+        delay(900).then(() => false),
+      ]);
+      check('Connection: close honored on 1.1', '200 + closed', `${r.status} closed=${closed}`,
+        r.status === 200 && closed);
+      c.close();
+    }
+
+    // keep-alive must survive error responses too: 405 then GET, same socket
+    {
+      const c = conn();
+      await c.ready;
+      c.write('POST /package.json HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n');
+      const r1 = await c.readResp('POST');
+      c.write('GET /package.json HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+      const r2 = await c.readResp();
+      check('keep-alive survives a 405', '405 then 200', `${r1.status}→${r2.status}`,
+        r1.status === 405 && r2.status === 200);
+      c.close();
     }
   }
 

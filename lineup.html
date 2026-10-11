@@ -232,6 +232,34 @@
     if (cv) cv.style.visibility = 'hidden';
     const n = document.querySelector('[data-note]');
     if (n) n.textContent = 'the stage lights are out — the card below still picks your rival';
+    /* keep that note honest: without the engine nothing wired the chips, so
+       a dead stage used to mean a dead picker — clicks did nothing and the
+       stored pick never updated. Minimal fallback: chips select + persist,
+       pick label follows, ENTER keeps the practice flag. Lock gating stays
+       server-side (npc.js re-checks koAvg), so an ungated pick here can't
+       sneak a locked fighter into the ring. */
+    try {
+      const practice = new URLSearchParams(location.search).get('practice') ? '?practice=1' : '';
+      const chips = [...document.querySelectorAll('[data-sel]')];
+      const pickEl = document.querySelector('[data-pick]');
+      const enterEl = document.querySelector('[data-enter]');
+      const nameOf = (c) => c?.querySelector('[data-sel-name]')?.textContent?.trim() || '';
+      const choose = (i, store) => {
+        const name = nameOf(chips[i]);
+        if (!name) return;
+        chips.forEach((c, j) => c.classList.toggle('sel', i === j));
+        if (pickEl) pickEl.textContent = name;
+        if (enterEl) enterEl.href = `./boxing.html${practice}`;
+        if (store) try { localStorage.setItem('boxing:npc', `proto:${name.toLowerCase()}`); } catch {}
+      };
+      chips.forEach((c, i) => c.addEventListener('click', () => choose(i, true)));
+      // reflect a stored pick so the card matches what the ring will load
+      const stored = localStorage.getItem('boxing:npc');
+      const cur = (stored || '').replace(/^proto:/, '').toUpperCase();
+      const idx = chips.findIndex(c => nameOf(c).toUpperCase() === cur);
+      if (idx >= 0) choose(idx, false);
+      else if (!stored) choose(0, false);   // fresh visitor — mark the house favorite
+    } catch {}
   }
 </script>
 </body>

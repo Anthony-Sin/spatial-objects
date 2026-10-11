@@ -27,10 +27,10 @@ function dotTex(THREE, inner, outer) {
 }
 
 const POOL_N = 72, STAIN_N = 24;
-/* mat half-extent — scene.js's platform box is RING*2+.3 across (half 3.1);
+/* mat half-extent — scene.js's platform box is RING*2+.3 across (half 4.9);
    droplets only splat where canvas actually is. A stain past the edge
    floats on thin air next to the ring. */
-const MAT_HALF = 3.05;
+const MAT_HALF = 4.85;
 
 export function makeFx(THREE, scene, cam) {
   const BLOOD = dotTex(THREE, 'rgba(190,30,20,1)', 'rgba(140,10,8,.55)');

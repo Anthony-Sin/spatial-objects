@@ -591,5 +591,46 @@ const resolvedSwing = s => s.events.includes('player-dodged') || s.events.includ
     seen.includes('player-hit-taken') && !seen.includes('player-dodged'), seen.join(','));
 }
 
+/* 13 — the corner break: halftime patch-up + a fresh round, never a full heal */
+{
+  const f = new Fight({ seed: 7 });
+  toFighting(f);
+  f.state.player.hp = 20; f.state.player.stamina = .1;
+  check('corner() patches to cornerHeal of max, never full',
+    f.corner() === true
+      && f.state.player.hp === 100 * TUNING.cornerHeal
+      && f.state.player.hp < f.state.player.maxHp,
+    `hp=${f.state.player.hp}`);
+  check('corner() → next round countdown (round 2)',
+    f.state.phase === 'countdown' && f.state.round === 2,
+    `${f.state.phase} r${f.state.round}`);
+  check('corner() restores the stamina floor', f.state.player.stamina >= TUNING.cornerStam,
+    `stam=${f.state.player.stamina}`);
+  check("corner emits 'corner'", f.state.events.includes('corner'), f.state.events.join(','));
+  const seen = [];
+  check('the next bell rings the fight back in',
+    toFighting(f, seen) && seen.includes('round-start'), f.state.phase);
+
+  // a healthier fighter keeps their hp — the corner only raises the floor
+  const f2 = new Fight({ seed: 7 });
+  toFighting(f2);
+  f2.state.player.hp = 80;
+  f2.corner();
+  check('hp above the floor stays put', f2.state.player.hp === 80, `hp=${f2.state.player.hp}`);
+
+  // the last round can't halftime into a fourth — it just replays itself
+  f.state.round = TUNING.rounds; f.state.player.hp = 10;
+  f.corner();
+  check('final-round corner replays the last round, not a round 4',
+    f.state.round === TUNING.rounds && f.state.phase === 'countdown', `r=${f.state.round}`);
+
+  // no corner for the dead or the down, and never before the bell
+  const f3 = new Fight({ seed: 7 });
+  check('corner() refuses before the first bell', f3.corner() === false, f3.state.phase);
+  toFighting(f3);
+  f3.state.player.hp = 0;
+  check('corner() refuses a downed fighter', f3.corner() === false, f3.state.phase);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

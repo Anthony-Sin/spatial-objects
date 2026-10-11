@@ -7,6 +7,9 @@ export const pickId = () => 'classic';
 export const savePick = () => {};
 
 export async function loadMitt(id = pickId()) {
+  /* id rides into a dynamic import path — an off-rack value ('../../x')
+     would traverse. Only known rack ids may name a file. */
+  if (!MITT_IDS.includes(id)) id = pickId();
   try {
     const m = await import(`./${id}.js`);
     if (m?.draw) return m;

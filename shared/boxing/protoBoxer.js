@@ -931,7 +931,10 @@ export function buildBoxer(THREE, opts = {}) {
     // off the rig — strikes live within a few body units by design
     SZ = Number.isFinite(strike?.reach) ? clamp(strike.reach, 0, 2.5) : null;
     SY = SZ !== null && Number.isFinite(strike?.y) ? clamp(strike.y, 0, 2) : null;
-    if (!POSES[name]) {
+    // own-property test, not truthiness: '__proto__'/'constructor'/'toString'
+    // resolve through the prototype chain — POSES['__proto__'] is Object.
+    // prototype, truthy but not a function → POSES[cur](...) threw TypeError
+    if (!Object.prototype.hasOwnProperty.call(POSES, name)) {
       // cap the dedupe set — a hostile/buggy caller streaming unique garbage
       // names once grew `warned` (and the console) without bound
       if (!warned.has(name) && warned.size < 64) {
@@ -1016,7 +1019,10 @@ export function buildBoxer(THREE, opts = {}) {
   };
 
   function trackHands(handsState, space = 'close') {
-    const S = HAND_SPACES[space] || HAND_SPACES.close;
+    // own-property test: space='__proto__' resolved to Object.prototype —
+    // truthy, so S.x was undefined and the clamp below threw reading x[1]
+    const S = Object.prototype.hasOwnProperty.call(HAND_SPACES, space)
+      ? HAND_SPACES[space] : HAND_SPACES.close;
     // non-array hands used to throw; a NaN palm used to poison the glove's
     // blend target FOREVER (lerp(NaN→x) stays NaN even after tracking returns)
     const list = Array.isArray(handsState?.hands) ? handsState.hands : [];
