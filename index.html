@@ -771,13 +771,6 @@
       ctx.arc(256, 256, 254, 0, Math.PI * 2);
       ctx.fill();
 
-      // Faint ring canvas accent within the circular pool
-      ctx.strokeStyle = 'rgba(43, 33, 24, 0.20)';
-      ctx.lineWidth = 3.5;
-      ctx.beginPath();
-      ctx.arc(256, 256, 228, 0, Math.PI * 2);
-      ctx.stroke();
-
       const tex = new THREE.CanvasTexture(cv);
       tex.colorSpace = THREE.SRGBColorSpace;
       return tex;
@@ -796,7 +789,7 @@
     spotCircleMesh.receiveShadow = true;
     scene.add(spotCircleMesh);
 
-    // ---------- Overhead Spotlight & Triangular Light Beam ----------
+    // ---------- Overhead Spotlight & Cone Light Beam ----------
     // Ambient fill to preserve rich cartoon colors without overexposing
     scene.add(new THREE.AmbientLight(0x283244, 0.65));
 
@@ -832,19 +825,6 @@
     const beam = new THREE.Mesh(beamGeo, beamMat);
     beam.position.set(0, 2.9, -0.45);
     scene.add(beam);
-
-    // Inner core cone for smooth volumetric spotlight gradient
-    const coreGeo = new THREE.CylinderGeometry(0.10, 1.65, 5.8, 48, 1, true);
-    const coreMat = new THREE.MeshBasicMaterial({
-      color: 0xfff4db,
-      transparent: true,
-      opacity: 0.18,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    const coreBeam = new THREE.Mesh(coreGeo, coreMat);
-    beam.add(coreBeam);
 
     // Soft rim accents for the characters
     const rimL = new THREE.PointLight(0xff6b57, 1.0, 5.0);
