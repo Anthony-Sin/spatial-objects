@@ -82,6 +82,7 @@
     font-weight:800; font-size:clamp(84px, 16vmin, 168px);
     line-height:.85; letter-spacing:.02em;
     color:#FF654E;
+    display:inline-flex; align-items:flex-end; justify-content:center;
     /* Chunky sticker outline and comic bevel layers */
     text-shadow:
       0 -3px 0 #FFC83B,
@@ -110,6 +111,23 @@
   }
   .logo-title .bang {
     color:#FF654E;
+  }
+  /* Cursive Pip sprout rooted onto the SCRAP! title */
+  .title-sprout {
+    position:absolute;
+    top:clamp(-24px, -3.8vw, -46px);
+    left:clamp(30%, 33%, 36%);
+    width:clamp(42px, 6.5vw, 76px);
+    height:clamp(42px, 6.5vw, 76px);
+    pointer-events:none;
+    z-index:5;
+    transform:rotate(-12deg);
+    filter:drop-shadow(0 4px 0 #2B2118) drop-shadow(0 0 0 #fff);
+    animation:sproutSway 3.6s ease-in-out infinite;
+  }
+  @keyframes sproutSway {
+    0%, 100% { transform:rotate(-12deg) translateY(0); }
+    50%      { transform:rotate(-4deg) translateY(-3px) scale(1.04); }
   }
 
   .ring-canvas {
@@ -447,7 +465,20 @@
           </g>
         </svg>
       </div>
-      <h1 class="logo-title">SCRAP<span class="bang">!</span></h1>
+      <h1 class="logo-title">
+        <!-- Pip's iconic leaf sprout in cursive cartoon style -->
+        <svg class="title-sprout" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <!-- Curving sprout stem -->
+          <path d="M42 66 C40 50 48 38 46 26" stroke="#2B2118" stroke-width="7" stroke-linecap="round" />
+          <path d="M42 66 C40 50 48 38 46 26" stroke="#4FB06D" stroke-width="3.5" stroke-linecap="round" />
+          <!-- Flowing right leaf -->
+          <path d="M46 28 C56 18 72 20 74 24 C72 34 58 38 46 28 Z" fill="#4FB06D" stroke="#2B2118" stroke-width="4.5" stroke-linejoin="round" />
+          <path d="M48 27 Q60 22 66 24" stroke="#8FE4AB" stroke-width="2" stroke-linecap="round" />
+          <!-- Curving left leaf -->
+          <path d="M44 34 C32 24 16 30 14 36 C20 44 36 42 44 34 Z" fill="#3D9B59" stroke="#2B2118" stroke-width="4.5" stroke-linejoin="round" />
+        </svg>
+        SCRAP<span class="bang">!</span>
+      </h1>
     </div>
 
     <div class="menu-group">
@@ -812,15 +843,14 @@
     spot.shadow.bias = -0.001;
     scene.add(spot, spot.target);
 
-    // Overhead theatrical spotlight cone beam (positioned behind the characters along Z)
+    // Overhead theatrical spotlight cone beam (calm, subtle, non-glowing atmospheric cone behind characters)
     const beamGeo = new THREE.CylinderGeometry(0.20, 2.60, 5.8, 64, 1, true);
     const beamMat = new THREE.MeshBasicMaterial({
-      color: 0xffe2b8,
+      color: 0xdec8a2,
       transparent: true,
-      opacity: 0.28,
+      opacity: 0.12,
       side: THREE.DoubleSide,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
     });
     const beam = new THREE.Mesh(beamGeo, beamMat);
     beam.position.set(0, 2.9, -0.45);
@@ -1044,9 +1074,6 @@
       spectators.forEach(s => {
         s.mesh.position.y = s.y0 + Math.sin(t * s.sp + s.ph) * s.amp;
       });
-
-      // Smooth spotlight beam breathing
-      beamMat.opacity = 0.22 + Math.sin(t * 1.6) * 0.035;
 
       p1.tick(dt);
       p2.tick(dt);
