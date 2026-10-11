@@ -29,7 +29,8 @@ const SWING_GAP = .9;                           // breather between scripted swi
 const SPAR_GAP = 1.0;                           // where PIP stands (centre to centre)
 
 export class Tutorial {
-  constructor({ fight, sim, root = null, onDone = null }) {
+  constructor(opts) {
+    const { fight, sim, root = null, onDone = null } = opts || {};
     this.fight = fight; this.sim = sim; this.root = root; this.onDone = onDone;
     this.i = 0; this.count = 0; this.t0 = null; this.stepT0 = 0;
     this.niceUntil = 0; this.lastSwing = -9; this.side = 'left';
@@ -42,29 +43,33 @@ export class Tutorial {
 
   // park PIP at sparring distance, straight ahead
   _spar() {
-    const P = this.sim.player.pos, N = this.sim.npc;
+    const P = this.sim?.player?.pos, N = this.sim?.npc;
+    if (!P || !N?.pos || !N.vel) return;   // malformed sim → no-op, not a throw
     N.pos.x = P.x; N.pos.z = P.z - SPAR_GAP; N.vel.x = N.vel.z = 0;
   }
 
   update(out, now) {
-    if (this.done) return;
-    const st = out?.state || this.fight.state;
+    if (this.done || !Number.isFinite(now)) return;   // a NaN clock once poisoned
+                                                    // t0 → the TOTAL failsafe died
+    const st = (out?.state && out.state.npc) ? out.state : this.fight?.state;
+    if (!st || !st.npc) return;                       // malformed state → skip
     if (st.phase !== 'fighting') { this._render(st, now); return; }
     if (this.t0 === null) { this.t0 = now; this.stepT0 = now; }
     const s = this.step;
     // drifted out of range (player stepped / knockback)? walk PIP back in
-    if (this.sim && Math.abs(this.sim.distance() - SPAR_GAP) > .35
+    const gd = typeof this.sim?.distance === 'function' ? this.sim.distance() : NaN;
+    if (Number.isFinite(gd) && Math.abs(gd - SPAR_GAP) > .35
         && !['windup', 'punch'].includes(st.npc.action)) this._spar();
 
     if (now >= this.niceUntil && this.niceUntil) { this.niceUntil = 0; this._next(now); }
     if (!this.niceUntil && this.step) {
-      for (const e of out?.events || []) {
+      for (const e of Array.isArray(out?.events) ? out.events : []) {
         const hit = s.ev === 'flurry' ? e === 'player-hit' && st.lastBlow?.flurry : e === s.ev;
         if (hit && ++this.count >= s.need) { this._pass(now); break; }
       }
       // PIP's scripted swings (alternate sides so both guards get used)
       if (!this.niceUntil && s.swing && st.npc.action === 'idle' && now - this.lastSwing > SWING_GAP + s.windup
-          && this.fight.throwPunch(s.swing, this.side, s.windup)) {
+          && this.fight?.throwPunch?.(s.swing, this.side, s.windup)) {
         this.lastSwing = now;
         this.side = this.side === 'left' ? 'right' : 'left';
       }
@@ -85,7 +90,7 @@ export class Tutorial {
   _finish() {
     if (this.done) return;
     this.done = true;
-    this._render(this.fight.state, 0);
+    this._render(this.fight?.state, 0);
     this.onDone?.(this.passed.slice());
   }
 
@@ -109,7 +114,7 @@ export class Tutorial {
   _set(k, el, v) { if (this._last[k] !== v) { this._last[k] = v; el.textContent = v; } }
 
   _render(st, now) {
-    if (!this.root) return;
+    if (!this.root || !st || !st.npc) return;
     this.root.classList.toggle('on', !this.done && st.phase !== 'intro');
     if (this.done) return;
     const s = this.step || STEPS[STEPS.length - 1];

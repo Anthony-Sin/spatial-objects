@@ -252,6 +252,13 @@ export async function createGame(opts = {}) {
           slowT = SLOW_LEN;                                              // bullet-time fly-by
         } else if (e === 'player-blocked') {
           push += .06;                                                   // blocked still nudges
+          hitPos.set(sim.player.pos.x + (lb.side === 'left' ? .18 : -.18), EYE * .85, sim.player.pos.z - .25);
+          fx.burst(hitPos, { color: 'flash', n: 3, speed: .4, size: .3, life: .14, up: .1, spread: .2 });
+          fx.burst(hitPos, { color: 'star', n: 12, speed: 1.6, size: .055, life: .35, up: .5, spread: .6 });
+        } else if (e === 'npc-blocked') {
+          hitStopT = Math.max(hitStopT, .04);                            // crisp block friction
+          fx.burst(hitPos, { color: 'flash', n: 2, dir: toPlayer, speed: .3, size: .25, life: .12, up: .05 });
+          fx.burst(hitPos, { color: 'star', n: 10, dir: toPlayer, speed: 1.4, size: .05, life: .32, up: .4, spread: .5 });
         } else if (e === 'ko') {
           hitStopT = Math.max(hitStopT, .18);
           push += st.phase === 'playerdown' ? .7 : .55;
@@ -378,7 +385,21 @@ export async function createGame(opts = {}) {
     step,
     skipIntro() { if (fight.state.phase === 'intro') { tNow = FIGHT_TUNING.introT; skipRequested = true; } },
     calibrate() { tracker.calibrate?.(); if (lastFaceSize) neutralFaceSize = lastFaceSize; depthStep = 0; },
-    reset() { sim.reset(); fight.reset(); neutralFaceSize = lastFaceSize || 0; depthStep = 0; tNow = 0; skipRequested = false; hitStopT = 0; slowT = 0; holdT = 0; swingRes = null; outroT = 0; lookX = null; introStartedAt = typeof performance !== 'undefined' ? performance.now() : 0; },
+    reset() {
+      sim.reset(); fight.reset();
+      /* nothing from the finished bout may ride into the next one: camera
+         impulses (shove-back, whip-yaw, dodge lean, the down-cam), the dodge
+         edge latch, punches still queued in the tracker, and the NPC's
+         painted-on bruises all belong to the fight that just ended */
+      push = pushUp = snapYaw = camSway = shakeT = downCamT = 0;
+      dodgeX = dodgeY = 0; dodged = false; prevDodgeKey = 0;
+      tracker.punches.length = 0;
+      npc.resetDamage?.();
+      neutralFaceSize = lastFaceSize || 0; depthStep = 0; tNow = 0;
+      skipRequested = false; hitStopT = 0; slowT = 0; holdT = 0;
+      swingRes = null; outroT = 0; lookX = null;
+      introStartedAt = typeof performance !== 'undefined' ? performance.now() : 0;
+    },
     get hands() { return readHands(); }, get face() { return readFace(); },
   };
 }

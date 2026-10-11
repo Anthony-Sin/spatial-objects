@@ -5,7 +5,7 @@ const browser = await puppeteer.launch({
   defaultViewport: { width: 1280, height: 800 },
 });
 const page = await browser.newPage();
-// KO in round 1 → avg KO = 1 → both blocky(≤3) and bean(≤2) unlock
+// KO in round 1 → avg KO = 1 → both bean(≤3) and sumo(≤2) unlock
 await page.evaluateOnNewDocument(() => {
   localStorage.setItem('boxing:ko', JSON.stringify({ n: 1, sum: 1 }));
   localStorage.setItem('boxing:wins', '1');

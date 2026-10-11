@@ -48,6 +48,11 @@ const WHOOSH = {
 const WIN_ARP = [523.25, 659.25, 783.99, 1046.5];          // C5 E5 G5 C6
 const LOSE_ARP = [392, 311.13, 261.63, 196];               // G4 Eb4 C4 G3
 
+// garbage-in guard: any non-finite number falls back to a safe default, so a
+// NaN dmg/delay/kind from a glitched state can never reach an AudioParam
+// (real AudioContexts throw on non-finite values).
+const fin = (v, d = 0) => Number.isFinite(+v) ? +v : d;
+
 export class BoxingAudio {
   constructor() {
     this.ctx = null;          // created by unlock() only
@@ -112,14 +117,14 @@ export class BoxingAudio {
       case 'npc-blocked': case 'player-blocked':
         return this.play('thud', { dmg: b.dmg });
       case 'player-hit-taken':
-        this._crowdLevel = Math.min(1, this._crowdLevel + .4);
+        this._crowdLevel = Math.min(1, (this._crowdLevel || 0) + .4);
         return this.play('hurt', { dmg: b.dmg });
       case 'player-dodged': case 'counter':
         return this.play('dodge');
       case 'player-dodge':
         return this.play('whoosh', { kind: 'jab', miss: true, peak: .45 });
       case 'perfect-dodge':
-        this._crowdLevel = Math.min(1, this._crowdLevel + .6);   // the crowd GASPS
+        this._crowdLevel = Math.min(1, (this._crowdLevel || 0) + .6);   // the crowd GASPS
         return this.play('dodge', { perfect: true });
       case 'round-start':
         return this.play('bell', { times: 3 });
@@ -152,10 +157,11 @@ export class BoxingAudio {
 
   update(dt, fight) {
     if (!this.ctx || this._muted) return;
+    dt = fin(dt, 0) > 0 ? fin(dt, 0) : 0;   // NaN dt once froze _crowdLevel/_breathT at NaN
     const fighting = fight?.phase === 'fighting';
     if (fighting && !this._crowd) this._crowdOn();
     if (!fighting && this._crowd) this._crowdOff();
-    this._crowdLevel = Math.max(0, this._crowdLevel - .45 * dt);   // swell decays
+    this._crowdLevel = Math.max(0, (this._crowdLevel || 0) - .45 * dt);   // swell decays
     if (this._crowd) {  // subtle murmur — cute arcade, not stadium
       const g = .05 + .3 * this._crowdLevel;
       if (Math.abs(g - this._lastCrowdG) > 1e-4) {   // don't re-schedule a settled ramp
@@ -166,8 +172,8 @@ export class BoxingAudio {
     // gassed fighter → audible heavy breathing under ~30% stamina
     if (fighting && fight?.player && fight.player.stamina < .3) {
       this._breathT -= dt;
-      if (this._breathT <= 0) {
-        const s = fight.player.stamina;
+      if (!(this._breathT > 0)) {   // also re-arms a stuck/NaN timer
+        const s = Math.min(.3, Math.max(0, fin(fight.player.stamina, 0)));
         this._breathT = .45 + .6 * (s / .3);       // pant faster when emptier
         this._noise({ f0: 400, f1: 900, dur: .16, peak: .05, q: 1.2, type: 'bandpass' });
       }
@@ -177,7 +183,9 @@ export class BoxingAudio {
   /* ---------- sfx presets ---------- */
 
   _bell(o) {   // FM ding ×3 — "round start" casino-boxing bell
-    for (let i = 0; i < (o.times || 1); i++) this._fm({
+    // clamp `times`: an absurd count once meant an absurd oscillator flood
+    const n = Math.min(8, Math.max(1, fin(o.times, 1) | 0));
+    for (let i = 0; i < n; i++) this._fm({
       f: 1568, ratio: 1.4, idx: 2.5, dur: .9, peak: .3, delay: o.delay + i * .42,
     });
   }
@@ -186,33 +194,40 @@ export class BoxingAudio {
     const w = WHOOSH[o.kind] || WHOOSH.cross;
     const p = (o.miss ? .5 : 1) * (o.peak ?? 1);
     this._noise({
-      f0: w.f0 * (o.miss ? 1.3 : 1), f1: w.f1, q: 1.1,
-      dur: w.dur * (o.miss ? 1.15 : 1), peak: w.peak * p, delay: o.delay,
+      f0: w.f0 * (o.miss ? 1.3 : 1), f1: w.f1, q: 1.3,
+      dur: w.dur * (o.miss ? 1.15 : 1), peak: w.peak * p * 1.08, delay: o.delay,
     });
+    if (!o.miss) {
+      this._tone({ type: 'sine', f0: 140, f1: 70, dur: w.dur * .8, peak: .11 * p, delay: o.delay });
+    }
   }
 
   _thwack(o) {   // landed punch: low sine thud + noise snap; heavy kinds hit lower
     const heavy = { hook: .5, uppercut: 1, upper: 1 }[o.kind] || 0;
     const p = (o.peak ?? 1) * (1 + .12 * Math.min(1, (o.dmg || 10) / 16));
-    this._tone({ type: 'sine', f0: 190 - 40 * heavy, f1: 55, dur: .13 + .06 * heavy, peak: .5 * p, delay: o.delay });
-    this._noise({ f0: 2400, f1: 900, dur: .05, peak: .4 * p, delay: o.delay });
-    if (heavy > 0) this._tone({ type: 'sine', f0: 95, f1: 40, dur: .18, peak: .3 * p, delay: o.delay });
+    this._tone({ type: 'sine', f0: 210 - 45 * heavy, f1: 52, dur: .14 + .06 * heavy, peak: .55 * p, delay: o.delay });
+    this._noise({ f0: 2600, f1: 850, dur: .055, peak: .44 * p, delay: o.delay });
+    this._tone({ type: 'sine', f0: 105 - 20 * heavy, f1: 38, dur: .18, peak: .34 * p, delay: o.delay });
   }
 
-  _thud(o) {   // blocked: dull glove-on-glove thump, no snap
-    this._tone({ type: 'sine', f0: 150, f1: 65, dur: .09, peak: .32, delay: o.delay });
-    this._noise({ f0: 500, f1: 220, dur: .06, peak: .18, type: 'lowpass', delay: o.delay });
+  _thud(o) {   // blocked: crisp glove-on-glove guard impact
+    const p = (o.peak ?? 1);
+    this._tone({ type: 'sine', f0: 195, f1: 60, dur: .11, peak: .42 * p, delay: o.delay });
+    this._noise({ f0: 2200, f1: 600, dur: .055, peak: .32 * p, type: 'bandpass', q: 1.4, delay: o.delay });
+    this._fm({ f: 880, ratio: 1.5, idx: 1.2, dur: .08, peak: .14 * p, delay: o.delay });
     // countdown: a referee-clock beep that climbs as it nears zero (3 → 1)
     if (o.beep) this._fm({ f: 660 + (3 - Math.min(3, o.beep)) * 110, ratio: 1, idx: .6, dur: .16, peak: .16, delay: o.delay });
   }
 
   _dodge(o) {   // airy slip whoosh — faster, thinner, brighter tail
-    this._noise({ f0: 900, f1: 2600, dur: .22, peak: .26, q: 2, type: 'bandpass', delay: o.delay });
+    this._noise({ f0: 1100, f1: 2800, dur: .22, peak: .28, q: 2.2, type: 'bandpass', delay: o.delay });
+    this._tone({ type: 'sine', f0: 180, f1: 320, dur: .14, peak: .14, delay: o.delay });
     if (!o.perfect) return;
     // PERFECT: a slowed glove rushing past + rising sparkle ding
     this._noise({ f0: 380, f1: 120, dur: .6, peak: .3, q: 1.4, type: 'bandpass', delay: o.delay });
     this._tone({ type: 'sine', f0: 90, f1: 42, dur: .55, peak: .32, delay: o.delay });
-    this._fm({ f: 1318.5, f1: 1975.5, ratio: 2, idx: 1.8, dur: .45, peak: .2, delay: o.delay + .06 });
+    this._fm({ f: 1318.5, f1: 1975.5, ratio: 2, idx: 1.8, dur: .45, peak: .24, delay: o.delay + .06 });
+    this._fm({ f: 1760, f1: 2637, ratio: 2, idx: 1.2, dur: .35, peak: .16, delay: o.delay + .12 });
   }
 
   _hurt(o) {   // player eats it: heavy low thud + a little FM "oof" bark
@@ -268,55 +283,61 @@ export class BoxingAudio {
 
   /* ---------- synth helpers ---------- */
 
-  _now() { return this.ctx.currentTime; }
+  _now() { const t = this.ctx.currentTime; return Number.isFinite(t) ? t : 0; }
   _set(p, v, t) { p.setValueAtTime ? p.setValueAtTime(v, t ?? this._now()) : p.value = v; }
 
   _env(o) {   // percussive gain: fast attack, exponential decay to silence
-    const g = this.ctx.createGain(), t = this._now() + (o.delay || 0), a = o.a ?? .006;
+    const g = this.ctx.createGain(), t = this._now() + Math.max(0, fin(o.delay, 0)),
+      a = fin(o.a, .006) > 0 ? fin(o.a, .006) : .006;
+    const dur = fin(o.dur, .05) > 0 ? fin(o.dur, .05) : .05;
+    const peak = fin(o.peak, .0001) > 0 ? fin(o.peak, .0001) : .0001;
     this._set(g.gain, .0001, t);
-    g.gain.exponentialRampToValueAtTime(Math.max(.0001, o.peak), t + a);
-    g.gain.exponentialRampToValueAtTime(.0001, t + Math.max(a + .01, o.dur));
+    g.gain.exponentialRampToValueAtTime(Math.max(.0001, peak), t + a);
+    g.gain.exponentialRampToValueAtTime(.0001, t + Math.max(a + .01, dur));
     g.connect(this.master);
     return { g, t };
   }
 
   _tone(o) {   // plain oscillator with an optional pitch drop — thuds, buzzers
     const ctx = this.ctx, { g, t } = this._env(o);
+    const f0 = Math.max(1, fin(o.f0, 1)), f1 = fin(o.f1, f0), dur = fin(o.dur, .05);
     const osc = ctx.createOscillator();
     osc.type = o.type || 'sine';
-    osc.frequency.setValueAtTime(Math.max(1, o.f0), t);
-    if (o.f1 && o.f1 !== o.f0)
-      osc.frequency.exponentialRampToValueAtTime(Math.max(1, o.f1), t + o.dur);
+    osc.frequency.setValueAtTime(f0, t);
+    if (f1 !== f0)
+      osc.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
     osc.connect(g);
-    osc.start(t); osc.stop(t + o.dur + .05);
+    osc.start(t); osc.stop(t + dur + .05);
   }
 
   _fm(o) {   // 2-op FM "bell/pluck" voice — the cute-arcade flavor
     const ctx = this.ctx, { g, t } = this._env(o);
+    const f0 = Math.max(1, fin(o.f, 1)), f1 = fin(o.f1, f0), dur = fin(o.dur, .05);
     const car = ctx.createOscillator(), mod = ctx.createOscillator(), mg = ctx.createGain();
-    car.frequency.setValueAtTime(o.f, t);
-    if (o.f1 && o.f1 !== o.f)
-      car.frequency.exponentialRampToValueAtTime(Math.max(1, o.f1), t + o.dur);
-    mod.frequency.setValueAtTime(o.f * (o.ratio ?? 1.4), t);
-    mg.gain.setValueAtTime(o.f * (o.idx ?? 2), t);
-    mg.gain.exponentialRampToValueAtTime(1, t + o.dur);   // brightness decays
+    car.frequency.setValueAtTime(f0, t);
+    if (f1 !== f0)
+      car.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+    mod.frequency.setValueAtTime(f0 * fin(o.ratio, 1.4), t);
+    mg.gain.setValueAtTime(f0 * fin(o.idx, 2), t);
+    mg.gain.exponentialRampToValueAtTime(1, t + dur);   // brightness decays
     mod.connect(mg); mg.connect(car.frequency);
     car.connect(g);
     mod.start(t); car.start(t);
-    mod.stop(t + o.dur + .05); car.stop(t + o.dur + .05);
+    mod.stop(t + dur + .05); car.stop(t + dur + .05);
   }
 
   _noise(o) {   // filtered noise burst — whooshes, snaps, breaths
     const ctx = this.ctx, { g, t } = this._env(o);
+    const f0 = Math.max(20, fin(o.f0, 20)), f1 = fin(o.f1, f0), dur = fin(o.dur, .05);
     const src = ctx.createBufferSource();
     src.buffer = this._buf; src.loop = true;
     const f = ctx.createBiquadFilter();
     f.type = o.type || 'bandpass';
-    f.frequency.setValueAtTime(Math.max(20, o.f0), t);
-    if (o.f1 && o.f1 !== o.f0)
-      f.frequency.exponentialRampToValueAtTime(Math.max(20, o.f1), t + o.dur);
-    if (o.q != null) f.Q.setValueAtTime(o.q, t);
+    f.frequency.setValueAtTime(f0, t);
+    if (f1 !== f0)
+      f.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+    if (o.q != null) f.Q.setValueAtTime(fin(o.q, 1), t);
     src.connect(f); f.connect(g);
-    src.start(t); src.stop(t + o.dur + .05);
+    src.start(t); src.stop(t + dur + .05);
   }
 }

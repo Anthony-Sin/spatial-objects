@@ -39,7 +39,7 @@ const HOUSE = {
   sky: 0x5da9e9, berry: 0xb565d8,
 };
 
-export const VARIANTS = ['bubble', 'blocky', 'bean'];
+export const VARIANTS = ['bubble', 'bean', 'sumo'];
 /* koAvg = unlock gate: your AVERAGE knockout round must be this early or
    earlier (needs ≥1 KO on record). No koAvg → always open. stats are 1–5
    pips shown on the fighter card; special = the signature move the rival
@@ -48,14 +48,14 @@ export const VARIANT_INFO = {
   bubble: { label: 'BUBBLE', desc: 'sprout crown · springy stance',
     stats: { atk: 3, def: 3, spd: 4 },
     special: { name: 'TRIPLE TAP', desc: '3 hits, one stamina' } },
-  blocky: { label: 'BLOCKY', desc: 'flat top · compact guard', koAvg: 3,
-    unlock: 'KO a rival',
-    stats: { atk: 5, def: 4, spd: 2 },
-    special: { name: 'SLEDGE', desc: 'guard-cracking haymaker' } },
-  bean:   { label: 'BEAN',   desc: 'the champ · iron hide', koAvg: 2,
+  bean:   { label: 'BEAN',   desc: 'tall bean · snappy reach', koAvg: 3,
+    unlock: 'avg KO by round 3',
+    stats: { atk: 4, def: 4, spd: 3 },
+    special: { name: 'BEAN BARRAGE', desc: "the bean's heavy 1-2" } },
+  sumo:   { label: 'SUMO',   desc: 'heavyweight boss · massive frame · iron palm', koAvg: 2,
     unlock: 'avg KO by round 2',
-    stats: { atk: 5, def: 4, spd: 2 },
-    special: { name: 'BEAN BARRAGE', desc: "the champ's heavy 1-2" } },
+    stats: { atk: 5, def: 5, spd: 2 },
+    special: { name: 'SUMO SLAM', desc: 'iron palm guard crusher' } },
 };
 
 // each variant keeps its own flavor inside the house palette
@@ -64,15 +64,16 @@ const VPAL = {
     glove: HOUSE.coral, gloveDeep: 0xc63e38, gloveShine: 0xff947b,
     shorts: HOUSE.sun, trim: HOUSE.paper, cheek: 0xff9b7a, leaf: HOUSE.leaf,
     guardTeeth: HOUSE.sky, band: 0xc63e38, gold: 0xf2b630 },
-  blocky: { skin: 0xe9b78f, skinShade: 0xc99170, skinLight: 0xefbf99,
-    glove: HOUSE.sky, gloveDeep: 0x337eae, gloveShine: 0x9ad1fa,
-    shorts: HOUSE.leaf, trim: HOUSE.paper, cheek: 0xff9b7a, leaf: HOUSE.ink,
-    guardTeeth: HOUSE.coral, band: 0x337eae, gold: 0xf2b630 },
   bean: { skin: 0xeab27f, skinShade: 0xc78f5f, skinLight: 0xf4c491,
     glove: HOUSE.berry, gloveDeep: 0x843aa4, gloveShine: 0xd9a5ed,
     shorts: 0x33415e, trim: HOUSE.paper, cheek: 0xff9b7a, leaf: 0x3f9157,
     guardTeeth: HOUSE.sun, band: 0x843aa4, gold: 0xf2b630 },
+  sumo: { skin: 0xdf9f72, skinShade: 0xc17d52, skinLight: 0xe8ad84,
+    glove: 0x2b2118, gloveShade: 0x1f1711, gloveDeep: 0x1f1711, gloveShine: 0x4a3b30,
+    trim: 0xd63031, hair: 0x221c18, belt: 0x1e272e, beltTrim: 0xf5cd79, shorts: 0x1e272e,
+    cheek: 0xff9b7a, leaf: 0x221c18, guardTeeth: HOUSE.sun, band: 0xd63031, gold: 0xf5cd79 },
 };
+export const PALETTES = VPAL;
 
 // ---- tiny math kit (deterministic — no Math.random, no Date) ----
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -102,25 +103,27 @@ const CFG = {
     guard: { l: [-.27, .70, .27], r: [.28, .68, .23] },
     hipX: .13, hipY: .30, legR: .05, legLen: .12, foot: [.14, .055, .045],
   },
-  blocky: {
-    headY: .99,
-    face: { ex: .13, ey: .03, ez: .243, by: .135, my: -.125, bx: .195, byy: -.06 },
-    shx: .33, shy: .66, armR: .06, armLen: .17, gloveR: .195,
-    guard: { l: [-.30, .70, .26], r: [.31, .68, .22] },
-    hipX: .15, hipY: .33, legR: .055, legLen: .11, foot: [.15, .05, .05],
-  },
-  bean: {   // THE CHAMP — biggest frame of the roster: tall, wide, heavy
+  bean: {   // tall bean · snappy reach
     headY: 1.06,
     face: { ex: .105, ey: .02, ez: .235, by: .12, my: -.115, bx: .17, byy: -.06 },
     shx: .37, shy: .66, armR: .09, armLen: .18, gloveR: .225,
     guard: { l: [-.32, .68, .28], r: [.33, .66, .24] },
     hipX: .15, hipY: .30, legR: .055, legLen: .11, foot: [.15, .052, .05],
   },
+  sumo: {   // THE BOSS — massive heavyweight frame, iron stance
+    headY: 1.28,
+    face: { ex: .15, ey: .02, ez: .34, by: .16, my: -.14, bx: .22, byy: -.07 },
+    shx: .48, shy: .82, armR: .125, armLen: .22, gloveR: .29,
+    guard: { l: [-.42, .86, .34], r: [.43, .84, .30] },
+    hipX: .22, hipY: .32, legR: .095, legLen: .13, foot: [.22, .06, .055],
+  },
 };
 
-export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook = false } = {}) {
+export function buildBoxer(THREE, opts = {}) {
   if (!THREE || !THREE.Group || !THREE.Mesh)
     throw new Error('buildBoxer(THREE, opts): pass the THREE namespace in');
+  // destructure inside so buildBoxer(THREE, null) / (THREE, 5) can't throw
+  let { variant = 'bubble', palette = {}, playerLook = false } = opts || {};
   if (!VARIANTS.includes(variant)) {
     if (typeof console !== 'undefined') console.warn('protoBoxer: unknown variant', variant, '— using bubble');
     variant = 'bubble';
@@ -466,44 +469,100 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
       mark('head', put(squash, head));
     },
 
-    blocky() {
+    sumo() {
+      // THE BOSS — heavy, wide torso with a hefty belly, mawashi belt,
+      // chonmage topknot, and massive heavyweight frame.
       for (const s of [-1, 1]) {
-        const f = inked(BOX(.17, .10, .24), P.gloveDeep);
+        const f = inked(SPH(.145, 14, 10), P.gloveShade || P.belt);
+        f.scale.set(1.35, .55, 1.55);
         f.position.set(s * C.foot[0], C.foot[1], C.foot[2]);
         mark(s < 0 ? 'footL' : 'footR', put(squash, f));
       }
       limb('legL', -C.hipX, C.hipY, C.legR, C.legLen, P.skin);
       limb('legR', C.hipX, C.hipY, C.legR, C.legLen, P.skin);
 
-      const shorts = grp(0, .30, 0);
-      shorts.add(inked(BOX(.56, .18, .38), P.shorts));
-      const waist = inked(BOX(.57, .05, .39), P.trim);
-      waist.position.y = .115;
-      shorts.add(waist);
-      dressShorts(shorts, .215, .198, .115);
+      const shorts = grp(0, .32, 0);
+      const mawashi = inked(SPH(.42, 22, 16), P.shorts);
+      mawashi.scale.set(1.22, .75, 1.15);
+      shorts.add(mawashi);
+      const beltRing = inked(TOR(.39, .058), P.belt, { hull: .035 });
+      beltRing.rotation.x = Math.PI / 2; beltRing.position.y = .14;
+      shorts.add(beltRing);
+      const trimRing = inked(TOR(.40, .022), P.beltTrim, { hull: .03 });
+      trimRing.rotation.x = Math.PI / 2; trimRing.position.y = .14;
+      shorts.add(trimRing);
+      const sash = grp(0, .12, .41);
+      const flapMain = inked(BOX(.18, .26, .04), P.belt, { hull: .035 });
+      flapMain.position.set(0, -.08, 0);
+      sash.add(flapMain);
+      const flapTrim = inked(BOX(.185, .045, .045), P.beltTrim, { hull: .03 });
+      flapTrim.position.set(0, -.19, 0);
+      sash.add(flapTrim);
+      for (const s of [-1, 1]) {
+        const sideFlap = inked(BOX(.055, .18, .035), P.beltTrim, { hull: .03 });
+        sideFlap.position.set(s * .12, -.05, -.01);
+        sideFlap.rotation.z = s * -.12;
+        sash.add(sideFlap);
+      }
+      shorts.add(sash);
       mark('shorts', put(squash, shorts));
 
-      const torso = grp(0, .55, 0);
-      torso.add(inked(BOX(.50, .34, .34), P.skin));
-      const chest = new THREE.Mesh(BOX(.29, .045, .012), toon(P.skinLight));
-      chest.position.set(0, .07, .176);
-      torso.add(chest);
+      const torso = grp(0, .68, 0);
+      const body = inked(SPH(.44, 24, 18), P.skin);
+      body.scale.set(1.28, 1.12, 1.14);
+      torso.add(body);
+      const belly = inked(SPH(.38, 22, 16), P.skin);
+      belly.scale.set(1.22, .98, 1.05);
+      belly.position.set(0, -.09, .18);
+      torso.add(belly);
+      const bellyLight = new THREE.Mesh(SPH(.24, 16, 12), toon(P.skinLight));
+      bellyLight.scale.set(1.15, .65, .35);
+      bellyLight.position.set(0, -.09, .38);
+      torso.add(bellyLight);
+      for (const s of [-1, 1]) {
+        const delt = inked(SPH(.16, 16, 12), P.skin);
+        delt.position.set(s * .46, .22, 0);
+        torso.add(delt);
+        const chest = new THREE.Mesh(SPH(.17, 14, 10), toon(P.skinLight));
+        chest.scale.set(1.1, .6, .4);
+        chest.position.set(s * .16, .18, .34);
+        torso.add(chest);
+      }
       mark('torso', put(squash, torso));
 
       const head = grp(0, C.headY, 0);
-      head.add(inked(BOX(.54, .48, .48), P.skin));
+      const skull = inked(SPH(.35, 24, 18), P.skin);
+      skull.scale.set(1.14, 1.04, 1.08);
+      head.add(skull);
       for (const s of [-1, 1]) {
-        const ear = inked(BOX(.07, .12, .105), P.skinShade, { hull: .035 });
-        ear.position.set(s * .295, -.035, .035);
+        const ear = inked(SPH(.068, 12, 9), P.skinShade, { hull: .035 });
+        ear.position.set(s * .38, -.03, .01);
         head.add(ear);
       }
       buildFace(head, C.face, playerLook);
-      const tuft = grp(0, .26, 0);                 // flat-top hair + fringe
-      const top = inked(BOX(.56, .10, .50), P.leaf);
-      top.position.y = .05;
-      const fringe = inked(BOX(.56, .09, .08), P.leaf);
-      fringe.position.set(0, -.015, .21);
-      tuft.add(top, fringe);
+      parts.browL.rotation.z = rest.browL.r[2] = -.12;
+      parts.browR.rotation.z = rest.browR.r[2] = .12;
+      parts.browL.scale.y = rest.browL.s[1] = 1.6;
+      parts.browR.scale.y = rest.browR.s[1] = 1.6;
+
+      const tuft = grp(0, .33, 0);
+      const hairCap = inked(SPH(.34, 20, 16), P.hair, { hull: .04 });
+      hairCap.scale.set(1.1, .55, 1.06);
+      hairCap.position.set(0, .03, -.05);
+      tuft.add(hairCap);
+      const knotShaft = inked(CYL(.048, .06, .16), P.hair, { hull: .04 });
+      knotShaft.rotation.x = -.55;
+      knotShaft.position.set(0, .12, -.07);
+      tuft.add(knotShaft);
+      const knotFan = inked(SPH(.08, 14, 10), P.hair, { hull: .04 });
+      knotFan.scale.set(1.55, .5, 1.25);
+      knotFan.position.set(0, .19, -.03);
+      knotFan.rotation.x = -.2;
+      tuft.add(knotFan);
+      const motoyui = inked(TOR(.054, .018), P.beltTrim, { hull: .03 });
+      motoyui.rotation.x = Math.PI / 2 - .55;
+      motoyui.position.set(0, .09, -.08);
+      tuft.add(motoyui);
       mark('tuft', put(head, tuft));
       mark('head', put(squash, head));
     },
@@ -592,10 +651,9 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   };
 
   BUILDERS[variant]();
-  if (!playerLook) {                     // square head → square band; tails fly on all
-    // sits ABOVE the brows — the brows are PIP's tell and must stay readable
-    const HB = { bubble: [.226, .205], blocky: [.25, .205], bean: [.195, .185] }[variant];
-    headband(parts.head, HB[0], HB[1], variant === 'blocky');
+  if (!playerLook) {                     // headband sits ABOVE the brows
+    const HB = { bubble: [.226, .205], bean: [.195, .185], sumo: [.34, .28] }[variant];
+    headband(parts.head, HB[0], HB[1]);
   }
   // dizzy stars — orbit the crown while reeling / out cold (animated in tick,
   // deliberately NOT mark()ed so the pose blender never fights the orbit)
@@ -621,9 +679,9 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   if (playerLook) {
     // A ring-ready headband makes the entrance boxer readable beside the
     // opponent, even though both share the same compact procedural rig.
-    const band = inked(TOR(variant === 'blocky' ? .285 : .275, .027), P.trim, { hull: .025 });
+    const band = inked(TOR(.275, .027), P.trim, { hull: .025 });
     band.rotation.x = Math.PI / 2;
-    band.position.y = variant === 'blocky' ? .13 : .105;
+    band.position.y = .105;
     parts.head.add(band);
     const knot = inked(SPH(.043, 10, 8), P.gloveDeep, { hull: .025 });
     knot.scale.set(1.4, .6, .6);
@@ -729,16 +787,14 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   const POSES = {
     idle(t, k, f) {
       const w = Math.sin(k * TAU);
-      const weave = variant === 'bean' ? .026 : variant === 'blocky' ? .018 : .04;
+      const weave = variant === 'sumo' ? .018 : variant === 'bean' ? .026 : .04;
       t.root.r[2] = w * weave;
-      t.head.r[2] = Math.sin(k * TAU + .7) * (variant === 'bean' ? .032 : .04);
-      t.root.p[1] += variant === 'bubble' ? Math.abs(w) * .025 : 0;
-      t.gloveL.p[1] += w * (variant === 'blocky' ? .012 : .03);
-      t.gloveR.p[1] += Math.sin(k * TAU + 1.3) * (variant === 'blocky' ? .012 : .03);
-      if (variant === 'blocky') {
-        t.gloveL.p[0] += .035; t.gloveR.p[0] -= .035; // compact guard
-      }
-      t.torso.r[0] = .04;
+      t.head.r[2] = Math.sin(k * TAU + .7) * (variant === 'sumo' ? .02 : variant === 'bean' ? .032 : .04);
+      t.root.p[1] += variant === 'bubble' ? Math.abs(w) * .025
+        : variant === 'sumo' ? Math.abs(w) * .014 : 0;
+      t.gloveL.p[1] += w * (variant === 'sumo' ? .014 : .03);
+      t.gloveR.p[1] += Math.sin(k * TAU + 1.3) * (variant === 'sumo' ? .014 : .03);
+      t.torso.r[0] = variant === 'sumo' ? .02 : .04;
       f.mouth = 'smile';
     },
     /* windups are KIND-SPECIFIC tells (strike.kind): jab pulls straight back,
@@ -865,9 +921,14 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   const CYCLIC = new Set(['idle', 'celebrate', 'wave', 'victory', 'stunned']);
   let downT = 0, effK = 0;
   function pose(name, t01 = 0, strike = null) {
+    // a non-finite phase used to bake NaN into every target — and once a
+    // node's transform went NaN, lerp could never pull it back
+    if (!Number.isFinite(+t01)) t01 = 0; else t01 = +t01;
     SK = strike?.kind ?? null;
-    SZ = Number.isFinite(strike?.reach) ? strike.reach : null;
-    SY = SZ !== null && Number.isFinite(strike?.y) ? strike.y : null;
+    // garbage reach/y clamps: a NaN or ±huge target once dragged the glove
+    // off the rig — strikes live within a few body units by design
+    SZ = Number.isFinite(strike?.reach) ? clamp(strike.reach, 0, 2.5) : null;
+    SY = SZ !== null && Number.isFinite(strike?.y) ? clamp(strike.y, 0, 2) : null;
     if (!POSES[name]) {
       if (!warned.has(name)) {
         warned.add(name);
@@ -952,14 +1013,19 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
 
   function trackHands(handsState, space = 'close') {
     const S = HAND_SPACES[space] || HAND_SPACES.close;
-    for (const h of handsState?.hands || []) {
+    // non-array hands used to throw; a NaN palm used to poison the glove's
+    // blend target FOREVER (lerp(NaN→x) stays NaN even after tracking returns)
+    const list = Array.isArray(handsState?.hands) ? handsState.hands : [];
+    for (const h of list) {
       if (!h?.palm || (h.side !== 'left' && h.side !== 'right')) continue;
+      if (!Number.isFinite(h.palm.x) || !Number.isFinite(h.palm.y)) continue;
       const left = h.side === 'left';
       const gname = left ? 'gloveL' : 'gloveR';
       const glove = parts[gname];
       const arm = parts[left ? 'armL' : 'armR'];
-      const span = h.lm?.[0] && h.lm?.[9]
+      const rawSpan = h.lm?.[0] && h.lm?.[9]
         ? Math.hypot(h.lm[0].x - h.lm[9].x, h.lm[0].y - h.lm[9].y) : .1;
+      const span = Number.isFinite(rawSpan) ? rawSpan : .1;
       // Keep each hand beside the face during the close camera shot, while
       // still following the player's horizontal and vertical motion.
       const rawX = (h.palm.x - .5) * 2 + (left ? -1 : 1) * S.bias;
@@ -984,11 +1050,14 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   }
 
   function tick(dt, state, moveSpeed = 0) {
+    // a non-finite dt once turned `time` NaN and every transform NaN forever —
+    // dt must be a positive finite number or the frame is skipped entirely
+    if (!Number.isFinite(dt) || dt <= 0) return;
     time += dt;
     if (cur === 'down' && downT < 1) downT = Math.min(1, downT + dt * 2.2);
     // exponential blend toward targets — gloves snappier than the body
     const aG = 1 - Math.exp(-dt * 22), aB = 1 - Math.exp(-dt * 12);
-    const stride = cur === 'down' ? 0 : clamp(moveSpeed / 1.8, 0, 1);
+    const stride = cur === 'down' ? 0 : clamp((Number.isFinite(moveSpeed) ? moveSpeed : 0) / 1.8, 0, 1);
     const gait = Math.sin(time * 12);
     for (const n in T) {
       const nd = parts[n], tg = T[n];

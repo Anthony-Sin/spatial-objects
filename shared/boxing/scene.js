@@ -184,6 +184,10 @@ export function buildScene(THREE, renderer, opts = {}) {
   const spotWarm = new THREE.Color(0xffe9b8), spotHot = new THREE.Color(C.coral);
 
   function update(dt, state = {}) {
+    /* NaN/negative dt must not reach `t`: a single NaN frame would poison
+       every sin()/matrix/light driven by it, and t never recovers. Events
+       still process below — they're drained once per step, never replayed. */
+    if (!Number.isFinite(dt) || dt < 0) dt = 0;
     t += dt;
     const ev = state.events || [];
     const npcAction = state.fight?.npc?.action;
@@ -239,5 +243,22 @@ export function buildScene(THREE, renderer, opts = {}) {
     }
   }
 
-  return { scene, ring: { group: ring, mat, posts, ropes, pads, crowd, spot }, update, burst };
+  /* teardown — dedupe first: the four ropes of a level share one material,
+     the mat reuses apron on five faces, ink flats repeat across posts. */
+  function dispose() {
+    const seen = new Set();
+    scene.traverse(o => {
+      if (o.geometry && !seen.has(o.geometry)) { seen.add(o.geometry); o.geometry.dispose(); }
+      const ms = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+      for (const m of ms) {
+        if (seen.has(m)) continue;
+        seen.add(m);
+        if (m.map) m.map.dispose();
+        m.dispose();
+      }
+    });
+  }
+
+  return { scene, ring: { group: ring, mat, posts, ropes, pads, crowd, spot },
+    update, burst, dispose };
 }

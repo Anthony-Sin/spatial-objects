@@ -8,7 +8,7 @@
      · id matching an assetManifest candidate (type 'glb') → GLTFLoader load,
        normalized to ~1.3 units, feet at y=0, driven by a procedural rig
        (lean/squash/tilt) since arbitrary GLBs have no boxing poses.
-     · else a protoBoxer VARIANT id ('bubble'|'blocky'|'bean' or 'proto:<v>')
+     · else a protoBoxer VARIANT id ('bubble'|'bean'|'sumo' or 'proto:<v>')
      · ANY GLB failure (bad fetch, parse error, missing loader) → protoBoxer
      · protoBoxer module itself missing → tiny built-in emergency boxer so
        the page still runs pre-merge. Default pick = 'bubble'.
@@ -264,7 +264,7 @@ export async function createNpc(THREE, opts = {}) {
   const cand = pick ? manifest.candidates.find(c => c.id === pick
     && c.type === 'glb' && !/^PROP/i.test(c.notes || '')) : null;
 
-  let impl = null, kind = 'proto', id = pick || 'bubble', name = pretty(pick);
+  let impl = null, kind = 'proto', id = pick || 'bubble', name = pretty(pick), protoMod = null;
   if (cand) {
     impl = await tryGlb(THREE, cand).catch(() => null);   // ANY failure → protoBoxer
     if (impl) { kind = 'glb'; name = cand.name || pick; }
@@ -273,6 +273,7 @@ export async function createNpc(THREE, opts = {}) {
     // 'proto:x' and a bare 'x' name the same fighter — resolve the pick
     // against the roster, then gate it exactly like the lineup does
     const m = await protoModule();
+    protoMod = m;                                   // cached for rematch rebuilds
     const wanted = pretty(pick).toLowerCase().replace(/ /g, '') || 'bubble';
     const variant = (m?.VARIANTS || []).includes(wanted)
       && !variantOpen(m.VARIANT_INFO, wanted) ? (m.VARIANTS[0] || 'bubble') : wanted;
@@ -283,24 +284,32 @@ export async function createNpc(THREE, opts = {}) {
 
   group.add(impl.group);
   const bb = new THREE.Box3().setFromObject(group);
-  const H = Math.max(.3, bb.max.y - bb.min.y);
-  const eyeY = bb.min.y + H * .86;                    // eye line ≈ top of head
+  // an empty/degenerate rig leaves Box3 at ±Infinity — floor to chibi scale
+  const rawH = bb.max.y - bb.min.y;
+  const H = Number.isFinite(rawH) ? Math.max(.3, rawH) : 1.3;
+  const baseY = Number.isFinite(bb.min.y) ? bb.min.y : 0;
+  const eyeY = baseY + H * .86;                     // eye line ≈ top of head
 
   /* damage painted straight onto the fighter — every material lerps
      toward bruise-red as the stage climbs (no floating decals). Head
      materials get hit hardest; bodies stay closer to base. */
   const BRUISE = new THREE.Color(0x8c1f28);
   const mats = [], seen = new Set();
-  group.traverse(o => {
-    if (o.isMesh && o.material) {
-      const ms = Array.isArray(o.material) ? o.material : [o.material];
-      for (const m of ms)
-        // one entry per material — inked hulls all share inkHullMat and
-        // would otherwise lerp ~20 duplicate entries every hit
-        if (m.color && !seen.has(m)) { seen.add(m);
-          mats.push({ m, c: m.color.clone(), head: /head|face|skin|hair/i.test(o.name || '') }); }
-    }
-  });
+  const scanMats = () => {   // (re)baseline — also runs after a rematch rebuild
+    mats.length = 0; seen.clear();
+    group.traverse(o => {
+      if (o.isMesh && o.material) {
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of ms)
+          // one entry per material — inked hulls all share inkHullMat and
+          // would otherwise lerp ~20 duplicate entries every hit
+          if (m.color && !seen.has(m)) { seen.add(m);
+            mats.push({ m, c: m.color.clone(), e: m.emissive?.clone() || null,
+              head: /head|face|skin|hair/i.test(o.name || '') }); }
+      }
+    });
+  };
+  scanMats();
   let dmgCur = 0;
   // fighters with modelled wounds (protoBoxer) only need a light flush — the
   // shiner/lump/bandage carry the story; GLBs get the full bruise wash
@@ -314,6 +323,35 @@ export async function createNpc(THREE, opts = {}) {
       const amt = (head ? dmgCur * .6 : dmgCur * .38) * wash;
       m.color.copy(c).lerp(BRUISE, amt);
       if (m.emissive) m.emissive.copy(BRUISE).multiplyScalar(dmgCur * .12);
+    }
+  }
+  /* rematch heal — a reset bout must not inherit the last one's bruises.
+     The wash is a straight restore to the recorded baselines (colour +
+     emissive), but protoBoxer's own setDamage is monotonic — wounds can
+     only ever worsen — so a procedural fighter is rebuilt outright
+     (cheap: no fetches, the module is already loaded). GLB / emergency
+     rigs carry no wounds: the baseline restore is the whole job there. */
+  function resetDamage() {
+    dmgCur = 0;
+    api.kick.x = api.kick.y = api.kick.z = 0;
+    if (kind === 'proto' && protoMod?.buildBoxer && impl.setDamage) {
+      try {
+        const fresh = protoMod.buildBoxer(THREE, { variant: impl.variant || 'bubble' });
+        // same blanket pass as tryProto: hull shells stay out of the shadow pass
+        fresh.group.traverse?.(o => {
+          if (o.isMesh && o.material?.side === THREE.BackSide) o.castShadow = false;
+        });
+        group.remove(impl.group);
+        impl.dispose?.();
+        impl = fresh;
+        group.add(impl.group);
+        scanMats();          // fresh fighter — its colours ARE the baseline
+        return;
+      } catch { /* rebuild failed — heal the part the wash owns */ }
+    }
+    for (const { m, c, e } of mats) {
+      m.color.copy(c);
+      if (e && m.emissive) m.emissive.copy(e);
     }
   }
 
@@ -350,13 +388,16 @@ export async function createNpc(THREE, opts = {}) {
   const gc = impl.gloveColor ?? 0xe0341f;
   const api = {
     group, id, name, kind,
-    eyeY, headY: bb.min.y + H * .8, height: H, bbox: bb,
+    eyeY, headY: baseY + H * .8, height: H, bbox: bb,
     gloveColor: '#' + gc.toString(16).padStart(6, '0'),   // for the 2D smash overlay
     kick: { x: 0, y: 0, z: 0 },           // visual knock flinch — decays, never sim state
-    setDamage,
+    setDamage, resetDamage,
     get variant() { return impl.variant || id; },
     update(dt, ctx = {}) {
       const { pos, target, npc } = ctx;
+      if (!(dt > 0)) dt = 0;          // NaN/negative dt must not poison the springs
+      const k = api.kick;
+      for (const a of 'xyz') if (!Number.isFinite(k[a])) k[a] = 0;   // un-poison
       if (pos) {
         api.kick.x *= Math.exp(-dt * 7); api.kick.z *= Math.exp(-dt * 7);
         api.kick.y *= Math.exp(-dt * 9);                               // uppercut launch lands fast
@@ -391,7 +432,11 @@ export async function createNpc(THREE, opts = {}) {
       } else if (tel) tel.visible = false;
     },
     pose(n, t01) { impl.pose(n, t01); },
-    dispose() { impl.dispose?.(); group.parent?.remove(group); },
+    dispose() {
+      impl.dispose?.();
+      if (tel) { tel.material.map?.dispose(); tel.material.dispose(); }
+      group.parent?.remove(group);
+    },
   };
   return api;
 }

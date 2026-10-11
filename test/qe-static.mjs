@@ -24,6 +24,11 @@ import { tmpdir } from 'node:os';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PAGES = ['index.html', 'lineup.html', 'gallery.html', 'boxing.html'];
+/* w9-qe-pages owns these — new bug-class checks FAIL on owned files but are
+   only notes on foreign files (their owners fix them, not us). */
+const OWNED_PAGES = new Set(['index.html', 'lineup.html', 'gallery.html']);
+const OWNED_SHARED = new Set(['shared/hands.js', 'shared/face.js',
+  'shared/glove.js', 'shared/track-worker.js']);
 const findings = [];
 const notes = [];
 const fail = (file, line, msg) => {
@@ -31,7 +36,14 @@ const fail = (file, line, msg) => {
   console.log(`FAIL  ${file}:${line}  ${msg}`);
 };
 const note = m => { notes.push(m); console.log('note  ' + m); };
+const flag = (owned, file, line, msg) =>
+  owned ? fail(file, line, msg) : note(`${file}:${line} ${msg}`);
 const lineOf = (src, idx) => src.slice(0, idx).split('\n').length;
+/* `try` somewhere in the lookback window = "guarded" (heuristic — a parse
+   right after a }catch{ slips through, but unguarded top-level calls are
+   the crash class this targets) */
+const nearTry = (code, i, back = 500) =>
+  /\btry\b/.test(code.slice(Math.max(0, i - back), i));
 
 /* ---------- extractors ---------- */
 const SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
@@ -140,6 +152,67 @@ try {
         }
       }
     }
+
+    /* ---- w9 round-2 bug-class checks (fail on owned pages, note others) */
+    const owned = OWNED_PAGES.has(page);
+
+    // contract: no emojis in UI — Emoji_Presentation chars in markup
+    for (const m of html.matchAll(/\p{Emoji_Presentation}/gu))
+      flag(owned, page, lineOf(html, m.index),
+        `emoji U+${m[0].codePointAt(0).toString(16).toUpperCase()} in markup — contract says draw shapes, no emojis`);
+
+    // every local src=/href= (and meta-refresh url=) must resolve on disk
+    for (const m of html.matchAll(/\b(?:src|href)\s*=\s*["']([^"']+)["']/gi)) {
+      const u = m[1];
+      if (/^(?:https?:|data:|mailto:|#|javascript:)/i.test(u)) continue;
+      const p = u.split('?')[0];
+      if (!p || !existsSync(resolve(pageDir, p)))
+        flag(owned, page, lineOf(html, m.index), `resource '${u}' — not on disk`);
+    }
+    for (const m of html.matchAll(/content\s*=\s*["'][^"']*?\burl=([^"'\s]+)["']/gi)) {
+      const u = m[1];
+      if (!/^(?:https?:|data:)/i.test(u) && !existsSync(resolve(pageDir, u)))
+        flag(owned, page, lineOf(html, m.index), `meta-refresh '${u}' — not on disk`);
+    }
+
+    for (const { body, idx } of mods) {
+      const line = lineOf(html, idx);
+      // leftover markers must never ship
+      for (const m of body.matchAll(/\b(?:TODO|FIXME|XXX|HACK)\b/g))
+        flag(owned, page, line + lineOf(body, m.index) - 1, `leftover '${m[0]}' marker in module code`);
+
+      // unguarded JSON.parse / localStorage write = corrupt-storage crash class
+      for (const m of body.matchAll(/\bJSON\.parse\s*\(/g))
+        if (!nearTry(body, m.index))
+          flag(owned, page, line + lineOf(body, m.index) - 1, 'JSON.parse outside try/catch — corrupt localStorage kills the module');
+      for (const m of body.matchAll(/\blocalStorage\.setItem\s*\(/g))
+        if (!nearTry(body, m.index))
+          flag(owned, page, line + lineOf(body, m.index) - 1, 'localStorage.setItem outside try/catch — throws when storage is full/blocked');
+
+      // literal '#id' lookups must name an id that exists in this page
+      for (const m of body.matchAll(/getElementById\(\s*['"]([\w-]+)['"]/g))
+        if (!new RegExp(`id=["']${m[1]}["']`).test(html))
+          flag(owned, page, line + lineOf(body, m.index) - 1, `getElementById('${m[1]}') — no such id in ${page}`);
+      for (const m of body.matchAll(/(?:querySelector(?:All)?|\$)\(\s*['"]#([\w-]+)['"]/g))
+        if (!new RegExp(`id=["']${m[1]}["']`).test(html))
+          flag(owned, page, line + lineOf(body, m.index) - 1, `querySelector('#${m[1]}') — no such id in ${page}`);
+
+      // WebGL hardening: constructing a renderer without probing first, or a
+      // rAF loop with no webglcontextlost handling — both page-killers
+      if (/new\s+THREE\.WebGLRenderer|WebGLRenderer\s*\(/.test(body)) {
+        if (!/getContext\(\s*['"]webgl/.test(body))
+          flag(owned, page, line, 'WebGLRenderer without a webgl context probe — creation failure crashes the module');
+        if (/requestAnimationFrame\s*\(/.test(body) && !/webglcontextlost/i.test(body))
+          flag(owned, page, line, 'render loop without webglcontextlost handling — lost context burns a dead rAF loop');
+      }
+
+      // quoted './x' or '../x' literals (non-import references: workers, fetches, hrefs)
+      for (const m of body.matchAll(/['"](\.{1,2}\/[^'"?\s`]+)['"]/g)) {
+        const p = m[1];
+        if (!existsSync(resolve(pageDir, p)))
+          flag(owned, page, line + lineOf(body, m.index) - 1, `'${p}' literal — not on disk`);
+      }
+    }
   }
 
   /* every .js under shared/ — all import specifiers: relative must resolve
@@ -153,6 +226,22 @@ try {
         if (isRel(spec) && !existsSync(resolveRel(spec, dirname(f))))
           fail(rel, 1, `imports '${spec}' — not on disk`);
       }
+
+      /* w9 round-2: bug-class checks (fail on w9-owned shared files) */
+      const relOwned = OWNED_SHARED.has(rel);
+      // quoted './x' literals: Worker/fetch/asset paths — they may resolve
+      // file-relative (new URL('./w.js', import.meta.url)) OR page-relative
+      // (fetch('./shared/…') runs off the document) — flag only when BOTH miss
+      for (const m of code.matchAll(/['"](\.{1,2}\/[^'"?\s`]+)['"]/g)) {
+        const p = m[1];
+        if (!existsSync(resolve(dirname(f), p)) && !existsSync(resolve(ROOT, p)))
+          flag(relOwned, rel, lineOf(code, m.index), `'${p}' literal — resolves neither file- nor page-relative`);
+      }
+      for (const m of code.matchAll(/\bJSON\.parse\s*\(/g))
+        if (!nearTry(code, m.index))
+          flag(relOwned, rel, lineOf(code, m.index), 'JSON.parse outside try/catch — corrupt storage kills the caller');
+      for (const m of code.matchAll(/\b(?:TODO|FIXME|XXX|HACK)\b/g))
+        flag(relOwned, rel, lineOf(code, m.index), `leftover '${m[0]}' marker`);
       // syntax check each shared module too — cheap, catches dead-file rot
       checked++;
       const tf = join(tmp, rel.replace(/[^\w.-]+/g, '_'));

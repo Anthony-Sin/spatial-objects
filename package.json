@@ -5,8 +5,8 @@
   "scripts": {
     "start": "node server.mjs",
     "perf": "node test/fps-probe.mjs",
-    "test": "node test/boxing-fight.mjs && node test/boxing-ring.mjs && node test/boxing-fists.mjs && node test/boxing-hands.mjs && node test/boxing-proto.mjs && node test/boxing-audio.mjs && node test/boxing-tutorial.mjs",
-    "test:e2e": "node test/boxing-page.mjs",
+    "test": "node test/boxing-fight.mjs && node test/boxing-ring.mjs && node test/boxing-fists.mjs && node test/boxing-hands.mjs && node test/boxing-proto.mjs && node test/boxing-audio.mjs && node test/boxing-tutorial.mjs && node test/qe-fuzz.mjs && node test/qe-server.mjs",
+    "test:e2e": "node test/boxing-page.mjs && node test/qe-e2e.mjs",
     "qe": "node test/qe-runner.mjs",
     "qe:static": "node test/qe-static.mjs",
     "qe:res": "node test/qe-resources.mjs"

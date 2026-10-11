@@ -43,7 +43,10 @@ export class Face {
     // GPU stays reserved for render + hands. opt out with preferCpu:false
     f._preferCpu = opts.preferCpu !== false;
     const which = await Promise.race([f._spawn(), sleep(BOOT_MS).then(() => 'slow')]);
+    // a stop() during the boot race must not resurrect an inline landmarker
+    if (f._stopped) return f;
     if (which !== 'ok') await f._initLocal();   // 'fail' or 'slow' → cover the gap
+    if (f._stopped) return f;
     f._pump(video);
     return f;
   }
@@ -81,6 +84,11 @@ export class Face {
     });
   }
   _adopt(w, delegate) {
+    // a 'ready' landing after stop() would resurrect a worker on a dead
+    // tracker — kill it instead of adopting
+    if (this._stopped) { try { w.terminate(); } catch {} return; }
+    // a stale boot can finish after a respawn already won — never keep two
+    if (this._worker && this._worker !== w) { try { this._worker.terminate(); } catch {} }
     this._worker = w;
     this.delegate = `${delegate}-worker`;
     this._rate = 1;   // offer every camera frame — _inFlight gates the pace
@@ -98,13 +106,13 @@ export class Face {
   /* concurrent callers (fatal + onerror can fire together) must share ONE
      boot — two inline landmarkers meant leaked GPU/CPU graphs */
   async _initLocal() {
-    if (this.landmarker) return;
+    if (this.landmarker || this._stopped) return;
     if (this._initLocalP) return this._initLocalP;
     this._initLocalP = this._initLocalOnce().finally(() => { this._initLocalP = null; });
     return this._initLocalP;
   }
   async _initLocalOnce() {
-    if (this.landmarker) return;
+    if (this.landmarker || this._stopped) return;
     const { FilesetResolver, FaceLandmarker } = await import(`${this._vendorUrl}/vision_bundle.mjs`);
     const fileset = await FilesetResolver.forVisionTasks(`${this._vendorUrl}/wasm`);
     const order = this._preferCpu ? ['CPU', 'GPU'] : ['GPU', 'CPU'];
@@ -114,7 +122,7 @@ export class Face {
           baseOptions: { modelAssetPath: `${this._vendorUrl}/face_landmarker.task`, delegate },
           runningMode: 'VIDEO', numFaces: 1,
           minFaceDetectionConfidence: .35, minFacePresenceConfidence: .35, minTrackingConfidence: .25 });
-        if (this._worker) { try { lm.close(); } catch {} return; }  // worker adopted meanwhile
+        if (this._worker || this._stopped) { try { lm.close(); } catch {} return; }  // worker adopted / tracker stopped meanwhile
         this.landmarker = lm;
         this.delegate = delegate.toLowerCase();
         this._rate = 3;                                  // inline blocks the thread — third-rate
@@ -133,10 +141,15 @@ export class Face {
       try { this._worker.postMessage({ type: 'frame', frame }, [frame]); }
       catch { frame.close?.(); this._inFlight = false; }
     };
-    const bmp = (opts) => createImageBitmap(v, opts || {}).then(post).catch(() => {
-      let f; try { f = new VideoFrame(v); } catch {}
-      if (f) post(f); else this._inFlight = false;
-    });
+    // createImageBitmap itself may not exist (or may reject) — the throw must
+    // land here, not in the rVFC callback where it's a pageerror
+    const bmp = (opts) => (typeof createImageBitmap === 'function'
+      ? createImageBitmap(v, opts || {})
+      : Promise.reject(new Error('no createImageBitmap')))
+      .then(post).catch(() => {
+        let f; try { f = new VideoFrame(v); } catch {}
+        if (f) post(f); else this._inFlight = false;
+      });
     if (vw > INFER_W) return void bmp({
       resizeWidth: INFER_W,
       resizeHeight: Math.max(2, Math.round(INFER_W * vh / vw / 2) * 2),
@@ -173,29 +186,46 @@ export class Face {
   }
   _ingest(d) {
     const s = this.state;
+    const fin = Number.isFinite;
     let tx = 0, ty = 0, tsize = 0, cx = 0, cy = 0, ok = false;
-    if (d.face) {                              // BlazeFace fallback: nose keypoint + box
-      s.lm = null;
-      tx = 1 - d.face.nose.x; ty = d.face.nose.y;
-      tsize = Math.hypot(d.face.box.w, d.face.box.h);
-      cx = 1 - (d.face.box.x + d.face.box.w / 2); cy = d.face.box.y + d.face.box.h / 2;
-      ok = true;
-    } else if (d.landmarks) {                  // FaceLandmarker: bbox + mesh over 478 pts
+    /* Malformed input must die here, not downstream: an empty landmarks []
+       used to produce a ~2.8e9 "face size" (bbox of nothing), and a single
+       NaN point poisons the EMA below — .68 weighting never washes NaN out,
+       so the tracker would report a NaN nose until page reload. */
+    if (d && d.face) {                         // BlazeFace fallback: nose keypoint + box
+      const f = d.face, b = f.box || {}, n = f.nose || {};
+      if (fin(n.x) && fin(n.y) && fin(b.x) && fin(b.y)
+          && fin(b.w) && fin(b.h) && b.w > 0 && b.h > 0) {
+        s.lm = null;
+        tx = 1 - n.x; ty = n.y;
+        tsize = Math.hypot(b.w, b.h);
+        cx = 1 - (b.x + b.w / 2); cy = b.y + b.h / 2;
+        ok = true;
+      }
+    } else if (d && Array.isArray(d.landmarks) && d.landmarks.length) {
+      // FaceLandmarker: bbox + mesh over 478 pts
       const lm = d.landmarks;
-      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, bad = 0;
       const pts = s.lm && s.lm.length === lm.length ? s.lm : (s.lm = new Array(lm.length));
       for (let i = 0, n = lm.length; i < n; i++) {
-        const p = lm[i];
-        if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x;
-        if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y;
+        const p = lm[i] || {};
+        const px = p.x, py = p.y;
+        if (!fin(px) || !fin(py)) { bad++; continue; }
+        if (px < x0) x0 = px; if (px > x1) x1 = px;
+        if (py < y0) y0 = py; if (py > y1) y1 = py;
         const q = pts[i] || (pts[i] = { x: 0, y: 0, z: 0 });   // reuse — no per-frame GC
-        q.x = 1 - p.x; q.y = p.y; q.z = p.z || 0;              // mirror once, like hands.js
+        q.x = 1 - px; q.y = py; q.z = fin(p.z) ? p.z : 0;      // mirror once, like hands.js
       }
-      const nose = lm[1] || { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
-      tx = 1 - nose.x; ty = nose.y;
-      tsize = Math.hypot(x1 - x0, y1 - y0);
-      cx = 1 - (x0 + x1) / 2; cy = (y0 + y1) / 2;
-      ok = true;
+      // the whole frame is dropped if any point is corrupt — a partial mesh
+      // reads as a glitching face, not a slightly-wrong one
+      if (!bad) {
+        const nose = lm[1] && fin(lm[1].x) && fin(lm[1].y)
+          ? lm[1] : { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+        tx = 1 - nose.x; ty = nose.y;
+        tsize = Math.hypot(x1 - x0, y1 - y0);
+        cx = 1 - (x0 + x1) / 2; cy = (y0 + y1) / 2;
+        ok = fin(tx) && fin(ty) && fin(tsize) && tsize > 0;
+      }
     }
     if (ok) {
       this._okAt = performance.now(); s.found = true;
@@ -210,6 +240,7 @@ export class Face {
   stop() {
     this._stopped = true;
     clearTimeout(this._retryT);
+    this._inFlight = false;
     try { this._worker?.postMessage({ type: 'close' }); } catch {}
     this._worker?.terminate(); this._worker = null;
     try { this.landmarker?.close?.(); } catch {} this.landmarker = null;

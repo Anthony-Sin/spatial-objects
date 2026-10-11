@@ -40,7 +40,10 @@ export class Hands {
     const which = await Promise.race([h._spawn(), sleep(BOOT_MS).then(() => 'slow')]);
     // 'ok' → worker owns it. 'fail' → inline now. 'slow' → inline covers the
     // gap while the worker keeps booting; a late 'ready' still adopts.
+    // a stop() during the boot race must not resurrect an inline landmarker
+    if (h._stopped) return h;
     if (which !== 'ok') await h._initLocal();
+    if (h._stopped) return h;
     h._pump(video);
     return h;
   }
@@ -86,6 +89,11 @@ export class Hands {
     });
   }
   _adopt(w, delegate) {
+    // a 'ready' landing after stop() would resurrect a worker on a dead
+    // tracker — kill it instead of adopting
+    if (this._stopped) { try { w.terminate(); } catch {} return; }
+    // a stale boot can finish after a respawn already won — never keep two
+    if (this._worker && this._worker !== w) { try { this._worker.terminate(); } catch {} }
     this._worker = w;
     this.delegate = `${delegate}-worker`;
     this.landmarker?.close?.(); this.landmarker = null;   // worker won — free the inline copy
@@ -102,13 +110,13 @@ export class Hands {
   /* concurrent callers (fatal + onerror can fire together) must share ONE
      boot — two inline landmarkers meant leaked GPU/CPU graphs */
   async _initLocal() {
-    if (this.landmarker) return;
+    if (this.landmarker || this._stopped) return;
     if (this._initLocalP) return this._initLocalP;
     this._initLocalP = this._initLocalOnce().finally(() => { this._initLocalP = null; });
     return this._initLocalP;
   }
   async _initLocalOnce() {
-    if (this.landmarker) return;
+    if (this.landmarker || this._stopped) return;
     const { FilesetResolver, HandLandmarker } = await import(`${this._vendorUrl}/vision_bundle.mjs`);
     const fileset = await FilesetResolver.forVisionTasks(`${this._vendorUrl}/wasm`);
     for (const delegate of ['GPU', 'CPU']) {
@@ -117,7 +125,7 @@ export class Hands {
           baseOptions: { modelAssetPath: `${this._vendorUrl}/hand_landmarker.task`, delegate },
           runningMode: 'VIDEO', numHands: 2,
           minHandDetectionConfidence: .4, minHandPresenceConfidence: .35, minTrackingConfidence: .3 });
-        if (this._worker) { try { lm.close(); } catch {} return; }  // worker adopted meanwhile
+        if (this._worker || this._stopped) { try { lm.close(); } catch {} return; }  // worker adopted / tracker stopped meanwhile
         this.landmarker = lm;
         this.delegate = delegate.toLowerCase();
         return;
@@ -142,10 +150,15 @@ export class Hands {
       try { this._worker.postMessage({ type: 'frame', frame }, [frame]); }
       catch { frame.close?.(); this._inFlight = false; }
     };
-    const bmp = (opts) => createImageBitmap(v, opts || {}).then(post).catch(() => {
-      let f; try { f = new VideoFrame(v); } catch {}   // resize unsupported → full-res
-      if (f) post(f); else this._inFlight = false;
-    });
+    // createImageBitmap itself may not exist (or may reject) — either way the
+    // throw must land here, not in the rVFC callback where it's a pageerror
+    const bmp = (opts) => (typeof createImageBitmap === 'function'
+      ? createImageBitmap(v, opts || {})
+      : Promise.reject(new Error('no createImageBitmap')))
+      .then(post).catch(() => {
+        let f; try { f = new VideoFrame(v); } catch {}   // resize unsupported → full-res
+        if (f) post(f); else this._inFlight = false;
+      });
     if (vw > INFER_W) return void bmp({
       resizeWidth: INFER_W,
       resizeHeight: Math.max(2, Math.round(INFER_W * vh / vw / 2) * 2),
@@ -199,7 +212,14 @@ export class Hands {
   }
   _ingest(lms, handedness = []) {
     const prev = this._prev, seen = {};
-    const list = (lms || []).map((lm, i) => {
+    const list = (Array.isArray(lms) ? lms : []).map((lm, i) => {
+      // a malformed detection must never reach consumers: require the full
+      // 21-pt skeleton with finite x/y. A short array crashes on lm[9]; a
+      // NaN point poisons every downstream EMA, span and canvas path forever.
+      let valid = Array.isArray(lm) && lm.length >= 21;
+      for (let j = 0; valid && j < 21; j++)
+        valid = !!lm[j] && Number.isFinite(lm[j].x) && Number.isFinite(lm[j].y);
+      if (!valid) return null;
       const side = this._sideOf(lm, handedness, i); seen[side] = true;
       const p = prev[side], k = p ? LERP : 1;
       const out = { side, kind: 'hand', i,
@@ -207,7 +227,8 @@ export class Hands {
           const last = p?.lm?.[j];
           const x = 1 - pt.x;                       // mirror once for selfie view
           return { x: last ? last.x + (x - last.x) * k : x,
-                   y: last ? last.y + (pt.y - last.y) * k : pt.y, z: pt.z };
+                   y: last ? last.y + (pt.y - last.y) * k : pt.y,
+                   z: Number.isFinite(pt.z) ? pt.z : 0 };
         }) };
       out.palm = out.lm[9]; out.wrist = out.lm[0];
       out.indexTip = out.lm[8]; out.pinchAt = out.lm[4];
@@ -225,7 +246,7 @@ export class Hands {
         : out.nExt === 0 ? 'fist' : fingers[0] && out.nExt === 1 ? 'point' : 'other';
       prev[side] = out;
       return out;
-    });
+    }).filter(Boolean);
     for (const s in prev) if (!seen[s]) delete prev[s];
     const st = this.state; st.hands = list;
     const get = s => list.find(h => h.side === s);
@@ -242,11 +263,12 @@ export class Hands {
     const label = handedness?.[i]?.[0]?.categoryName || '';
     if (label === 'Left') return 'right';
     if (label === 'Right') return 'left';
-    return lm[0].x > .5 ? 'left' : 'right';
+    return (lm[0]?.x ?? 0) > .5 ? 'left' : 'right';
   }
   stop() {
     this._stopped = true;
     clearTimeout(this._retryT);
+    this._inFlight = false; this._prev = {};
     try { this._worker?.postMessage({ type: 'close' }); } catch {}
     this._worker?.terminate(); this._worker = null;
     try { this.landmarker?.close?.(); } catch {} this.landmarker = null;

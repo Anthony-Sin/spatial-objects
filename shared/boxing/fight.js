@@ -131,7 +131,7 @@ export const TUNING = {
 /* Signature specials per proto variant — every rival gets one the way PIP's
    flurry works: gated behind ~specialEvery normals plus a stamina floor.
      TRIPLE TAP (bubble) — the classic 3-punch flurry, one stamina burn.
-     SLEDGE     (blocky) — a slow guard-cracking haymaker: big telegraph,
+     SUMO SLAM  (sumo)   — a slow guard-cracking slam: big telegraph,
                            huge damage, and blocking only takes the edge off.
      BEAN BARRAGE (bean) — the champ's heavy 1-2: two fast swings that land
                            like trucks.
@@ -139,7 +139,7 @@ export const TUNING = {
 export const SPECIALS = {
   bubble: { key: 'flurry', name: 'TRIPLE TAP', chain: 3, windupMul: 1,
     stam: .4, cost: .15 },
-  blocky: { key: 'sledge', name: 'SLEDGE', dmgMul: 1.5, windup: 1.3, chip: .65,
+  sumo:   { key: 'slam', name: 'SUMO SLAM', dmgMul: 1.6, windup: 1.35, chip: .7,
     stam: .45, cost: .3 },
   bean:   { key: 'flurry', name: 'BEAN BARRAGE', chain: 2, windupMul: .85,
     stam: .35, cost: .12 },
@@ -150,8 +150,8 @@ export const SPECIALS = {
    number identical to the tuned table above. */
 export const VSTATS = {
   bubble: { dmg: 1,    taken: 1,   windup: 1 },
-  blocky: { dmg: 1.12, taken: .9,  windup: 1.08 },
   bean:   { dmg: 1.15, taken: .9,  windup: 1 },      // the boss hits like a truck
+  sumo:   { dmg: 1.25, taken: .78, windup: 1.12 },
 };
 
 // deterministic PRNG — no Math.random anywhere in this file
@@ -170,6 +170,13 @@ export class Fight {
   constructor(opts = {}) {
     this.opts = { playerHp: 100, npcHp: 100, npcName: 'PIP', roundLen: 90, seed: 1,
       ai: true, practice: false, npcVariant: 'bubble', ...opts };
+    /* degenerate opts → sane floors. roundLen NaN/≤0 once produced a clock
+       that never reached zero (rounds never ended); hp ≤ 0 spawned a
+       fighter that was already down. */
+    const o = this.opts;
+    o.playerHp = Math.max(1, num(o.playerHp, 100));
+    o.npcHp    = Math.max(1, num(o.npcHp, 100));
+    o.roundLen = Math.max(1, num(o.roundLen, 90));
     this._special = SPECIALS[this.opts.npcVariant] || SPECIALS.bubble;
     this._stat = VSTATS[this.opts.npcVariant] || VSTATS.bubble;
     this.ai = this.opts.ai !== false;
@@ -219,10 +226,16 @@ export class Fight {
     const s = this.state, p = s.player, T = TUNING;
     dt = Math.min(Math.max(+dt || 0, 0), .1);
     s.events.length = 0; s.lastBlow = null;
+    if (!inputs || typeof inputs !== 'object') inputs = {};   // step(dt, null) must not crash
     const inp = this._inp || (this._inp = {   // persistent — same fields re-set each step
       punches: [], guard: { left: 0, right: 0 }, sway: 0, duck: 0, dodge: 0, distance: Infinity });
-    if (Array.isArray(inputs.punches)) inp.punches = inputs.punches;
-    else inp.punches.length = 0;
+    /* punches are COPIED into the persistent buffer (≤64/step) — assigning the
+       caller's array and clearing it later mutated the caller's input stream,
+       which made two runs over the same stream diverge (nondeterminism). */
+    inp.punches.length = 0;
+    if (Array.isArray(inputs.punches))
+      for (let i = 0, n = Math.min(inputs.punches.length, 64); i < n; i++)
+        inp.punches[i] = inputs.punches[i];
     inp.guard.left = clamp(num(inputs.guard?.left, 0), 0, 1);
     inp.guard.right = clamp(num(inputs.guard?.right, 0), 0, 1);
     inp.sway = clamp(num(inputs.sway, 0), -1, 1);
@@ -328,7 +341,9 @@ export class Fight {
   throwPunch(kind = 'jab', side = 'left', windup = null) {
     const s = this.state, n = s.npc;
     if (s.phase !== 'fighting' || ['windup', 'punch', 'down', 'hurt', 'stunned'].includes(n.action)) return false;
-    this._windup(false, { kind: TUNING.windup[kind] ? kind : 'jab', side, windup });
+    this._windup(false, { kind: TUNING.windup[kind] ? kind : 'jab',
+      side: side === 'right' ? 'right' : 'left',
+      windup: Number.isFinite(+windup) && +windup > 0 ? +windup : null });
     return true;
   }
 
@@ -553,12 +568,13 @@ export class Fight {
       const gate = !force && this.ai && !n.gassed
         && this._normals >= T.specialEvery && n.stamina >= spec.stam;
       this._wantCombo = gate && spec.key === 'flurry';
-      this._wantSledge = gate && spec.key === 'sledge';
+      this._wantSlam = gate && (spec.key === 'slam' || spec.key === 'sledge');
+      this._wantSledge = this._wantSlam;
       if (!force) {
-        if (this._wantCombo || this._wantSledge) {
+        if (this._wantCombo || this._wantSlam) {
           this._normals = 0;
           this._chainMax = spec.chain || T.comboMax;   // bean's 1-2 ends early
-          n.stamina = Math.max(0, n.stamina - spec.cost);
+          n.stamina = Math.max(0, n.stamina - (spec.cost || .3));
           this._emit('npc-special');          // HUD names the incoming move
         }
         else this._normals++;
@@ -567,7 +583,7 @@ export class Fight {
     const prev = this._pk.kind, r = this._rng();
     // PIP reads a HELD duck and digs an uppercut; combos follow real patterns
     const ducking = inp && inp.duck >= T.dodgeT;
-    let kind = force ? force.kind : this._wantSledge ? 'upper'
+    let kind = force ? force.kind : (this._wantSlam || this._wantSledge) ? 'upper'
       : ducking && this._rng() < .7 ? 'upper'
       : combo ? (prev === 'jab' ? (r < .55 ? 'jab' : 'hook')
         : prev === 'hook' ? (r < .6 ? 'upper' : 'hook') : 'jab')
@@ -583,14 +599,18 @@ export class Fight {
       : ducking ? 'duck' : 0;
     this._chain = combo ? this._chain + 1 : 0;
     n.stamina = Math.max(0, n.stamina - T.npcCost * (combo ? .6 : 1));
-    // sledge winds its own long telegraph; flurry swings run per-variant speed
-    this._windupFor = force?.windup || (this._wantSledge ? spec.windup
-        : combo ? T.comboWindup * (spec.windupMul || 1) : T.windup[kind])
-      * (1 - T.rageSpeed * rage) * (n.gassed ? T.gasWindup : 1) * this._stat.windup;
+    // slam winds its own long telegraph; flurry swings run per-variant speed.
+    // _windupFor must stay positive — a ≤0/NaN override once left PIP
+    // telegraphing forever (t01 could never reach 1).
+    const wu = Number.isFinite(force?.windup) && force.windup > 0 ? force.windup
+      : (this._wantSlam || this._wantSledge) ? spec.windup
+      : combo ? T.comboWindup * (spec.windupMul || 1) : T.windup[kind];
+    this._windupFor = Math.max(.05, wu
+      * (1 - T.rageSpeed * rage) * (n.gassed ? T.gasWindup : 1) * this._stat.windup);
     this._pk = { kind, side };
     n.action = 'windup'; n.actionT = 0;
     n.telegraph = { kind, side, t01: 0, combo: this._chain,
-      special: (this._wantCombo || this._wantSledge) ? spec.name : null };   // side = PIP's glove (mirrored on screen)
+      special: (this._wantCombo || this._wantSlam || this._wantSledge) ? spec.name : null };   // side = PIP's glove (mirrored on screen)
   }
 
   // did the player get out of the way? → 'left'|'right'|'duck'|null (+ perfect)
@@ -625,19 +645,22 @@ export class Fight {
     // a gassed guard is sluggish: effective guard caps at gasGuard < guardT.
     const gCap = p.gassed ? T.gasGuard : 1;
     const g = duckedInto ? 0 : Math.min(side === 'left' ? inp.guard.right : inp.guard.left, gCap);
-    const spec = this._special, sledge = this._wantSledge;
-    const dmg = T.npcDmg[kind] * this._stat.dmg * (sledge ? spec.dmgMul : 1)
+    const spec = this._special, slam = this._wantSlam || this._wantSledge;
+    // dmgMul/chip exist only on slam-type specs — a compat-forced sledge on a
+    // flurry spec must fall back, not multiply NaN into the player's hp
+    const dmg = T.npcDmg[kind] * this._stat.dmg * (slam ? num(spec.dmgMul, 1) : 1)
       * (duckedInto ? T.duckUpperMul : 1);
-    if (sledge || this._wantCombo) s.lastBlow.special = spec.name;
+    if (slam || this._wantCombo) s.lastBlow.special = spec.name;
     this._landed = true;
     this._regenSlowT = T.hurtRegenT;        // getting tagged stalls your regen
     if (g >= T.guardT) {
-      // a sledge CRACKS the guard — chip through at its own rate
-      p.hp = Math.max(0, p.hp - dmg * (sledge ? spec.chip : T.blockMul));
+      // a slam CRACKS the guard — chip through at its own rate
+      const chip = slam ? num(spec.chip, T.blockMul) : T.blockMul;
+      p.hp = Math.max(0, p.hp - dmg * chip);
       p.hurtT = T.hurtT * .5;
       p.score += T.score.block;
       p.counterT = T.counterWindow;
-      s.lastBlow.result = 'blocked'; s.lastBlow.dmg = dmg * (sledge ? spec.chip : T.blockMul);
+      s.lastBlow.result = 'blocked'; s.lastBlow.dmg = dmg * chip;
       this._swing = 'blocked';
       this._emit('player-blocked');
     } else {

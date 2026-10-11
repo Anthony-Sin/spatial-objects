@@ -15,6 +15,7 @@
 */
 const texCache = {};
 function dotTex(THREE, inner, outer) {
+  if (typeof document === 'undefined') return null;  // node: sprites keep a flat-color fallback
   const key = inner + '|' + outer;
   if (texCache[key]) return texCache[key];
   const c = document.createElement('canvas'); c.width = c.height = 64;
@@ -62,6 +63,17 @@ export function makeFx(THREE, scene, cam) {
     size = .085, up = 1.3, spread = .9, life = .8 } = {}) {
     const tex = { blood: BLOOD, sweat: SWEAT, star: STAR, flash: FLASH,
       streak: STREAK }[color] || BLOOD;
+    /* a NaN life would make (p.t >= p.life) false forever — an invisible,
+       immortal sprite stealing a pool slot on every burst. NaN size/speed
+       writes NaN into the sprite matrix, which can poison the whole batch. */
+    life = Number.isFinite(life) ? Math.max(.01, life) : .8;
+    size = Number.isFinite(size) ? size : .085;
+    speed = Number.isFinite(speed) ? speed : 1.5;
+    up = Number.isFinite(up) ? up : 1.3;
+    spread = Number.isFinite(spread) ? spread : .9;
+    if (dir && (!Number.isFinite(dir.x) || !Number.isFinite(dir.z))) dir = null;  // bad bias → omni
+    if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)
+      || !Number.isFinite(pos.z)) return;                        // no sane origin — no burst
     for (let i = 0; i < n; i++) {
       const p = pool[poolAt]; poolAt = (poolAt + 1) % POOL_N;   // steal oldest
       p.s.material.map = tex;
@@ -79,10 +91,13 @@ export function makeFx(THREE, scene, cam) {
   }
 
   function stain(pos, { color = 0x8c1a12, r = .16 + Math.random() * .1, life = 7 } = {}) {
-    const s = stainPool[stainAt]; stainAt = (stainAt + 1) % STAIN_N;
+    if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) return;
+    const zi = stainAt;                              // capture BEFORE the steal advances it
+    const s = stainPool[zi]; stainAt = (stainAt + 1) % STAIN_N;
+    life = Number.isFinite(life) ? Math.max(.1, life) : 7;   // NaN life → never fades out
     s.m.material.color.set(color);
-    s.m.scale.setScalar(r);
-    s.m.position.set(pos.x + (Math.random() - .5) * .12, .012 + stainAt * .0004,
+    s.m.scale.setScalar(Number.isFinite(r) ? Math.max(.005, r) : .16);
+    s.m.position.set(pos.x + (Math.random() - .5) * .12, .012 + zi * .0004,
                      pos.z + (Math.random() - .5) * .12);
     s.m.material.opacity = .55;
     s.m.visible = true;
@@ -90,6 +105,10 @@ export function makeFx(THREE, scene, cam) {
   }
 
   function update(dt) {
+    /* NaN / zero / negative dt: a NaN would poison p.t, positions and
+       opacity and — since (NaN >= life) is false — leave every sprite
+       stuck on-screen forever. A dt of 0 changes nothing anyway. */
+    if (!(dt > 0)) return;
     for (const p of pool) {
       if (!p.on) continue;
       p.t += dt;
@@ -117,5 +136,14 @@ export function makeFx(THREE, scene, cam) {
     }
   }
 
-  return { burst, stain, update };
+  /* teardown — pulls the pooled nodes and frees their GPU resources.
+     The dot textures stay in the module-level texCache on purpose: they
+     are shared by every makeFx instance, so a rebuilt fx reuses them. */
+  function dispose() {
+    for (const p of pool) { scene.remove(p.s); p.s.material.dispose(); }
+    for (const s of stainPool) { scene.remove(s.m); s.m.material.dispose(); }
+    stainGeo.dispose();
+  }
+
+  return { burst, stain, update, dispose };
 }

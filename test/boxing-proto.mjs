@@ -51,8 +51,8 @@ const THREE = {
 
 // ---- VARIANTS ----
 ok(Array.isArray(VARIANTS) && VARIANTS.length >= 3, `VARIANTS >= 3 (${VARIANTS})`);
-ok(VARIANTS.includes('bubble') && VARIANTS.includes('blocky') && VARIANTS.includes('bean'),
-  'VARIANTS includes bubble/blocky/bean');
+ok(VARIANTS.includes('bubble') && VARIANTS.includes('bean') && VARIANTS.includes('sumo'),
+  'VARIANTS includes bubble/bean/sumo');
 ok(VARIANT_INFO && VARIANTS.every(v => VARIANT_INFO[v]?.label), 'VARIANT_INFO labels every variant');
 
 // ---- build every variant ----
@@ -67,7 +67,7 @@ for (const v of VARIANTS) {
     'eyeL', 'eyeR', 'browL', 'browR', 'mouth', 'armL', 'armR', 'footL', 'footR'])
     if (!b.parts[p]) { failed++; console.error(`FAIL ${v}: missing part ${p}`); }
   ok(b.parts.head && b.parts.torso && b.parts.gloveL && b.parts.gloveR, `${v}: core parts present`);
-  ok(b.parts.head.position.y > .7 && b.parts.head.position.y < 1.15,
+  ok(b.parts.head.position.y > .7 && b.parts.head.position.y < 1.45,
     `${v}: big head near top (y=${b.parts.head.position.y.toFixed(2)})`);
   ok(b.parts.footL.position.y < .15 && Math.abs(b.parts.root.position.y) < .01,
     `${v}: feet at ground / root unpolluted`);
@@ -198,7 +198,7 @@ const s1 = run(), s2 = run();
 ok(s1.every((v, i) => Math.abs(v - s2[i]) < 1e-12), 'deterministic given same (dt,pose,t01)');
 
 // ---- palette override ----
-const custom = buildBoxer(THREE, { variant: 'blocky', palette: { glove: 0x123456 } });
+const custom = buildBoxer(THREE, { variant: 'sumo', palette: { glove: 0x123456 } });
 ok(custom.parts.gloveL.children[0].material.color === 0x123456, 'palette override reaches gloves');
 
 // ---- fallbacks ----

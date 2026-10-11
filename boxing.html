@@ -342,8 +342,37 @@
       pg?.getExtension('WEBGL_lose_context')?.loseContext();
     } catch {}
     const weakGpu = /intel|mesa|swiftshader|llvmpipe|software/i.test(gpuName);
-    const ren = new THREE.WebGLRenderer({ canvas: cvs, antialias: !weakGpu,
-      powerPreference: 'high-performance' });   // hybrid laptops: pick the dGPU, not the iGPU
+    let ren = null;
+    try {
+      ren = new THREE.WebGLRenderer({ canvas: cvs, antialias: !weakGpu,
+        powerPreference: 'high-performance' });   // hybrid laptops: pick the dGPU, not the iGPU
+    } catch (e) {
+      console.error('boxing: WebGL context could not be created —', e?.message || e);
+    }
+    if (ren) {
+      cvs.addEventListener('webglcontextlost', (e) => {
+        e.preventDefault();                     // let the driver try to restore
+        status.textContent = 'gpu hiccup — restoring';
+      });
+      cvs.addEventListener('webglcontextrestored', () => location.reload());
+    } else {
+      /* No WebGL = no game, but never a dead black page: park the module on a
+         readable failure card (top-level module code can't early-return). */
+      cvs.style.visibility = 'hidden';
+      status.textContent = 'webgl unavailable';
+      const card = document.createElement('div');
+      card.style.cssText = 'position:fixed;inset:0;display:grid;place-items:center;' +
+        'z-index:50;pointer-events:none';
+      card.innerHTML = `<div style="background:#FFF8EC;color:#2B2118;border:4px solid #2B2118;
+        border-radius:18px;box-shadow:0 8px 0 #2B2118;padding:22px 30px;max-width:420px;
+        text-align:center;font-family:inherit">
+        <div style="font-size:34px;font-weight:800;letter-spacing:.04em">CAN'T FIND THE RING</div>
+        <div style="margin-top:8px;font-weight:600">This game needs WebGL and your browser
+        couldn't open a GPU context. Try a different browser, enable hardware
+        acceleration, or restart the GPU process.</div></div>`;
+      document.body.appendChild(card);
+      await new Promise(() => {});              // park here — nothing below can run
+    }
     // iGPU render-scale: the scene is fill-bound at desktop sizes, so weak GPUs
     // draw .8× and let the compositor upscale — the 2D gloves/HUD stay 1:1 sharp.
     ren.setPixelRatio(weakGpu ? Math.min(devicePixelRatio, 1) * .8
@@ -418,6 +447,7 @@
         weakGpu, gpuName,
         get fight() { return game.fight; }, get sim() { return game.sim; },
         get tracker() { return game.tracker; }, get state() { return game.fight.state; },
+        get tutor() { return tutor; },
         get hands() { return hands; }, get face() { return face; } };
     } catch (e) {
       console.warn('boxing: game glue unavailable — idle ring only', e);
@@ -559,6 +589,15 @@
     };
     const hud = (out) => {
       const st = out.state;
+      /* game.reset() (debug rematch / fresh bout) drops the fight straight
+         back to 'intro' — a latched endcard + 'ended' class would otherwise
+         sit over the new bout forever and swallow every later verdict.
+         Re-arm so the next win/lose can show a fresh card. */
+      if (ended && st.phase === 'intro') {
+        ended = false;
+        document.body.classList.remove('ended');
+        el.end.classList.remove('on');
+      }
       const intro = st.phase === 'intro';
       togN('fighting', !intro && st.phase !== 'countdown');
       bar('php', el.php, st.player.hp / (st.player.maxHp || 100));
@@ -955,9 +994,14 @@
          it lands on the player's OPPOSITE side. The chevron pulses faster as
          the swing charges and flips green the moment that side is guarded. */
       if (out?.events) for (const e of out.events) {
-        if (e === 'player-blocked') { blockFx.t = nowS;
+        if (e === 'player-blocked') {
+          blockFx.t = nowS;
           blockFx.side = out.state?.lastBlow?.side === 'left' ? 'right'
-            : out.state?.lastBlow?.side === 'right' ? 'left' : blockFx.side; }
+            : out.state?.lastBlow?.side === 'right' ? 'left' : blockFx.side;
+          const bg = gloves[blockFx.side];
+          blockFx.x = bg?.x ?? hc.width * (blockFx.side === 'left' ? .35 : .65);
+          blockFx.y = bg?.y ?? hc.height * .55;
+        }
         if (e === 'player-hit-taken') {
           const lb = out.state?.lastBlow || {};
           hitFx.t = nowS; hitFx.heavy = (lb.dmg || 0) >= 12;
@@ -969,6 +1013,33 @@
       drawImpact(nowS);
       const tel = out?.telegraph;
       const g2 = liveGuard();
+
+      // Active guard visual cues — raised mitts show an energetic protective aura
+      for (const side of GLOVE_SIDES) {
+        const gLev = g2[side] || 0;
+        if (gLev >= .45) {
+          const g = gloves[side];
+          if (g && g.lastP) {
+            hx.save();
+            const pulse = .5 + .5 * Math.sin(nowS * 14);
+            const gR = (g.size || 55) * (1.1 + pulse * .08);
+            hx.globalAlpha = Math.min(.85, (gLev - .45) * 2 * (.6 + pulse * .4));
+            hx.lineWidth = 3.5;
+            hx.strokeStyle = '#FFE17A';
+            hx.setLineDash([7, 5]);
+            hx.beginPath();
+            hx.arc(g.x, g.y, gR, 0, Math.PI * 2);
+            hx.stroke();
+            hx.setLineDash([]);
+            // little guard corner pips
+            hx.lineWidth = 2.5;
+            hx.strokeStyle = '#2B2118';
+            hx.stroke();
+            hx.restore();
+          }
+        }
+      }
+
       if (tel && out?.state?.phase === 'fighting') {
         const side = tel.side === 'left' ? 'right' : 'left';
         const u = Math.min(1, tel.t01 || 0);
@@ -1005,15 +1076,94 @@
         }
         hx.globalAlpha = 1;
       }
-      // caught it on the gloves — white shield burst at the blocking mitt
-      const bt = (nowS - blockFx.t) / .35;
+      // caught it on the gloves — comic shield burst at the blocking mitt
+      const bt = (nowS - blockFx.t) / .42;
       if (bt >= 0 && bt < 1) {
-        const g = gloves[blockFx.side];
-        const R = g.size * (.5 + bt * 1.3);
-        hx.globalAlpha = (1 - bt) * .8;
-        hx.lineWidth = 5 * (1 - bt) + 1; hx.strokeStyle = '#fff8ec';
-        hx.beginPath(); hx.arc(g.x, g.y, R, 0, Math.PI * 2); hx.stroke();
-        hx.globalAlpha = 1;
+        const gx = blockFx.x || gloves[blockFx.side]?.x || hc.width * .5;
+        const gy = blockFx.y || gloves[blockFx.side]?.y || hc.height * .5;
+        const gsz = gloves[blockFx.side]?.size || 70;
+        const easeOut = 1 - Math.pow(1 - bt, 3);
+        const R = gsz * (.55 + easeOut * 1.5);
+        const alpha = Math.max(0, 1 - bt);
+
+        hx.save();
+        // 1. Dual shockwave rings with ink borders
+        hx.lineWidth = 4 * alpha + 1;
+        hx.strokeStyle = '#2B2118';
+        hx.beginPath(); hx.arc(gx, gy, R + 3, 0, Math.PI * 2); hx.stroke();
+        hx.strokeStyle = '#FFE17A';
+        hx.lineWidth = 5 * alpha + 1.5;
+        hx.beginPath(); hx.arc(gx, gy, R, 0, Math.PI * 2); hx.stroke();
+
+        // 2. Comic hex-shield flash in the first half of the pop
+        if (bt < .5) {
+          const su = bt / .5;
+          const sR = gsz * (.7 + su * .9);
+          hx.globalAlpha = (1 - su) * .85;
+          hx.fillStyle = '#FFF8EC';
+          hx.strokeStyle = '#2B2118';
+          hx.lineWidth = 3;
+          hx.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const ang = i * Math.PI / 3 - Math.PI / 6;
+            const px = gx + Math.cos(ang) * sR;
+            const py = gy + Math.sin(ang) * sR;
+            if (i === 0) hx.moveTo(px, py); else hx.lineTo(px, py);
+          }
+          hx.closePath();
+          hx.fill(); hx.stroke();
+        }
+
+        // 3. Radial comic spark rays with diamond tips
+        hx.globalAlpha = alpha;
+        hx.fillStyle = '#FFD13B';
+        hx.strokeStyle = '#2B2118';
+        hx.lineWidth = 2.2;
+        const rayLen = gsz * (.7 + easeOut * .8);
+        const rayDist = gsz * (.35 + easeOut * .5);
+        for (let i = 0; i < 8; i++) {
+          const ang = i * Math.PI / 4 + .2;
+          const sx = gx + Math.cos(ang) * rayDist;
+          const sy = gy + Math.sin(ang) * rayDist;
+          const ex = gx + Math.cos(ang) * (rayDist + rayLen * .4);
+          const ey = gy + Math.sin(ang) * (rayDist + rayLen * .4);
+          hx.beginPath();
+          hx.moveTo(sx, sy); hx.lineTo(ex, ey);
+          hx.stroke();
+          const spz = 5.5 * alpha;
+          hx.beginPath();
+          hx.moveTo(ex, ey - spz);
+          hx.lineTo(ex + spz * .7, ey);
+          hx.lineTo(ex, ey + spz);
+          hx.lineTo(ex - spz * .7, ey);
+          hx.closePath();
+          hx.fill(); hx.stroke();
+        }
+
+        // 4. Punchy comic text pop: "BLOCK!"
+        if (bt < .82) {
+          const tu = bt / .82;
+          const scale = tu < .2 ? tu / .2 * 1.15 : 1.15 - (tu - .2) * .2;
+          const ty = gy - gsz * (.75 + tu * .35);
+          hx.globalAlpha = Math.min(1, (1 - tu) * 1.4);
+          hx.save();
+          hx.translate(gx, ty);
+          hx.rotate(blockFx.side === 'left' ? -.12 : .12);
+          hx.scale(scale, scale);
+          hx.font = '900 24px "Outfit", system-ui, sans-serif';
+          hx.textAlign = 'center';
+          hx.textBaseline = 'middle';
+          hx.fillStyle = '#2B2118';
+          hx.fillText('BLOCK!', 2, 3);
+          hx.fillStyle = '#FFD13B';
+          hx.strokeStyle = '#2B2118';
+          hx.lineWidth = 4;
+          hx.strokeText('BLOCK!', 0, 0);
+          hx.fillText('BLOCK!', 0, 0);
+          hx.restore();
+        }
+
+        hx.restore();
       }
     };
 
@@ -1108,6 +1258,25 @@
     addEventListener('resize', resize); resize();
 
     const EMPTY_HS = { hands: [], pinch: null, point: null, orbit: null, zoom: null, spread: null };
+    /* __forceHands is a debug/e2e hook — its values must never be able to
+       throw a frame away. A non-array `hands`, a non-array `lm`, or one NaN
+       landmark once crashed drawOverlay outright (which ALSO hid both gloves —
+       the exact thing A7 forbids). Anything not drawable is dropped here so
+       the dropout path treats it as lost tracking instead; a clean state
+       passes through untouched (object identity matters to the tracker). */
+    const saneHands = (hs) => {
+      const hands = hs && typeof hs === 'object' && Array.isArray(hs.hands) ? hs.hands : null;
+      if (!hands) return EMPTY_HS;
+      const drawable = h => {
+        const lm = h && h.lm;
+        if (!Array.isArray(lm) || lm.length < 21) return false;
+        for (let i = 0; i < 21; i++)
+          if (!Number.isFinite(lm[i]?.x) || !Number.isFinite(lm[i]?.y)) return false;
+        return true;
+      };
+      for (const h of hands) if (!drawable(h)) return { ...hs, hands: hands.filter(drawable) };
+      return hs;
+    };
     const controls = { step: 0, sign: null, waitForHands: false, dodge: 0, duck: 0, mittOk: !!mitt };    // persistent input
     let last = performance.now(), fpsN = 0, fpsT = last, orbitT = 0, frameI = 0;
     function loop() {
@@ -1115,7 +1284,7 @@
       const now = performance.now(), dt = Math.min(.1, (now - last) / 1000); last = now;
       mouse.tL += dt; mouse.tR += dt;
       noseDot();
-      const hs = window.__forceHands || (mouseLive() ? mouseHands() : hands?.state || EMPTY_HS);
+      const hs = saneHands(window.__forceHands || (mouseLive() ? mouseHands() : hands?.state || EMPTY_HS));
       const fs = window.__forceFace || (mouse.swaying ? mouseFace() : face?.state || null);
       let out = null;
       if (game) {

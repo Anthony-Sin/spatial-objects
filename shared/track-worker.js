@@ -25,13 +25,23 @@
 */
 let landmarker = null, kind = null, model = null, lastTs = -1, warned = false, failN = 0;
 
-self.onmessage = async (e) => {
-  const m = e.data || {};
-  if (m.type === 'init') {
-    kind = m.kind;
+/* init/close are async (they await import() + createFromOptions) — if two
+   inits, or an init and a close, interleave at those awaits, the loser's
+   graph is never closed and kind/model can end up describing a different
+   landmarker than the one installed. Run every lifecycle message through
+   ONE serial chain: order is preserved and each step sees the previous
+   fully settled. 'frame' stays off the chain — it's synchronous anyway. */
+let chain = Promise.resolve();
+
+async function doInit(m) {
+    kind = (m.kind === 'hands' || m.kind === 'face') ? m.kind : null;
     // re-init must not leak the previous graph or carry a half-spent failN
     try { landmarker?.close?.(); } catch {}
-    landmarker = null; lastTs = -1; failN = 0;
+    landmarker = null; model = null; lastTs = -1; warned = false; failN = 0;
+    if (!kind) {
+      self.postMessage({ type: 'ready', error: `unknown landmarker kind '${m.kind}'` });
+      return;
+    }
     try {
       const { FilesetResolver, HandLandmarker, FaceLandmarker, FaceDetector } =
         await import(`${m.vendorUrl}/vision_bundle.mjs`);
@@ -74,11 +84,11 @@ self.onmessage = async (e) => {
       }
       self.postMessage({ type: 'ready', error: String(lastErr) });
     } catch (err) { self.postMessage({ type: 'ready', error: String(err) }); }
-    return;
-  }
+}
 
-  if (m.type === 'close') { try { landmarker?.close?.(); } catch {} landmarker = null; return; }
-  if (m.type !== 'frame') return;
+function doClose() { try { landmarker?.close?.(); } catch {} landmarker = null; }
+
+function handleFrame(m) {
   const frame = m.frame;
   if (!landmarker) {          // closed mid-flight — still post, or _inFlight wedges
     self.postMessage({ type: 'result', landmarks: kind === 'hands' ? [] : null,
@@ -102,12 +112,13 @@ self.onmessage = async (e) => {
       // biggest box wins — [0] is highest score, not closest face
       let det = null;
       for (const d2 of res.detections || [])
-        if (!det || d2.boundingBox.width * d2.boundingBox.height
-            > det.boundingBox.width * det.boundingBox.height) det = d2;
+        if (d2?.boundingBox && (!det || d2.boundingBox.width * d2.boundingBox.height
+            > det.boundingBox.width * det.boundingBox.height)) det = d2;
       const W = frame.displayWidth || frame.width || 1;
       const H = frame.displayHeight || frame.height || 1;
-      self.postMessage({ type: 'result', inferMs, face: det ? {
-        nose: { x: det.keypoints[2].x, y: det.keypoints[2].y },
+      const nose = det?.keypoints?.[2];   // malformed detection ≠ a face
+      self.postMessage({ type: 'result', inferMs, face: det && nose ? {
+        nose: { x: nose.x, y: nose.y },
         box: { x: det.boundingBox.originX / W, y: det.boundingBox.originY / H,
                w: det.boundingBox.width / W, h: det.boundingBox.height / H } } : null });
     } else
@@ -124,4 +135,16 @@ self.onmessage = async (e) => {
   } finally {
     frame?.close?.();          // return the frame to the pool — leaks stall video
   }
+}
+
+self.onmessage = (e) => {
+  const m = e.data || {};
+  if (m.type === 'init' || m.type === 'close') {
+    // serialized — see the chain comment above; a rejection must not wedge it
+    chain = chain
+      .then(() => m.type === 'init' ? doInit(m) : doClose())
+      .catch(err => console.warn('track-worker lifecycle error:', String(err)));
+    return;
+  }
+  if (m.type === 'frame') handleFrame(m);
 };

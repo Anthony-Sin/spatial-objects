@@ -76,6 +76,9 @@ const NO_FACE = {};                              // shared — faceState may be 
 export class FistTracker {
   constructor(opts = {}) {
     this.T = { ...TUNING, ...opts };        // per-instance tuning overrides
+    // garbage-in guard: a non-finite override falls back to the TUNING
+    // default — MIN_SPAN:'x' once silently bricked the tracker forever.
+    for (const k in TUNING) if (!Number.isFinite(this.T[k])) this.T[k] = TUNING[k];
     this.punches = [];
     this.guard = { left: 0, right: 0 };
     this.reach = { left: 1, right: 1 };     // live view — overlay reads this instead of debug()
@@ -132,7 +135,7 @@ export class FistTracker {
     if (faceFound) {
       this._nose.x = ema(this._nose.x, f.nose.x, T.FACE_SMOOTH, dt);
       this._nose.y = ema(this._nose.y, f.nose.y, T.FACE_SMOOTH, dt);
-      if (f.size > 0) this._faceSize = this._faceSize
+      if (Number.isFinite(f.size) && f.size > 0) this._faceSize = this._faceSize
         ? ema(this._faceSize, f.size, T.FACE_SMOOTH, dt) : f.size;
       // centre = wherever YOU sit (not the middle of the frame), and it
       // quietly follows slow posture drift so the view never creeps sideways.

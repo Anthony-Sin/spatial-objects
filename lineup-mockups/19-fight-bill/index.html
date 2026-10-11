@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<base href="../../">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lineup mock 19-fight-bill — scrap!</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Baloo+2:wght@700;800&family=Caveat:wght@600;700&family=Patrick+Hand&display=swap" rel="stylesheet">
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/three.module.js",
+  "three/addons/loaders/GLTFLoader.js": "./vendor/three/GLTFLoader.js"
+} }
+</script>
+<style>
+  :root { --paper:#FFF8EC; --cream:#FFFDF6; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8;
+    --kraft:#efe0b8; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { height:100%; }
+  body { min-height:100vh; min-height:100svh; overflow:hidden; user-select:none;
+    background:var(--kraft); color:var(--ink);
+    font-family:"Fredoka","Baloo 2","Avenir Next",system-ui,sans-serif; }
+
+  /* aged bill texture — faint halftone + edge vignette */
+  body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:radial-gradient(rgba(43,33,24,.06) 1px, transparent 1px);
+    background-size:7px 7px; }
+  body::after { content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:radial-gradient(120% 100% at 50% 45%, transparent 60%, rgba(43,33,24,.28)); }
+
+  #webgl-canvas { position:fixed; inset:0; width:100%; height:100%; z-index:1;
+    cursor:grab; outline:none; }
+  #webgl-canvas:active { cursor:grabbing; }
+
+  .mast { position:fixed; top:0; left:0; right:0; z-index:10;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 22px; pointer-events:none; }
+  .mast > * { pointer-events:auto; }
+  .wm { font-family:"Baloo 2",sans-serif; font-weight:800; font-size:21px;
+    color:var(--ink); transform:rotate(-1.5deg); }
+  .wm i { font-style:normal; color:var(--coral); }
+  .wm span { display:block; font-family:"Fredoka",sans-serif; font-weight:600;
+    font-size:9px; letter-spacing:.3em; text-transform:uppercase;
+    color:rgba(43,33,24,.55); }
+  .pills { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+  .pill { display:inline-flex; align-items:center; gap:6px; padding:5px 13px;
+    background:var(--cream); border:2.5px solid var(--ink); border-radius:999px;
+    box-shadow:0 3px 0 rgba(43,33,24,.3);
+    font-size:10px; font-weight:700; letter-spacing:.13em; text-transform:uppercase; }
+  .pill b { color:var(--coral); font-size:13px; }
+  .pill .ko-ic { width:11px; height:11px; border-radius:50%;
+    background:var(--sun); border:1.5px solid var(--ink); }
+  .back { font-size:10px; font-weight:700; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--ink); text-decoration:none; background:var(--cream);
+    border:2.5px solid var(--ink); padding:6px 14px; border-radius:10px;
+    box-shadow:0 3px 0 rgba(43,33,24,.3); transition:all .15s; }
+  .back:hover { background:var(--coral); color:var(--paper); transform:translateY(-2px); }
+
+  /* ---------- bill-poster header, words above the model ---------- */
+  .hero { position:fixed; top:8.5%; left:0; right:0; z-index:6; text-align:center;
+    pointer-events:none; padding:0 16px; }
+  .presents { display:inline-flex; align-items:center; gap:14px;
+    font-size:11px; font-weight:700; letter-spacing:.4em; text-transform:uppercase;
+    color:var(--ink); }
+  .presents::before, .presents::after { content:""; width:56px; height:5px;
+    border-top:2px solid var(--ink); border-bottom:2px solid var(--ink); }
+  .hero-name { display:block; font-family:"Baloo 2",sans-serif; font-weight:800;
+    font-size:clamp(58px, 10vw, 116px); line-height:.92; letter-spacing:.03em;
+    color:var(--ink); margin-top:8px;
+    text-shadow:0 4px 0 rgba(255,107,87,.55), 0 9px 22px rgba(43,33,24,.25); }
+  .hero-name .hbadge { display:inline-block; vertical-align:middle; margin-left:16px;
+    font-family:"Fredoka",sans-serif; font-size:11px; font-weight:700;
+    letter-spacing:.16em; padding:4px 13px; border-radius:6px;
+    border:2.5px solid var(--ink); transform:rotate(-3deg) translateY(-6px); text-shadow:none; }
+  .hbadge.open { background:var(--sun); color:var(--ink);
+    box-shadow:0 3px 0 rgba(43,33,24,.35); }
+  .hbadge.locked { background:var(--ink); color:var(--paper);
+    box-shadow:0 3px 0 rgba(43,33,24,.35); }
+  .rule { width:min(420px,72vw); margin:10px auto 0;
+    border-top:3px solid var(--ink); position:relative; }
+  .rule::after { content:""; position:absolute; left:0; right:0; top:4px;
+    border-top:1.5px solid var(--ink); }
+  .hero-desc { font-family:"Caveat",cursive; font-size:clamp(20px,2.4vw,27px);
+    color:rgba(43,33,24,.8); margin-top:12px; }
+  .hero.pop .hero-name { animation:pop .3s cubic-bezier(.34,1.4,.64,1); }
+  @keyframes pop { 0% { transform:scale(.95); opacity:.5; }
+    100% { transform:scale(1); opacity:1; } }
+  .dock.pop .card { animation:dockpop .28s cubic-bezier(.34,1.4,.64,1); }
+  @keyframes dockpop { 0% { transform:scale(.98) translateY(4px); opacity:.85; }
+    100% { transform:scale(1) translateY(0); opacity:1; } }
+
+  .note { position:absolute; bottom:calc(100% + 10px); left:0; right:0;
+    text-align:center; font-family:"Patrick Hand",cursive; font-size:15px;
+    color:rgba(43,33,24,.65); pointer-events:none;
+    text-shadow:0 1px 4px rgba(239,224,184,.9); }
+
+  .dock { position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+    width:min(600px, calc(100vw - 24px)); z-index:10; }
+  .chips { display:flex; gap:8px; margin-bottom:10px; }
+  .chip { flex:1; padding:7px 10px; cursor:pointer;
+    background:var(--cream); color:var(--ink);
+    border:2.5px solid var(--ink); border-radius:4px;
+    font-family:"Fredoka",sans-serif; font-size:10.5px; font-weight:700;
+    letter-spacing:.13em; text-transform:uppercase;
+    box-shadow:0 3px 0 rgba(43,33,24,.3);
+    transition:all .18s cubic-bezier(.34,1.56,.64,1);
+    display:flex; align-items:center; justify-content:center; gap:6px; }
+  .chip:hover { transform:translateY(-2px); background:var(--sun); }
+  .chip.sel { background:var(--ink); color:var(--kraft);
+    transform:translateY(-3px); box-shadow:0 5px 0 rgba(43,33,24,.4); }
+  .chip.locked { opacity:.7; }
+  .chip .lic { font-size:9px; }
+  .chip.no { animation:shake .38s ease-in-out; }
+  @keyframes shake { 20% { transform:translateX(-5px); }
+    40% { transform:translateX(5px); } 60% { transform:translateX(-3px); }
+    80% { transform:translateX(3px); } }
+
+  /* ticket-stub card */
+  .card { background:var(--cream); border:3px solid var(--ink); border-radius:8px;
+    box-shadow:0 6px 0 rgba(43,33,24,.35), 0 16px 34px rgba(43,33,24,.2);
+    padding:13px 18px 15px; position:relative; }
+  .card::before { content:""; position:absolute; top:0; left:14px; right:14px;
+    border-top:2px dashed rgba(43,33,24,.4); }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:10px;
+    margin-bottom:10px; margin-top:6px; }
+  .stat { display:flex; flex-direction:column; gap:4px; }
+  .stat .lbl { font-size:9.5px; font-weight:800; letter-spacing:.2em;
+    color:rgba(43,33,24,.6); }
+  .stat .lbl b { color:var(--ink); }
+  .pips { display:flex; gap:4px; }
+  .pips i { flex:1; height:7px; border-radius:2px;
+    background:rgba(43,33,24,.08); border:1.5px solid var(--ink); }
+  .pips i.on { background:var(--coral); }
+  .spec { display:flex; align-items:center; gap:7px; font-size:11px;
+    font-weight:700; letter-spacing:.06em;
+    border-top:1.5px solid rgba(43,33,24,.25);
+    border-bottom:1.5px solid rgba(43,33,24,.25);
+    padding:6px 4px; margin-bottom:12px; }
+  .spec .star { color:var(--coral); }
+  .spec .sd { color:rgba(43,33,24,.6); font-weight:500; }
+  .act { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .pick { font-size:10.5px; letter-spacing:.12em; text-transform:uppercase;
+    color:rgba(43,33,24,.6); }
+  .pick b { color:var(--coral); font-size:13px; }
+  .enter { flex:1; display:inline-flex; align-items:center; justify-content:center;
+    font-family:"Baloo 2",sans-serif; font-size:14px; font-weight:800;
+    letter-spacing:.14em; text-transform:uppercase; text-decoration:none;
+    padding:10px 16px; border-radius:8px; cursor:pointer;
+    background:var(--leaf); color:var(--paper); border:2.5px solid var(--ink);
+    box-shadow:0 4px 0 var(--ink); transition:all .15s cubic-bezier(.34,1.56,.64,1); }
+  .enter:hover { background:var(--coral); transform:translateY(-2px);
+    box-shadow:0 6px 0 var(--ink); }
+  .enter:active { transform:translateY(2px); box-shadow:0 1px 0 var(--ink); }
+  .enter.locked { background:rgba(43,33,24,.18); color:rgba(43,33,24,.5);
+    box-shadow:none; cursor:not-allowed; }
+
+  .hint { position:fixed; bottom:16px; left:22px; z-index:5; font-size:9.5px;
+    letter-spacing:.18em; text-transform:uppercase; color:rgba(43,33,24,.5);
+    pointer-events:none; }
+  .hint b { color:var(--ink); }
+
+  @media (max-width:640px) {
+    .mast { padding:10px 14px; }
+    .pills { display:none; }
+    .hero { top:7%; }
+    .hero-name { font-size:clamp(44px,14vw,68px); }
+    .hint { display:none; }
+    .dock { bottom:10px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="webgl-canvas"></canvas>
+
+<header class="mast">
+  <div class="wm">SCRAP<i>!</i><span>pick your rival</span></div>
+  <div class="pills">
+    <span class="pill">BEST <b data-best>0</b> PTS</span>
+    <span class="pill"><b data-wins>0</b> WINS</span>
+    <span class="pill"><i class="ko-ic"></i><b data-kos>0</b> KOs</span>
+    <span class="pill">AVG KO <b data-koavg>—</b></span>
+  </div>
+  <a class="back" href="./">← MENU</a>
+</header>
+
+<div class="hero" data-pop>
+  <div class="presents">scrap! proudly presents</div>
+  <h1 class="hero-name"><span data-hero-name>BUBBLE</span><span class="hbadge open" data-hero-badge data-cls-open="hbadge open" data-cls-locked="hbadge locked">READY TO SCRAP</span></h1>
+  <div class="rule"></div>
+  <div class="hero-desc" data-hero-desc>sprout crown · springy stance</div>
+</div>
+<div class="dock" data-pop>
+  <div class="note" data-note>the contenders await your challenge</div>
+  <div class="chips">
+    <button class="chip sel" data-sel="0">BOUT I · <span data-sel-name>BUBBLE</span></button>
+    <button class="chip" data-sel="1">BOUT II · <span data-sel-name>BLOCKY</span>
+      <span class="lic" data-lockic style="display:none"><svg viewBox="0 0 12 12" width="9" height="9" aria-hidden="true"><rect x="2" y="5" width="8" height="6" rx="1.5" fill="currentColor"/><path d="M3.6 5V3.7a2.4 2.4 0 0 1 4.8 0V5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span></button>
+    <button class="chip" data-sel="2">BOUT III · <span data-sel-name>BEAN</span>
+      <span class="lic" data-lockic style="display:none"><svg viewBox="0 0 12 12" width="9" height="9" aria-hidden="true"><rect x="2" y="5" width="8" height="6" rx="1.5" fill="currentColor"/><path d="M3.6 5V3.7a2.4 2.4 0 0 1 4.8 0V5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span></button>
+  </div>
+  <div class="card">
+    <div class="stats">
+      <div class="stat"><div class="lbl">ATK <b data-stat-atk>3</b>/5</div><div class="pips" data-pip-atk></div></div>
+      <div class="stat"><div class="lbl">DEF <b data-stat-def>3</b>/5</div><div class="pips" data-pip-def></div></div>
+      <div class="stat"><div class="lbl">SPD <b data-stat-spd>4</b>/5</div><div class="pips" data-pip-spd></div></div>
+    </div>
+    <div class="spec"><span class="star">★</span><span data-spec-name>TRIPLE TAP</span><span class="sd" data-spec-desc>— 3 hits, one stamina</span></div>
+    <div class="act">
+      <div class="pick">your rival: <b data-pick>BUBBLE</b></div>
+      <a class="enter" data-enter href="./boxing.html">ADMIT ONE · ENTER →</a>
+    </div>
+  </div>
+</div>
+
+<div class="hint"><b>drag</b> orbit · <b>click</b> a rival · <b>1–3</b> swap</div>
+
+<script type="module">
+  import { boot } from './lineup-mockups/_hero/engine.mjs';
+  boot({
+    bg: 0xe7d5a6, fogNear: 10, fogFar: 34,
+    hemiSky: 0xffeec4, hemiGround: 0x9a7f52, hemiInt: 0.7,
+    floor: 0xdcc99a, floorRough: 0.9,
+    plinth: 0xf6ead0, plinthRough: 0.7,
+    rim: 0x8a6a3a, rimMetal: 0.5, rimRough: 0.45,
+    spotColor: 0xffe2ac, spotHot: 34, spotDim: 1.1,
+    glowHot: 0.45, glowDim: 0.02,
+    camRad: 4.7, camPhi: 1.16, camTgtY: 1.0,
+  });
+</script>
+</body>
+</html>

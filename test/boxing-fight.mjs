@@ -481,40 +481,40 @@ const resolvedSwing = s => s.events.includes('player-dodged') || s.events.includ
     `want=${h._wantCombo} normals=${h._normals} stam=${h.state.npc.stamina.toFixed(3)}`);
 }
 
-/* 10c — per-variant specials: blocky's SLEDGE, bean's BEAN BARRAGE */
+/* 10c — per-variant specials: sumo's SUMO SLAM, bean's BEAN BARRAGE */
 {
-  // SLEDGE — blocky throws one huge telegraphed uppercut that chips guard
-  const f = new Fight({ seed: 5, npcVariant: 'blocky' });
+  // SUMO SLAM — sumo throws one huge telegraphed uppercut that chips guard
+  const f = new Fight({ seed: 5, npcVariant: 'sumo' });
   toFighting(f);
   f._normals = TUNING.specialEvery;
   f.state.npc.stamina = .9;
   const stam0 = f.state.npc.stamina;
   f._windup();
-  check('blocky: gate met → SLEDGE telegraph (upper, slow windup)',
-    f._wantSledge === true && f.state.npc.telegraph?.kind === 'upper'
-      && f.state.npc.telegraph.special === 'SLEDGE',
+  check('sumo: gate met → SUMO SLAM telegraph (upper, slow windup)',
+    (f._wantSlam === true || f._wantSledge === true) && f.state.npc.telegraph?.kind === 'upper'
+      && f.state.npc.telegraph.special === 'SUMO SLAM',
     `telegraph=${JSON.stringify(f.state.npc.telegraph)}`);
-  check('blocky: sledge burns its own stamina cost',
+  check('sumo: slam burns its own stamina cost',
     f.state.npc.stamina <= stam0 - .29, `stam=${f.state.npc.stamina.toFixed(2)}`);
   const seen0 = [];
   until(f, s => s.events.length > 0 || s.npc.action !== 'windup', 3, null, seen0);
-  // damage: base upper × blocky dmg stat × sledge mult; guard only chips it
-  const g = new Fight({ seed: 5, npcVariant: 'blocky' });
+  // damage: base upper × sumo dmg stat × slam mult; guard only chips it
+  const g = new Fight({ seed: 5, npcVariant: 'sumo' });
   toFighting(g);
-  g._wantSledge = true; g._pk = { kind: 'upper', side: 'left' };
+  g._wantSlam = true; g._wantSledge = true; g._pk = { kind: 'upper', side: 'left' };
   const hp0 = g.state.player.hp;
   g._impact(inp({ guard: { right: 1 } }));           // fully guarded still hurts
-  const chipDmg = 17 * 1.12 * 1.5 * .65;
-  check('blocky: SLEDGE cracks the guard — chip damage through a block',
-    Math.abs(hp0 - g.state.player.hp - chipDmg) < .5 && g.state.lastBlow.special === 'SLEDGE',
+  const chipDmg = 17 * 1.25 * 1.6 * .7;
+  check('sumo: SUMO SLAM cracks the guard — chip damage through a block',
+    Math.abs(hp0 - g.state.player.hp - chipDmg) < .5 && g.state.lastBlow.special === 'SUMO SLAM',
     `took=${hp0 - g.state.player.hp} expect≈${chipDmg.toFixed(1)}`);
-  const h = new Fight({ seed: 5, npcVariant: 'blocky' });
+  const h = new Fight({ seed: 5, npcVariant: 'sumo' });
   toFighting(h);
-  h._wantSledge = true; h._pk = { kind: 'upper', side: 'left' };
+  h._wantSlam = true; h._wantSledge = true; h._pk = { kind: 'upper', side: 'left' };
   const hp1 = h.state.player.hp;
-  h._impact(inp());                                   // unguarded — full sledge
-  check('blocky: unguarded SLEDGE hits for ~1.5× a tuned upper',
-    Math.abs(hp1 - h.state.player.hp - 17 * 1.12 * 1.5) < .5,
+  h._impact(inp());                                   // unguarded — full slam
+  check('sumo: unguarded SUMO SLAM hits for ~1.6× a tuned upper',
+    Math.abs(hp1 - h.state.player.hp - 17 * 1.25 * 1.6) < .5,
     `took=${hp1 - h.state.player.hp}`);
 
   // BEAN BARRAGE — bean chains exactly two fast swings, not three

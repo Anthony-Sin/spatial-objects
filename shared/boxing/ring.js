@@ -69,6 +69,17 @@ function mulberry32(seed) {
 export class RingSim {
   constructor(opts = {}) {
     this.t = { ...TUNING, ...opts };            // every TUNING key overridable
+    /* garbage-in guard: overrides must be finite non-negative numbers, else
+       the default stands — a NaN radius once made every position NaN, and a
+       negative accel inverted the steering feedback into divergence. */
+    for (const k in TUNING) {
+      const v = this.t[k];
+      if (!Number.isFinite(v) || v < 0) this.t[k] = TUNING[k];
+    }
+    this.t.playerPushShare = clamp(this.t.playerPushShare, 0, 1);
+    // the ring must fit both bodies side by side, else separation is impossible
+    this.t.radius = Math.max(this.t.radius, 2 * this.t.bodyRadius + .3);
+    if (this.t.orbitFlipMax < this.t.orbitFlipMin) this.t.orbitFlipMax = this.t.orbitFlipMin;
     this._seed = (opts.seed ?? 1337) >>> 0;
     this.reset();
   }
@@ -77,7 +88,9 @@ export class RingSim {
     const { t } = this;
     // Spawn: player planted in its corner zone on +Z (camera side),
     // npc starts at mid range so the opening exchange arrives quickly.
-    this._home = { x: 0, z: 1.5 };
+    // _home stays inside the ropes even when `radius` is shrunk — a corner
+    // mark outside the ring had the leash dragging the player out of bounds.
+    this._home = { x: 0, z: Math.min(1.5, Math.max(0, (t.radius - t.bodyRadius) * .9)) };
     this.player = { pos: { x: this._home.x, z: this._home.z }, vel: { x: 0, z: 0 }, radius: t.bodyRadius, heading: Math.PI };
     this.npc    = { pos: { x: 0, z: -0.05 }, vel: { x: 0, z: 0 }, radius: t.bodyRadius, heading: 0 };
     this._rng = mulberry32(this._seed);
@@ -90,6 +103,7 @@ export class RingSim {
   step(dt, input = {}) {
     if (!(dt > 0)) return;                    // ignore 0 / negative / NaN dt
     dt = Math.min(dt, 0.1);                   // stability cap for huge hitches
+    if (!input || typeof input !== 'object') input = {};   // step(dt, null) must not crash
     const t = this.t, P = this.player, N = this.npc;
     // Sway and dodge steer the head only. Depth controls footwork.
     const inp = this._inp || (this._inp = { dir: 'hold', stun: false, step: 0 });
@@ -242,9 +256,14 @@ export class RingSim {
     N.pos.x += (dx / d) * ov; N.pos.z += (dz / d) * ov;
   }
 
-  // Corner-zone leash bounds forward and backward footwork.
+  // Corner-zone leash bounds forward and backward footwork. The cap is also
+  // bounded by what keeps the player inside the ropes (|home| + lim ≤ ringLim
+  // by triangle inequality) — a shrunken ring can't leash the player out.
   _leashPlayer() {
-    const P = this.player, lim = this.t.playerLeash;
+    const P = this.player;
+    const ringLim = Math.max(0, this.t.radius - P.radius) || 0;
+    const homeR = Math.hypot(this._home.x, this._home.z);
+    const lim = Math.max(0, Math.min(Math.max(0, this.t.playerLeash) || 0, ringLim - homeR));
     const dx = P.pos.x - this._home.x, dz = P.pos.z - this._home.z;
     const r = Math.hypot(dx, dz);
     if (r > lim) {
@@ -258,7 +277,7 @@ export class RingSim {
   // Hard clamp inside the ropes (ring radius − body radius); bleeds the
   // outward velocity component so a clamped fighter doesn't keep pushing.
   _clamp(f) {
-    const lim = this.t.radius - f.radius;
+    const lim = Math.max(0, this.t.radius - f.radius) || 0;   // never negative/NaN
     const r = Math.hypot(f.pos.x, f.pos.z);
     if (r <= lim) return 0;
     const nx = f.pos.x / r, nz = f.pos.z / r;

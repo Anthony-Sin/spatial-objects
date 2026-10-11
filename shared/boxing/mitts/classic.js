@@ -75,20 +75,38 @@ const strokeFingers = (ctx, P) => {
 export const ID = 'classic';
 export const NAME = 'Old Faithful';
 
+/* a landmark set is only drawable when all 21 joints are finite numbers —
+   one NaN or missing joint poisons every derived point, and the mitt would
+   blank for that frame instead of falling back to the fist cloud. */
+const lmOk = lm => {
+  for (let i = 0; i < 21; i++) {
+    const p = lm[i];
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return false;
+  }
+  return true;
+};
+
 export function draw(ctx, pos, o = {}) {
-  if (!pos) return;
-  const reach = Math.max(0, Math.min(2.4, o.reach ?? 1));
+  if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+  const reach = Math.max(0, Math.min(2.4, Number.isFinite(o.reach) ? o.reach : 1));
   // Landmarks determine the shape, while this cap prevents a close hand from
   // swallowing the whole opponent on small screens. (o.cap raises it for
   // overlays that dress a world-space glove, e.g. the outro avatar.)
-  const size = Math.min(o.cap ?? 96, Math.max(28, pos.size * (0.55 + 0.45 * Math.min(reach, 1.8))));
-  const dim = o.dim ?? 1;
-  const sq = o.squash ?? 0;
+  let size = Math.min(o.cap ?? 96,
+    Math.max(28, pos.size * (0.55 + 0.45 * Math.min(reach, 1.8))));
+  /* degenerate size (NaN reach/span, cap ≤ 0) must not kill the mitt —
+     A7: the gloves are the player and never disappear — and a non-positive
+     size would throw inside ctx.ellipse/arc (negative radius). */
+  if (!Number.isFinite(size) || size <= 0) size = 48;
+  const dim = Number.isFinite(o.dim) ? Math.min(1, Math.max(0, o.dim)) : 1;
+  const sq = Math.min(1, Math.max(0, o.squash || 0));    // squash > 1 mirrors the mitt
 
   /* landmarks: real ones when handed in, else the fist cloud at pos.
-     Everything is re-anchored on pos.x/y so manual poses still work. */
-  let P;
-  if (o.arm) {
+     Everything is re-anchored on pos.x/y so manual poses still work.
+     `tracked` remembers whether P carries a real hand's own orientation —
+     generated clouds get pos.ang applied further down instead. */
+  let P, tracked = false;
+  if (o.arm && Number.isFinite(o.arm.x) && Number.isFinite(o.arm.y)) {
     /* o.arm = {x,y} px anchor up the arm: the same fist mitt, rotated so its
        wrist rides down the arm — drawn over a sleeve that runs the glove's
        forearm back onto the stub arm so the hand can't float off it. */
@@ -115,7 +133,7 @@ export function draw(ctx, pos, o = {}) {
       P[i].x = pos.x + (u[0] * ca - u[1] * sa) * size;
       P[i].y = pos.y + (u[0] * sa + u[1] * ca) * size;
     }
-  } else if (o.lm && o.lm.length >= 21) P = o.lm;
+  } else if (o.lm && o.lm.length >= 21 && lmOk(o.lm)) { P = o.lm; tracked = true; }
   else {
     P = SCR_FIST;
     for (let i = 0; i < 21; i++) { P[i].x = pos.x + FIST[i][0] * size; P[i].y = pos.y + FIST[i][1] * size; }
@@ -151,7 +169,7 @@ export function draw(ctx, pos, o = {}) {
   ctx.translate(pos.x, pos.y);
   // The landmarks already contain the hand's angle. The generated fallback
   // needs the pose angle because it has no tracked orientation of its own.
-  if (!o.lm) ctx.rotate((pos.ang || 0) * .35);
+  if (!tracked) ctx.rotate((pos.ang || 0) * .35);
   ctx.translate(-pos.x, -pos.y);
   if (sq > 0) {                            // punch smear along the thrust
     ctx.translate(0, -size * .3 * sq);

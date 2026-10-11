@@ -71,6 +71,11 @@
     pointer-events:none; z-index:1;
     display:flex; align-items:center; justify-content:center;
   }
+  @media (max-width: 480px) {
+    /* keep the decorative bleed inside the viewport on phones — a wider
+       bleed only inflates scrollWidth, body already clips it anyway */
+    .comic-halftone { inset:-30px -18px -24px; }
+  }
   .comic-halftone svg {
     width:100%; height:100%; overflow:visible;
   }
@@ -155,7 +160,7 @@
   }
 
   .ring-canvas {
-    position:fixed; inset:0; width:100%; height:100%;
+    position:fixed; inset:0;
     z-index:1; pointer-events:none;
   }
 
@@ -167,34 +172,35 @@
   }
 
   .tut-check {
-    display:inline-flex; align-items:center; gap:9px;
-    cursor:pointer; user-select:none; -webkit-tap-highlight-color:transparent;
-    padding:6px 18px;
-    background:#fff;
-    border:3px solid var(--ink); border-radius:999px;
-    box-shadow:0 3.5px 0 var(--ink);
-    font-size:clamp(12px,1.4vmin,14px); font-weight:700;
-    letter-spacing:.09em; text-transform:uppercase; color:var(--ink);
-    transition:transform .15s cubic-bezier(.34,1.7,.5,1), box-shadow .15s;
-    margin-bottom:2px;
+    position:relative;
+    width:clamp(54px, 7vmin, 66px); height:clamp(54px, 7vmin, 66px);
+    border-radius:50%;
+    border:3.5px solid var(--ink); background:#fff; color:var(--ink);
+    display:grid; place-items:center; cursor:pointer; flex-shrink:0;
+    box-shadow:0 6px 0 var(--ink);
+    transition:transform .18s cubic-bezier(.34,1.7,.5,1), box-shadow .18s cubic-bezier(.34,1.7,.5,1), background .15s;
+    user-select:none; -webkit-tap-highlight-color:transparent;
+    margin:0; padding:0;
   }
   .tut-check:hover {
-    transform:translateY(-2px) rotate(-.8deg);
-    box-shadow:0 5.5px 0 var(--ink);
+    transform:translateY(-3.5px) rotate(-4deg);
+    box-shadow:0 9.5px 0 var(--ink);
+    background:#FFFDF0;
   }
   .tut-check:active {
-    transform:translateY(1px);
+    transform:translateY(2.5px) scale(.96);
     box-shadow:0 1px 0 var(--ink);
+    transition-duration:.06s;
   }
   .tut-check:focus-within {
-    outline:3px solid var(--coral);
+    outline:4px solid var(--sun);
     outline-offset:3px;
   }
   .tut-input {
     position:absolute; opacity:0; pointer-events:none; width:0; height:0; margin:0;
   }
   .tut-box {
-    width:22px; height:22px; border-radius:6px;
+    width:26px; height:26px; border-radius:8px;
     border:2.5px solid var(--ink); background:#fff;
     box-shadow:0 3px 0 var(--ink);
     display:grid; place-items:center; flex-shrink:0;
@@ -202,12 +208,6 @@
   }
   .tut-check:hover .tut-box {
     box-shadow:0 4px 0 var(--ink);
-  }
-  .tut-box svg {
-    width:14px; height:14px; fill:none;
-    stroke:var(--ink); stroke-width:3.5; stroke-linecap:round; stroke-linejoin:round;
-    opacity:0; transform:scale(.4) rotate(-12deg);
-    transition:opacity .15s ease, transform .18s cubic-bezier(.34,1.8,.5,1);
   }
   .tut-input:checked + .tut-box {
     background:var(--sun);
@@ -218,8 +218,59 @@
   .tut-input:focus-visible + .tut-box {
     outline:3px solid var(--sun); outline-offset:3px;
   }
+  .tut-box svg {
+    width:15px; height:15px; fill:none;
+    stroke:var(--ink); stroke-width:3.5; stroke-linecap:round; stroke-linejoin:round;
+    opacity:0; transform:scale(.4) rotate(-12deg);
+    transition:opacity .15s ease, transform .18s cubic-bezier(.34,1.8,.5,1);
+  }
   .tut-label {
-    line-height:1;
+    position:absolute;
+    bottom:calc(100% + 12px);
+    left:50%;
+    transform:translateX(-50%) translateY(4px) scale(.92);
+    transform-origin:bottom center;
+    background:#fff;
+    color:var(--ink);
+    border:3px solid var(--ink);
+    border-radius:999px;
+    box-shadow:0 4.5px 0 var(--ink);
+    padding:6px 14px;
+    font-size:clamp(11px, 1.3vmin, 13px);
+    font-weight:800;
+    letter-spacing:.09em;
+    text-transform:uppercase;
+    line-height:1.2;
+    white-space:nowrap;
+    max-width:calc(100vw - 24px);
+    pointer-events:none;
+    opacity:0;
+    visibility:hidden;
+    transition:opacity .16s ease, transform .18s cubic-bezier(.34,1.7,.5,1), visibility .16s;
+    z-index:30;
+  }
+  .tut-label::after {
+    content:'';
+    position:absolute;
+    top:100%;
+    left:50%;
+    transform:translateX(-50%);
+    border:6px solid transparent;
+    border-top-color:var(--ink);
+  }
+  @media (max-width: 480px) {
+    /* button can sit near the right edge when the menu wraps — anchor the
+       bubble to the button's right side so it extends left, on-screen */
+    .tut-label { left:auto; right:-4px; transform:translateY(4px) scale(.92); transform-origin:bottom right; }
+    .tut-label::after { left:auto; right:26px; transform:none; }
+    .tut-check:hover .tut-label,
+    .tut-check:focus-within .tut-label { transform:translateY(0) scale(1); }
+  }
+  .tut-check:hover .tut-label,
+  .tut-check:focus-within .tut-label {
+    opacity:1;
+    visibility:visible;
+    transform:translateX(-50%) translateY(0) scale(1);
   }
 
   .menu-row {
@@ -506,16 +557,15 @@
     </div>
 
     <div class="menu-group">
-      <label class="tut-check" for="tut-toggle">
-        <input type="checkbox" id="tut-toggle" class="tut-input">
-        <span class="tut-box" aria-hidden="true">
-          <svg viewBox="0 0 16 16"><path d="M3.2 8.2 l3.2 3.4 l6.4 -7.2"/></svg>
-        </span>
-        <span class="tut-label">Start in tutorial</span>
-      </label>
-
       <nav class="menu-row">
-        <a class="btn main" id="enter-btn" href="./lineup.html">Choose Your Fighter</a>
+        <a class="btn main" id="enter-btn" href="./lineup.html">Choose Your Opponent</a>
+        <label class="tut-check" for="tut-toggle" aria-label="Start in Tutorial" title="Start in Tutorial">
+          <input type="checkbox" id="tut-toggle" class="tut-input">
+          <span class="tut-box" aria-hidden="true">
+            <svg viewBox="0 0 16 16"><path d="M3.2 8.2 l3.2 3.4 l6.4 -7.2"/></svg>
+          </span>
+          <span class="tut-label">Start in Tutorial</span>
+        </label>
         <button type="button" class="btn-gear" id="settings-open-btn" aria-label="Settings" title="Game Settings">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.45.17-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
@@ -1048,8 +1098,10 @@
     p1.group.rotation.y = Math.PI / 2 - 0.22;
     scene.add(p1.group);
 
-    // Boxer 2: Rival BLOCKY (square fighter to face round Pip)
-    let rivalVariant = 'blocky';
+    // Boxer 2: the stored rival pick — fallback is the ALWAYS-OPEN starter
+    // (a variant with no koAvg gate). Never fall back to a gated or stale
+    // variant: a corrupt/locked pick must still produce a shippable rival.
+    let rivalVariant = VARIANTS.find(v => VARIANT_INFO[v]?.koAvg == null) || VARIANTS[0] || 'bubble';
     try {
       const saved = localStorage.getItem('boxing:npc') || '';
       const ko = JSON.parse(localStorage.getItem('boxing:ko') || 'null');
@@ -1084,8 +1136,20 @@
     // Smooth, seamless sparring choreography loop (continuous 6.8s cycle)
     let t = 0;
 
+    /* A lost GL context (or a driver fault inside render) must not burn the
+       menu forever: pause the loop while the context is gone, restart it on
+       'webglcontextrestored', and after repeated render faults degrade to
+       UI-only quietly instead of spamming a pageerror every frame. */
+    let dead = false, fails = 0;
+    canvas.addEventListener('webglcontextlost', () => { dead = true; });
+    canvas.addEventListener('webglcontextrestored', () => {
+      if (dead) { dead = false; fails = 0; renderFrame(); } // restart only a stopped loop — never double-schedule
+    });
+
     function renderFrame() {
+      if (dead) return;
       requestAnimationFrame(renderFrame);
+      try {
       const dt = 0.016;
       t += dt;
 
@@ -1127,6 +1191,10 @@
       p2.tick(dt);
 
       renderer.render(scene, camera);
+      fails = 0;
+      } catch (e) {
+        if (++fails >= 5) { dead = true; console.warn('SCRAP! menu 3D render stopped — showing UI only:', e); }
+      }
     }
     renderFrame();
   })();

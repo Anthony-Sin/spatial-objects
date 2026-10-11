@@ -18,6 +18,20 @@ const KIND_TXT = { pinch: 'GRAB', palm: 'ORBIT', point: 'POINT', fist: 'FIST', o
 const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 const away = (p, c, k) => ({ x: p.x + (p.x - c.x) * k, y: p.y + (p.y - c.y) * k });
 
+/* ctx.roundRect is Chrome 99+/FF 112+/Safari 16+ — on an older engine the
+   bare call is a TypeError that kills the caller's whole render tick, so
+   fall back to the arcTo version (visually identical). */
+const rr = (ctx, x, y, w, h, r) => {
+  if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); return; }
+  const q = Math.min(Math.abs(r), Math.abs(w) / 2, Math.abs(h) / 2);
+  ctx.moveTo(x + q, y);
+  ctx.arcTo(x + w, y, x + w, y + h, q);
+  ctx.arcTo(x + w, y + h, x, y + h, q);
+  ctx.arcTo(x, y + h, x, y, q);
+  ctx.arcTo(x, y, x + w, y, q);
+  ctx.closePath();
+};
+
 function blobPalm(ctx, P, size, col) {
   // smooth closed curve through the metacarpal ring. Knuckles puff only a
   // touch (keeps the top edge flat — no scallops between finger bases);
@@ -43,7 +57,7 @@ function tag(ctx, txt, x, y, col) {
   ctx.font = '600 9.5px system-ui';
   const w = ctx.measureText(txt).width + 16;
   ctx.fillStyle = PAPER; ctx.strokeStyle = col; ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.roundRect(x - w / 2, y - 10, w, 19, 9); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); rr(ctx, x - w / 2, y - 10, w, 19, 9); ctx.fill(); ctx.stroke();
   ctx.fillStyle = col; ctx.textAlign = 'center'; ctx.fillText(txt, x, y + 3.5); ctx.textAlign = 'left';
 }
 
@@ -68,9 +82,18 @@ function toolGlyph(ctx, tx, ty, r, tool) {
   ctx.stroke();
 }
 
-/* main entry — one hand per call */
+/* main entry — one hand per call. ctx state is fully save/restored: callers
+   draw HUD text and more gloves after this, and a leaked font/lineCap used
+   to bleed into their output. */
 export function drawGlove(ctx, P, opts = {}) {
+  if (!ctx) return;
   if (!P || P.length < 21) { console.warn('glove: short landmarks', P?.length); return; }
+  // NaN/∞ landmarks silently no-op every canvas call anyway — bail early
+  // instead of burning a frame's worth of dead path work
+  for (let i = 0; i < 21; i++)
+    if (!P[i] || !Number.isFinite(P[i].x) || !Number.isFinite(P[i].y)) return;
+  ctx.save();
+  try {
   // hand close to the camera spans half the frame — cap the glove so it
   // reads as an overlay, not a billboard. Landmarks rescale toward the
   // palm center so proportions survive.
@@ -106,7 +129,7 @@ export function drawGlove(ctx, P, opts = {}) {
 
   // cuff band + colored rim
   ctx.save(); ctx.translate(P[0].x, P[0].y); ctx.rotate(ang);
-  ctx.beginPath(); ctx.roundRect(-fw * 1.7, -fw * 1.05, fw * 1.6, fw * 2.1, fw * .45);
+  ctx.beginPath(); rr(ctx, -fw * 1.7, -fw * 1.05, fw * 1.6, fw * 2.1, fw * .45);
   ctx.fillStyle = PAPER; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.stroke();
   ctx.beginPath(); ctx.moveTo(-fw * .35, -fw * 1.0); ctx.lineTo(-fw * .35, fw * 1.0);
   ctx.strokeStyle = col; ctx.lineWidth = 2.2; ctx.stroke();
@@ -126,4 +149,5 @@ export function drawGlove(ctx, P, opts = {}) {
   // role tag under the wrist
   const st = opts.side ? opts.side[0].toUpperCase() + ' · ' : '';
   tag(ctx, st + (KIND_TXT[opts.kind] || 'READY'), P[0].x, P[0].y + fw * 2.6, col);
+  } finally { ctx.restore(); }
 }
