@@ -14,8 +14,9 @@
         endcard; replay-reload restarts clean; in-page game.reset() has no
         stale state; scripted lose → lose endcard.
      B  ?practice=1 — frozen clock, nobody can be KO'd, tutorial coach on.
-     C  tutorial drive — steps advance, run ends on 'YOU'RE READY!' card;
-        ?tutorial=1 engages the same mode.
+     C  tutorial drive — steps advance through real inputs, the end card
+        tells the truth: READY only on a clean sweep, quip + Fight anyway
+        on a partial; ?tutorial=1 engages the same mode.
      D  lineup → boxing hand-off: localStorage['boxing:npc'] → chosen NPC
         spawns; locked/stale/prop picks can't be smuggled in.
      E  tracking-loss overlay: gloves clear on dropout, return on recovery
@@ -401,6 +402,27 @@ try {
       winRes.phase === 'win' && winRes.win && winRes.endOn && /YOU WIN/i.test(winRes.title || ''),
       JSON.stringify(winRes));
 
+    /* THE TAPE rides the endcard — a Q-driven bout keeps the counters thin
+       (manual steps drain events before the rAF loop can read them), so
+       assert the slip's STRUCTURE: visible, VS label, all eight cells
+       filled, verdict line resolved (live tip or canned fallback) */
+    try {
+      await pg.waitForFunction(() => {
+        const l = document.querySelector('[data-tapeline]');
+        return l && l.textContent.trim().length > 3 && !/conferring/.test(l.textContent);
+      }, { timeout: 9000 });
+    } catch { }
+    const tapeRes = await pg.evaluate(() => ({
+      hidden: document.querySelector('[data-tape]')?.hidden ?? true,
+      npc: document.querySelector('[data-tapenpc]')?.textContent || '',
+      cells: [...document.querySelectorAll('[data-tv]')].map(c => c.textContent),
+      line: document.querySelector('[data-tapeline]')?.textContent || '' }));
+    check('A: THE TAPE — slip up, cells filled, verdict line resolved',
+      tapeRes.hidden === false && /^VS /.test(tapeRes.npc)
+        && tapeRes.cells.length === 8 && tapeRes.cells.every(c => (c || '').trim().length > 0)
+        && tapeRes.line.trim().length > 3,
+      JSON.stringify(tapeRes));
+
     /* restart path 1: real replay button → reload → fresh state */
     await Promise.all([
       pg.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
@@ -583,6 +605,11 @@ try {
         stepsSeen.add(s.id);
         const tg = st.npc.telegraph, a = st.npc.action;
         B.moveKeys.guard = s.id === 'block';          // real F-key path for rAF frames
+        /* SPACE held through the back half of the telegraph — the key rides
+           EVERY rAF frame, so the held-duck check can't miss the impact frame
+           the way polled 2-frame duck bursts can. _aim latched at windup
+           start (duck still up then), so the hold dodges clean */
+        B.moveKeys.duck = s.id === 'duck' && !!tg && tg.t01 >= .4;
         if (s.id === 'punch') {
           if (Q.dist() > 1.4) Q.step(6, { step: 1 }); else Q.punch(side++ % 2 ? 'right' : 'left');
         } else if (s.id === 'block') {
@@ -596,12 +623,10 @@ try {
           else if (a !== 'windup' && a !== 'punch') await settle();
           Q.step(2); await sleep(40);
         } else if (s.id === 'duck') {
-          /* scripted hook — head drop under it once the telegraph is underway.
-             controls.duck rides the SPACE-key path (fightIn.duck); the edge
-             commits a 'duck' dodge and a held duck still dodges since the
-             aim latched before the drop */
-          if (tg && tg.t01 >= .5) Q.step(2, { duck: 1 });
-          else { Q.step(4); await sleep(50); }
+          /* scripted hook — moveKeys.duck above does the real work; here just
+             keep the face square between swings so no leftover lean can
+             steal the dodge direction */
+          Q.face(Q.NEUTRAL); Q.step(4); await sleep(50);
         } else if (s.id === 'move') {
           /* head-driven footwork — one synchronous push so the page's own
              rAF frames (controls.step=0) can't drift the anchor home mid-step */
@@ -618,7 +643,7 @@ try {
         } else { Q.step(4); await sleep(60); }
         if (performance.now() - t0 > 50000) break;    // past the TOTAL failsafe (40s + slack)
       }
-      B.moveKeys.guard = false; Q.face(Q.NEUTRAL);
+      B.moveKeys.guard = false; B.moveKeys.duck = false; Q.face(Q.NEUTRAL);
       await sleep(300);
       return { stepsSeen: [...stepsSeen], passed: T ? T.passed.slice() : [], done: T?.done, ti: T?.i,
         phase: B.state.phase,
@@ -630,8 +655,17 @@ try {
     check('C: tutorial steps advance (≥2 stages seen)',
       tut.stepsSeen.length >= 2 || (tut.ti ?? 0) >= 2,
       JSON.stringify({ steps: tut.stepsSeen, ti: tut.ti, passed: tut.passed }));
-    check("C: tutorial finishes on the 'YOU'RE READY!' card",
-      tut.done && tut.endOn && /READY/i.test(tut.title || ''),
+    check('C: every lesson passes through real inputs',
+      (tut.passed?.length ?? 0) === (tut.ti ?? -1) && (tut.ti ?? 0) >= 6,
+      JSON.stringify({ ti: tut.ti, passed: tut.passed }));
+    /* READY belongs to a full sweep only — assert the card matches the run,
+       not that the driver got lucky: a partial run must quip + Fight anyway */
+    check("C: end card matches the run — READY only on a clean sweep",
+      tut.done && tut.endOn
+        && tut.sub === `BASICS · ${tut.passed.length} / ${tut.ti} NAILED`
+        && (tut.passed.length >= tut.ti
+          ? /READY/i.test(tut.title || '') && /Fight the champ/.test(tut.replay || '')
+          : !/READY/i.test(tut.title || '') && /Fight anyway/.test(tut.replay || '')),
       JSON.stringify({ title: tut.title, sub: tut.sub, replay: tut.replay, passed: tut.passed }));
     check('C: practice never let anyone hit the canvas',
       tut.phase === 'fighting', `phase=${tut.phase}`);

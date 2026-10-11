@@ -283,6 +283,27 @@
   .replay.main { background: var(--coral); color: #fff; }
   .replay.menu { background: #fff; color: var(--ink); }
 
+  /* THE TAPE — the bout's own stat slip tucked inside the endcard: what you
+     dealt, what you ate, how honest the camera feed was. Reads like the
+     receipt the judges scribbled on — dashed rule, little cells, one
+     commentator line under the numbers. Hidden on the tutorial card. */
+  .tape { margin: 0 auto 16px; max-width: 340px; border: 2.5px solid var(--ink);
+    border-radius: 14px; background: rgba(43,33,24,.05); padding: 8px 12px 10px;
+    transform: rotate(.6deg); }
+  .tape[hidden] { display: none; }
+  .tape .thead { display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 10px; font-weight: 800; letter-spacing: .28em; color: var(--leaf);
+    border-bottom: 2px dashed rgba(43,33,24,.35); padding-bottom: 5px; margin-bottom: 7px; }
+  .tape .thead span:last-child { letter-spacing: .12em; color: var(--ink); opacity: .7; }
+  .tape .tgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 8px; }
+  .tape .tcell { display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+  .tape .tcell b { font-size: clamp(15px, 2.1vmin, 19px); font-weight: 900; letter-spacing: .02em; }
+  .tape .tcell i { font-size: 8.5px; font-weight: 800; font-style: normal;
+    letter-spacing: .18em; opacity: .65; }
+  .tape .tline { margin-top: 7px; padding-top: 6px; border-top: 2px dashed rgba(43,33,24,.35);
+    font-size: clamp(11px, 1.5vmin, 13px); font-weight: 700; letter-spacing: .03em;
+    color: var(--ink); opacity: .9; min-height: 1.2em; }
+
   /* narrower windows can't centre a 400px card beside the webcam peep —
      dock it bottom-right instead, clear of the peep's bottom-left corner */
   @media (max-width: 1050px) {
@@ -349,6 +370,20 @@
   <div class="endcard" data-end>
     <div class="big" data-endtitle>YOU WIN!</div>
     <div class="sub" data-endsub></div>
+    <div class="tape" data-tape hidden>
+      <div class="thead"><span>THE TAPE</span><span data-tapenpc></span></div>
+      <div class="tgrid">
+        <div class="tcell"><b data-tv="dealt">0</b><i>dealt</i></div>
+        <div class="tcell"><b data-tv="took">0</b><i>took</i></div>
+        <div class="tcell"><b data-tv="acc">—</b><i>acc</i></div>
+        <div class="tcell"><b data-tv="whiff">0</b><i>whiffs</i></div>
+        <div class="tcell"><b data-tv="best">×0</b><i>best</i></div>
+        <div class="tcell"><b data-tv="dodge">0</b><i>dodged</i></div>
+        <div class="tcell"><b data-tv="feet">0m</b><i>feet</i></div>
+        <div class="tcell"><b data-tv="cam">—</b><i>cam</i></div>
+      </div>
+      <div class="tline" data-tapeline></div>
+    </div>
     <div class="actions">
       <button class="replay main" data-replay>Run it back</button>
       <a class="replay menu" href="./">Return to menu</a>
@@ -419,6 +454,7 @@
       callout: $('[data-callout]'), world: $('#world'),
       vin: $('[data-vin]'),
       endTitle: $('[data-endtitle]'), endSub: $('[data-endsub]'),
+      tape: $('[data-tape]'), tapeNpc: $('[data-tapenpc]'), tapeLine: $('[data-tapeline]'),
       npcName: $('[data-npcname]'), npcLbl: $('[data-npclbl]'), peep: $('[data-peep]'),
       plate: $('[data-plate]'), nhpGhost: $('[data-nhpghost]'), npcGas: $('[data-npcgas]'),
       nstam: $('[data-nstam]'), nstamW: $('[data-nstamwrap]'),
@@ -690,8 +726,98 @@
       const best = recordEnd(win, st);
       const tail = best ? ` · BEST ${best.toLocaleString()}` : '';
       el.endSub.textContent = (win ? `${name} DEFEATED · ${score} PTS` : `ROUND ${st.round || 1} · ${score} PTS`) + tail;
+      fillTape(win, st, name);
       el.end.classList.add('on');
     };
+    /* THE TAPE — the bout debrief. Counts ride the same event stream the feed
+       reads (a 'player-hit' event lands with lastBlow.dmg intact); distance
+       is honest footwork off the sim, CAM is the share of fight frames the
+       tracker actually saw a fist or a face — the "camera errors" line.
+       Bout-epoch reset mirrors corner.bout: a replay can't smear last bout's
+       numbers into the fresh card. */
+    const tape = { bout: -1, thrown: 0, landed: 0, dealt: 0, took: 0, whiffed: 0,
+      dodged: 0, perfects: 0, blocked: 0, dist: 0, frames: 0, seen: 0,
+      lastX: null, lastZ: null };
+    const tapeTick = (out, hs, fs) => {
+      const st = out?.state, P = out?.sim?.player?.pos;
+      if (!st?.npc) return;
+      if (st.bout !== tape.bout) {                          // fresh bout — fresh slip
+        Object.assign(tape, { bout: st.bout, thrown: 0, landed: 0, dealt: 0, took: 0,
+          whiffed: 0, dodged: 0, perfects: 0, blocked: 0, dist: 0, frames: 0, seen: 0,
+          lastX: null, lastZ: null });                      // drop the old anchor — a
+      }                                                   // teleport mustn't read as feet
+      /* frame sampling only while upright — but events count on ANY phase:
+         the KO blow flips fighting→npcdown on the SAME frame, and gating
+         events on 'fighting' drops the decisive punch off the slip */
+      if (st.phase === 'fighting') {
+        tape.frames++;
+        if ((hs?.hands?.length | 0) > 0 || fs?.found) tape.seen++;
+        if (P && Number.isFinite(P.x) && Number.isFinite(P.z)) {
+          if (Number.isFinite(tape.lastX)) tape.dist += Math.hypot(P.x - tape.lastX, P.z - tape.lastZ);
+          tape.lastX = P.x; tape.lastZ = P.z;
+        }
+      }
+      for (const e of out.events || []) {
+        const dmg = out.state.lastBlow?.dmg || 0;
+        /* 'player-punch' also fires for rise-minigame ring tags while you're
+           on the canvas — gate the swing count on fighting, but resolutions
+           (hit/miss/taken) count on every phase */
+        if (e === 'player-punch') { if (st.phase === 'fighting') tape.thrown++; }
+        else if (e === 'player-hit') { tape.landed++; tape.dealt += dmg; }
+        else if (e === 'player-miss') tape.whiffed++;
+        else if (e === 'player-hit-taken') tape.took += dmg;
+        else if (e === 'player-blocked') tape.blocked++;
+        else if (e === 'player-dodged') tape.dodged++;
+        else if (e === 'perfect-dodge') tape.perfects++;
+      }
+    };
+    /* one commentator line under the numbers — same /api/coach proxy the
+       halftime corner uses, different brief. The card never waits on it:
+       canned verdicts hold the spot if the booth can't be reached. */
+    const TAPE_LINES = {
+      win: ['The tape backs the hype — clean work.', 'Hands did the talking; the judges just agreed.',
+        'Signed, sealed, outboxed — read the slip and weep.'],
+      lose: ['Took one on the chin — the tape says where.', 'The slip don\'t lie: tighten the guard, run it back.',
+        'Rough scorecard — the fix is already on it.'],
+    };
+    async function tapeVerdict(win, name, tp) {
+      const acc = tp.thrown ? tp.landed / tp.thrown : 0;
+      const shape = tp.took > tp.dealt * 1.6 ? 'got outworked'
+        : tp.dealt > tp.took * 1.6 ? 'dominated' : 'a phone-booth war';
+      const prompt =
+        `Post-fight scorecard line for a cartoon boxing game — ONE short sentence, ` +
+        `under 18 words, smoky boxing-gym voice, no stats recited back, no quotes, ` +
+        `mention ${name} once. Result: the PLAYER ${win ? `beat ${name}` : `lost to ${name}`} — ` +
+        `${shape}, ${acc < .2 ? 'swung at air' : acc > .55 ? 'sharp hands' : 'even mix'}` +
+        `${tp.perfects ? `, ${tp.perfects} perfect dodges` : ''}.`;
+      try {
+        const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 6000);
+        const r = await fetch('/api/coach', { method: 'POST', signal: ctl.signal,
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }) });
+        clearTimeout(to);
+        const t = String((await r.json().catch(() => null))?.tip || '').trim();
+        if (t) return t.slice(0, 140);
+      } catch {}
+      const pool = TAPE_LINES[win ? 'win' : 'lose'];
+      return pool[(Math.random() * pool.length) | 0];
+    }
+    function fillTape(win, st, name) {
+      if (!el.tape) return;
+      const acc = tape.thrown ? `${Math.round(tape.landed / tape.thrown * 100)}%` : '—';
+      const cam = (!videoLive || noTrack) ? 'KEYS'
+        : tape.frames ? `${Math.round(tape.seen / tape.frames * 100)}%` : '—';
+      const cells = { dealt: Math.round(tape.dealt), took: Math.round(tape.took),
+        acc, whiff: tape.whiffed, best: `×${st.player.bestCombo || 0}`,
+        dodge: tape.dodged, feet: `${tape.dist.toFixed(1)}m`, cam };
+      for (const [k, v] of Object.entries(cells)) {
+        const c = el.tape.querySelector(`[data-tv="${k}"]`); if (c) c.textContent = v;
+      }
+      el.tapeNpc.textContent = `VS ${name}`;
+      el.tapeLine.textContent = '— the judges are conferring —';
+      el.tape.hidden = false;
+      const tp = { ...tape };               // snapshot — a replayed bout mustn't rewrite the card
+      tapeVerdict(win, name, tp).then(t => { el.tapeLine.textContent = t; });
+    }
     $('[data-replay]').onclick = () => location.reload();
     /* tutorial wrap-up reuses the end card — the verdict scales with the
        score: sweep the lessons and you're ready; flub most of them and your
@@ -719,6 +845,7 @@
       const go = $('[data-replay]');
       go.textContent = n >= tutSteps ? 'Fight the champ →' : 'Fight anyway →';
       go.onclick = () => { location.href = './boxing.html'; };
+      if (el.tape) el.tape.hidden = true;   // the tape is a FIGHT slip — drills don't get one
       el.end.classList.add('on');
     }
 
@@ -1279,6 +1406,7 @@
             } else {   // first sight — snap, don't glide in from the corner
               g.hasT = true; g.vx = g.vy = g.vsize = g.vang = 0;
               g.x = nx; g.y = ny; g.size = nsize; g.ang = nang;
+              g.dim = 1;
             }
             g.tx = nx; g.ty = ny; g.tsize = nsize; g.tang = nang; g.tT = nowS;
           }
@@ -1291,7 +1419,7 @@
               D[i].y += (P[i].y - D[i].y) * k;
             }
           }
-          g.dim += (1 - g.dim) * .35;
+          g.dim = 1;
         } else {
           g.lastP = null;
           g.hasT = false;
@@ -1324,14 +1452,14 @@
           const t = Math.min(.05, 900 / spd * .04);
           mittPos.x = g.x - g.vx * t; mittPos.y = g.y - g.vy * t;
           mittPos.size = g.size; mittPos.ang = g.ang;
-          mittOpts.side = side; mittOpts.kind = hnd?.kind || 'fist';
+          mittOpts.side = side; mittOpts.kind = hnd?.nExt <= 2 ? 'fist' : hnd?.kind || 'fist';
           mittOpts.reach = g.reach; mittOpts.squash = squash;
           mittOpts.dim = g.dim * .22; mittOpts.lm = g.lastP;
           mittOpts.cap = 96; mittOpts.arm = null;
           mitt?.draw(hx, mittPos, mittOpts);
         }
         mittPos.x = g.x; mittPos.y = g.y; mittPos.size = g.size; mittPos.ang = g.ang;
-        mittOpts.side = side; mittOpts.kind = hnd?.kind || 'fist';
+        mittOpts.side = side; mittOpts.kind = hnd?.nExt <= 2 ? 'fist' : hnd?.kind || 'fist';
         mittOpts.reach = g.reach; mittOpts.squash = squash;
         mittOpts.dim = g.dim; mittOpts.lm = g.lastP;
         mittOpts.cap = 96; mittOpts.arm = null;
@@ -1639,6 +1767,7 @@
         }
         hud(out);
         cornerTick(out.state, now);
+        tapeTick(out, hs, fs);
         if (audio) {
           for (const e of out.events) audio.handleEvent(e, out.state);
           audio.update(dt, out.state);
