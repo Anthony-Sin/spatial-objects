@@ -369,6 +369,9 @@ export function boot(cfg = {}) {
     put(noteEl, locked
       ? `${info.label} is locked — drop your average KO to round ${info.koAvg}`
       : `${info.label} wraps their hands — ready for the bell`);
+    /* host sfx/telemetry hook — triggerPose marks a user-driven select
+       (chip/raycast/key), so the boot-time call below stays silent */
+    try { C.onSelect?.(idx, t, triggerPose); } catch {}
   }
 
   tabEls.forEach((el, idx) => el.addEventListener('click', () => {

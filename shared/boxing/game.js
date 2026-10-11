@@ -166,10 +166,15 @@ export async function createGame(opts = {}) {
       lastFaceSize = fs.size;
       if (!neutralFaceSize) neutralFaceSize = fs.size;
       const delta = fs.size / neutralFaceSize - 1;
-      if (delta > .10) targetStep += Math.min(1, (delta - .10) / .22);
-      else if (delta < -.10) targetStep += Math.max(-1, (delta + .10) / .2);
+      if (delta > .16) targetStep += Math.min(1, (delta - .16) / .22);
+      else if (delta < -.16) targetStep += Math.max(-1, (delta + .16) / .2);
     }
     targetStep = Math.max(-1, Math.min(1, targetStep));
+    /* shrug-level lean ≠ intent: the summed pitch+size signal must clear a
+       floor before it steps at all, so micro-nods and settling posture stop
+       walking you into the ropes. Deliberate tilts are unaffected — they
+       reach far past the floor. Keyboard intent skips the floor entirely. */
+    if (Math.abs(targetStep) < .28) targetStep = 0;
     if (Number.isFinite(controls.step) && controls.step !== 0)
       targetStep = Math.max(-1, Math.min(1, controls.step));
     if (st.phase !== 'fighting') targetStep = 0;
@@ -186,6 +191,17 @@ export async function createGame(opts = {}) {
     fightIn.guard = controls.guard ? GUARD_UP : tracker.guard;   // F key = gloves up
     fightIn.duck = cornerHold ? 0 : Math.max(tracker.duck || 0, +controls.duck || 0);
     fightIn.distance = sim.distance();
+    fightIn.riseAspect = cam?.aspect || 1;      // overlay W/H — get-up ring hit-test
+    fightIn.riseTouch = NO_PUNCHES;             // glove palms — touch-tag a ring
+    if (st.phase === 'playerdown' && st.rise?.active && hs?.hands) {
+      /* while you're on the canvas a glove pressed onto the ring counts too —
+         the throw never has to fire for "I hit it" to feel true */
+      const tl = [];
+      for (const h of hs.hands)
+        if (h?.palm && Number.isFinite(h.palm.x) && Number.isFinite(h.palm.y))
+          tl.push({ x: h.palm.x, y: h.palm.y });
+      if (tl.length) fightIn.riseTouch = tl;
+    }
     fight.step(waiting ? 0 : hdt, fightIn);
     // The entrance lasts six real seconds even when rendering runs slowly.
     // Start after fight.step so the bell event reaches the HUD this frame.
@@ -413,6 +429,17 @@ export async function createGame(opts = {}) {
     step,
     skipIntro() { if (fight.state.phase === 'intro') { tNow = FIGHT_TUNING.introT; skipRequested = true; } },
     calibrate() { tracker.calibrate?.(); if (lastFaceSize) neutralFaceSize = lastFaceSize; depthStep = 0; },
+    /* corner-break reposition — under the blackout both fighters walk back
+       to the marks the sim dealt at the opening bell, and every camera
+       impulse from the scramble dies with it. Fight state (hp, round, the
+       clock, painted bruises) is untouched — this is scenery, not a rematch. */
+    recenter() {
+      sim.reset();
+      push = pushUp = snapYaw = camSway = shakeT = 0;
+      dodgeX = dodgeY = 0; dodged = false; prevDodgeKey = 0;
+      hitStopT = 0; slowT = 0; holdT = 0; depthStep = 0;
+      swingRes = null; lookX = null;
+    },
     reset() {
       sim.reset(); fight.reset();
       /* nothing from the finished bout may ride into the next one: camera

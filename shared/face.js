@@ -64,13 +64,23 @@ export class Face {
     // 'fail' or a third 'slow' → cover the gap; see hands.js — the worker
     // keeps booting either way so a late 'ready' still adopts
     if (f._stopped) return f;
-    if (which !== 'ok') await f._initLocal();
+    /* the inline cover itself gets a dead-man window: a stalled bundle
+       fetch must not wedge create() any more than a silently-dead worker
+       may. A build landing after the cap still installs — the pump picks
+       it up; a late 'ready' adopting meanwhile closes the pending graph. */
+    if (which !== 'ok')
+      await Promise.race([f._initLocal(), sleep(f._bootMs)]);
     if (f._stopped) return f;
     f._pump(video);
     return f;
   }
   _spawn() {
     const f = this;
+    /* _bootW is a single-slot handle — a superseded still-booting worker
+       must be reaped, never orphaned: overwriting the slot would leak a
+       worker nothing can reach (its ~13MB download runs to completion for
+       a tracker nobody owns, or forever if 'ready' never lands) */
+    try { f._bootW?.terminate(); } catch {} f._bootW = null;
     return new Promise(res => {
       let w;
       try { w = new Worker(new URL('./track-worker.js', import.meta.url)); }   // classic worker — ESM in via import()
@@ -105,7 +115,9 @@ export class Face {
       w.onerror = () => { done(); f._workerDied(w); res('fail'); };
       try { w.postMessage({ type: 'init', kind: 'face', vendorUrl: f._vendorUrl,
         preferCpu: f._preferCpu }); }
-      catch { done(); res('fail'); }
+      /* init never arrived — reap the half-spawned worker too; it holds a
+         real thread even though it got no orders */
+      catch { try { w.terminate(); } catch {} done(); res('fail'); }
     });
   }
   _adopt(w, delegate) {
@@ -116,7 +128,7 @@ export class Face {
     // a stale boot can finish after a respawn already won — never keep two
     if (this._worker && this._worker !== w) { try { this._worker.terminate(); } catch {} }
     this._worker = w;
-    this.delegate = `${delegate}-worker`;
+    this.delegate = `${delegate || 'unknown'}-worker`;   // a bare 'ready' must not print 'undefined-worker'
     this._rate = 1;   // offer every camera frame — _inFlight gates the pace
     /* close() CAN throw on a half-dead GL graph — escaping the onmessage
        handler it would skip res('ok'), skip the onerror rewire, and leave
@@ -144,13 +156,15 @@ export class Face {
   /* concurrent callers (fatal + onerror can fire together) must share ONE
      boot — two inline landmarkers meant leaked GPU/CPU graphs */
   async _initLocal() {
-    if (this.landmarker || this._stopped) return;
+    // a worker that already owns the pump must never get a second inline
+    // graph built under it — the 'ready'-vs-verdict race used to sneak one in
+    if (this.landmarker || this._stopped || this._worker) return;
     if (this._initLocalP) return this._initLocalP;
     this._initLocalP = this._initLocalOnce().finally(() => { this._initLocalP = null; });
     return this._initLocalP;
   }
   async _initLocalOnce() {
-    if (this.landmarker || this._stopped) return;
+    if (this.landmarker || this._stopped || this._worker) return;
     try {
       const { FilesetResolver, FaceLandmarker } = await import(`${this._vendorUrl}/vision_bundle.mjs`);
       const fileset = await FilesetResolver.forVisionTasks(`${this._vendorUrl}/wasm`);

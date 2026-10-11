@@ -33,6 +33,11 @@ export const EVENT_SFX = {
   'counter': 'dodge',           // bright cue on the reply punch
   'player-hit-taken': 'hurt',   // heavy low thud + little "oof" chirp
   'ko': 'ko',                   // buzzer + slow-mo pitch drop + crowd swell
+  'rise': 'bell',               // ref starts the count — your get-up window dings open
+  'rise-hit': 'thwack',         // tagged a get-up ring clean
+  'rise-miss': 'whoosh',        // punched air while the count ran
+  'rise-fade': 'thud',          // a ring popped untagged
+  'revive': 'bell',             // back on your feet — three dings, gloves up
   'corner': 'bell',             // halftime break — one ding while the corner talks
   'win': 'win',
   'lose': 'lose',
@@ -49,10 +54,29 @@ const WHOOSH = {
 const WIN_ARP = [523.25, 659.25, 783.99, 1046.5];          // C5 E5 G5 C6
 const LOSE_ARP = [392, 311.13, 261.63, 196];               // G4 Eb4 C4 G3
 
+/* the menu tune — a 4-bar / 64-step loop at 132bpm. A-minor pentatonic bop:
+   two bars of cocky call, a low answer, then a climbing turnaround that
+   tees the loop back up. Voices reuse the SFX synths — FM lead, triangle
+   bass, noise hats — so the whole thing costs zero assets. */
+const TUNE_BPM = 132, TUNE_STEP = 60 / TUNE_BPM / 4, TUNE_LEN = 64;
+const TUNE_LEAD = [   // [step, Hz, len-steps] — pentatonic A C D E G
+  [0, 659.25, 1], [2, 659.25, 1], [4, 783.99, 1], [6, 659.25, 1], [8, 880, 2], [12, 783.99, 2],
+  [16, 659.25, 1], [18, 659.25, 1], [20, 783.99, 1], [22, 659.25, 1], [24, 587.33, 2], [28, 659.25, 2],
+  [32, 523.25, 1], [34, 523.25, 1], [36, 659.25, 1], [38, 523.25, 1], [40, 440, 2], [44, 493.88, 2],
+  [48, 440, 2], [52, 493.88, 1], [54, 523.25, 1], [56, 587.33, 1], [58, 659.25, 1], [60, 783.99, 1], [61, 880, 1],
+];
+const TUNE_BASS = [   // one bar each = 8 eighth-notes, A → A → F → G turnaround
+  [110, 110, 130.81, 110, 110, 110, 164.81, 110],
+  [110, 110, 130.81, 110, 110, 98, 110, 110],
+  [87.31, 87.31, 130.81, 87.31, 87.31, 87.31, 130.81, 87.31],
+  [98, 98, 130.81, 98, 110, 110, 164.81, 196],
+];
+
 // garbage-in guard: any non-finite number falls back to a safe default, so a
 // NaN dmg/delay/kind from a glitched state can never reach an AudioParam
-// (real AudioContexts throw on non-finite values).
-const fin = (v, d = 0) => Number.isFinite(+v) ? +v : d;
+// (real AudioContexts throw on non-finite values). The +v coercion itself can
+// throw on Symbol inputs — the try keeps that inside the guard.
+const fin = (v, d = 0) => { try { const n = +v; return Number.isFinite(n) ? n : d; } catch { return d; } };
 
 export class BoxingAudio {
   constructor() {
@@ -65,41 +89,126 @@ export class BoxingAudio {
     this._crowdLevel = 0;     // swell target, decays in update()
     this._lastCrowdG = -1;    // gain last scheduled — skip redundant param ramps
     this._breathT = 0;        // timer for the gassed-stamina panting cue
+    this._tune = null;        // menu-music scheduler interval
+    this._tuneNext = 0;       // ctx-time the next step lands on
+    this._tuneStep = 0;       // position inside the 64-step loop
   }
 
   get muted() { return this._muted; }
   set muted(m) {
     this._muted = !!m;
-    if (this.ctx) this._set(this.master.gain, this._muted ? 0 : this.volume);
-    if (this._muted) this._crowdOff();
+    if (this.ctx) try { this._set(this.master.gain, this._muted ? 0 : this.volume); }
+      catch { /* hostile param — mute state still took */ }
+    if (this._muted) { this._crowdOff(); this._tuneOff(); }
   }
 
   setVolume(v) {
-    this.volume = Math.min(1, Math.max(0, +v || 0));
-    if (this.ctx && !this._muted) this._set(this.master.gain, this.volume);
+    this.volume = Math.min(1, Math.max(0, fin(v, 0)));
+    if (this.ctx && !this._muted)
+      try { this._set(this.master.gain, this.volume); } catch { /* hostile param */ }
   }
 
   unlock(ac) {   // call from a user gesture; ac injectable for tests
     if (this.ctx) return this.ctx;
     const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
     if (!ac && !AC) return null;                 // headless: stay silent
-    const ctx = this.ctx = ac || new AC();
-    ctx.resume?.();
-    const g = this.master = ctx.createGain();
-    g.gain.value = this._muted ? 0 : this.volume;
-    const bus = ctx.createDynamicsCompressor?.(); // soft-clip safety on hits
-    if (bus) { g.connect(bus); bus.connect(ctx.destination); }
-    else g.connect(ctx.destination);
-    const n = ctx.sampleRate | 0;
-    const buf = this._buf = ctx.createBuffer(1, n, ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
-    return ctx;
+    /* build into locals, publish only on success — a mock ctx that throws
+       mid-setup once left this.ctx set: every later unlock() early-returned
+       a broken context and play() threw forever */
+    try {
+      const ctx = ac || new AC();
+      try { ctx.resume?.(); } catch { /* resume is best-effort */ }
+      const g = ctx.createGain();
+      g.gain.value = this._muted ? 0 : this.volume;
+      const bus = ctx.createDynamicsCompressor?.(); // soft-clip safety on hits
+      if (bus) { g.connect(bus); bus.connect(ctx.destination); }
+      else g.connect(ctx.destination);
+      const sr = Math.min(384000, Math.max(3000, fin(ctx.sampleRate, 44100) | 0));
+      const buf = ctx.createBuffer(1, sr, sr);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < sr; i++) d[i] = Math.random() * 2 - 1;
+      this.ctx = ctx; this.master = g; this._buf = buf;
+      return ctx;
+    } catch {
+      this.ctx = null; this.master = null; this._buf = null;
+      return null;
+    }
+  }
+
+  /* tear the whole graph down (crowd bed + master + ctx) — used by the game
+     on unmount and by the fuzz harness for lifecycle churn. unlock() after
+     dispose() builds a fresh graph. */
+  dispose() {
+    try { this._tuneOff(); } catch { /* best-effort */ }
+    try { this._crowdOff(); } catch { /* best-effort */ }
+    const c = this.ctx, m = this.master;
+    this.ctx = null; this.master = null; this._buf = null;
+    this._crowdLevel = 0; this._lastCrowdG = -1; this._breathT = 0;
+    try { m?.disconnect?.(); } catch { /* already gone */ }
+    try { c?.close?.(); } catch { /* mock ctxes may not close */ }
+    return null;
+  }
+
+  /* public murmur-bed switch — ambience for pages without a fight loop
+     (menu/lineup); in the fight, update() auto-drives it on 'fighting'.
+     Same lazy-context contract as play(): silent no-op with no ctx. */
+  crowd(on = true) { on ? this._crowdOn() : this._crowdOff(); }
+
+  /* ---------- menu tune ----------
+     A 4-bar loop scheduled lookahead-style on the ctx timeline — setInterval
+     only tops up the queue (~140ms ahead), so a janky main thread can't make
+     the beat drift. Same lazy contract as play(): silent no-op with no ctx
+     or while muted; unmute/dispose stop it. */
+  menuTune(on = true) { on ? this._tuneOn() : this._tuneOff(); }
+
+  _tuneOn() {
+    if (this._tune || !this.ctx || this._muted) return;
+    this._tuneStep = 0;
+    this._tuneNext = this._now() + .06;
+    this._tune = setInterval(() => { try { this._tuneTick(); } catch {} }, 46);
+    try { this._tuneTick(); } catch {}
+  }
+
+  _tuneOff() {
+    if (this._tune) clearInterval(this._tune);
+    this._tune = null;
+  }
+
+  _tuneTick() {
+    /* slept-tab resync: a frozen interval would otherwise burst-schedule a
+       whole missed loop at once — skip ahead, keep the step position */
+    if (this._tuneNext < this._now() - .3) this._tuneNext = this._now() + .05;
+    const ahead = this._now() + .14;
+    while (this._tuneNext < ahead) {
+      this._tuneVoice(this._tuneStep, Math.max(0, this._tuneNext - this._now()));
+      this._tuneStep = (this._tuneStep + 1) % TUNE_LEN;
+      this._tuneNext += TUNE_STEP;
+    }
+  }
+
+  _tuneVoice(step, delay) {   // schedule one 16th-step's worth of the loop
+    const bar = step >> 4, s = step & 15;
+    if (s === 0 || s === 8)                    // kick: 1 & 3
+      this._tone({ type: 'sine', f0: 130, f1: 44, dur: .1, peak: .3, delay });
+    if (s === 4 || s === 12)                   // snare: 2 & 4
+      this._noise({ f0: 1900, f1: 800, dur: .09, peak: .2, q: 1.1, type: 'bandpass', delay });
+    if (!(s & 1)) {                            // hats + bass on every 8th
+      this._noise({ f0: 8400, f1: 6200, dur: .028, peak: s % 4 === 0 ? .06 : .04, q: 2, type: 'highpass', delay });
+      this._tone({ type: 'triangle', f0: TUNE_BASS[bar][s >> 1], dur: TUNE_STEP * 1.8, peak: .17, delay });
+    }
+    for (const [ls, f, l] of TUNE_LEAD)        // lead line — sparse lookup per step
+      if (ls === step) { this._fm({ f, ratio: 2, idx: 1.6, dur: l * TUNE_STEP * .92, peak: .18, delay }); break; }
   }
 
   /* ---------- event plumbing ---------- */
 
   handleEvent(evt, state) {
+    /* hostile evt/state (Proxy, throwing getters, Symbol fields) must not
+       kill the audio path — a bad event is just a missed sfx */
+    try { return this._handleEvent(evt, state); } catch { return false; }
+  }
+
+  _handleEvent(evt, state) {
     const name = typeof evt === 'string' ? evt : evt?.type;
     const sfx = EVENT_SFX[name];
     if (!sfx) return false;
@@ -138,6 +247,18 @@ export class BoxingAudio {
       case 'ko':
         this._crowdLevel = 1;
         return this.play('ko');
+      case 'rise':          // down but not out — the count opens, crowd holds its breath
+        this._crowdLevel = Math.min(1, (this._crowdLevel || 0) + .5);
+        return this.play('bell', { times: 1 });
+      case 'rise-hit':
+        return this.play('thwack', { kind: 'jab', dmg: 8 });
+      case 'rise-miss':
+        return this.play('whoosh', { kind: 'jab', miss: true });
+      case 'rise-fade':
+        return this.play('thud', { dmg: 6 });
+      case 'revive':        // up before the count — same three dings as a fresh round
+        this._crowdLevel = Math.min(1, (this._crowdLevel || 0) + .4);
+        return this.play('bell', { times: 3 });
       case 'win': case 'lose':
         return this.play(name);
     }
@@ -149,13 +270,15 @@ export class BoxingAudio {
     const PRESETS = {
       bell: this._bell, whoosh: this._whoosh, thwack: this._thwack,
       thud: this._thud, dodge: this._dodge, hurt: this._hurt,
-      ko: this._ko, win: this._arp, lose: this._arp,
+      ko: this._ko, win: this._arp, lose: this._arp, blip: this._blip,
     };
     // own-key test, not truthiness: '__proto__' resolved to Object.prototype —
     // truthy, so fn.call didn't exist and a garbage preset name threw TypeError
     const fn = Object.prototype.hasOwnProperty.call(PRESETS, name) ? PRESETS[name] : undefined;
     if (!fn) return false;
-    fn.call(this, { delay: 0, ...opts, _lose: name === 'lose' });
+    let o; try { o = { delay: 0, ...opts }; } catch { o = { delay: 0 }; }
+    o._lose = name === 'lose';
+    try { fn.call(this, o); } catch { return false; }   // hostile ctx threw mid-voice
     return true;
   }
 
@@ -163,6 +286,10 @@ export class BoxingAudio {
 
   update(dt, fight) {
     if (!this.ctx || this._muted) return;
+    try { this._update(dt, fight); } catch { /* hostile fight state → skip */ }
+  }
+
+  _update(dt, fight) {
     dt = fin(dt, 0) > 0 ? fin(dt, 0) : 0;   // NaN dt once froze _crowdLevel/_breathT at NaN
     const fighting = fight?.phase === 'fighting';
     if (fighting && !this._crowd) this._crowdOn();
@@ -262,23 +389,45 @@ export class BoxingAudio {
     }));
   }
 
+  _blip(o) {   // menu/lineup UI chirp — one FM blip, pitch + slide per caller
+    const f = fin(o.f, 880), dur = fin(o.dur, .1);
+    this._fm({ f, f1: fin(o.f1, f), ratio: fin(o.ratio, 2), idx: fin(o.idx, 1.8),
+      dur, peak: fin(o.peak, .2), delay: o.delay });
+  }
+
   /* ---------- crowd bed ---------- */
 
   _crowdOn() {
     const ctx = this.ctx;
-    const src = ctx.createBufferSource();
-    src.buffer = this._buf; src.loop = true;
-    const f = ctx.createBiquadFilter();
-    f.type = 'bandpass'; f.frequency.value = 420; f.Q.value = .8;
-    const g = ctx.createGain(); g.gain.value = .0001;
-    const lfo = ctx.createOscillator(); lfo.frequency.value = .17;  // slow murmur wobble
-    const lg = ctx.createGain(); lg.gain.value = 90;
-    lfo.connect(lg); lg.connect(f.frequency);
-    src.connect(f); f.connect(g); g.connect(this.master);
-    src.start(); lfo.start();
-    g.gain.setTargetAtTime?.(.05, this._now(), .3);
-    this._lastCrowdG = .05;                     // ramp target just scheduled above
-    this._crowd = { src, gain: g, lfo, filter: f, lg };
+    if (!ctx || !this._buf || this._crowd) return;  // never double the bed —
+                                                    // two murmurs stack on master
+    const made = [];                                // built nodes, for rollback
+    try {
+      const src = ctx.createBufferSource(); made.push(src);
+      src.buffer = this._buf; src.loop = true;
+      const f = ctx.createBiquadFilter(); made.push(f);
+      f.type = 'bandpass'; f.frequency.value = 420; f.Q.value = .8;
+      const g = ctx.createGain(); made.push(g);
+      g.gain.value = .0001;
+      const lfo = ctx.createOscillator(); made.push(lfo);
+      lfo.frequency.value = .17;                  // slow murmur wobble
+      const lg = ctx.createGain(); made.push(lg);
+      lg.gain.value = 90;
+      lfo.connect(lg); lg.connect(f.frequency);
+      src.connect(f); f.connect(g); g.connect(this.master);
+      src.start(); lfo.start();
+      g.gain.setTargetAtTime?.(.05, this._now(), .3);
+      this._lastCrowdG = .05;                     // ramp target just scheduled above
+      this._crowd = { src, gain: g, lfo, filter: f, lg };
+    } catch {
+      /* hostile ctx threw mid-build — disconnect/stop everything made so a
+         half-wired crowd can't sit on master forever */
+      for (const n of made) {
+        try { n.stop?.(); } catch { /* not started */ }
+        try { n.disconnect?.(); } catch { /* already gone */ }
+      }
+      this._crowd = null;
+    }
   }
 
   _crowdOff() {
@@ -293,7 +442,10 @@ export class BoxingAudio {
 
   /* ---------- synth helpers ---------- */
 
-  _now() { const t = this.ctx.currentTime; return Number.isFinite(t) ? t : 0; }
+  _now() {
+    try { const t = this.ctx?.currentTime; return Number.isFinite(t) ? t : 0; }
+    catch { return 0; }
+  }
   _set(p, v, t) { p.setValueAtTime ? p.setValueAtTime(v, t ?? this._now()) : p.value = v; }
 
   _env(o) {   // percussive gain: fast attack, exponential decay to silence

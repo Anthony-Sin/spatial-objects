@@ -632,5 +632,170 @@ const resolvedSwing = s => s.events.includes('player-dodged') || s.events.includ
   check('corner() refuses a downed fighter', f3.corner() === false, f3.state.phase);
 }
 
+/* 14 — beat the count: a player KO opens the get-up QTE — tag `riseTargets`
+   rings before riseT runs out and you stand back up at riseHp, miss and the
+   verdict lands like before. */
+{
+  const drop = (f) => {   // a real landed swing onto 1hp → the canvas
+    f.state.player.hp = 1;
+    f.state.npc.action = 'punch'; f.state.npc.actionT = 0;
+    f._pk = { kind: 'jab', side: 'left' };
+    f._impact(inp({ distance: .8 }));
+  };
+  const f = new Fight({ seed: 7 });
+  toFighting(f);
+  drop(f);
+  check('player KO → playerdown + get-up QTE armed',
+    f.state.phase === 'playerdown' && f.state.rise.active
+      && f.state.rise.need === TUNING.riseTargets && f.state.rise.got === 0,
+    `phase=${f.state.phase} rise=${JSON.stringify(f.state.rise)}`);
+  check("'ko' + 'rise' events fire together",
+    f.state.events.includes('ko') && f.state.events.includes('rise'), f.state.events.join(','));
+  check('ring sits in reach — inside the overlay bounds',
+    f.state.rise.x >= .1 && f.state.rise.x <= .9 && f.state.rise.y >= .2 && f.state.rise.y <= .8
+      && f.state.rise.r > 0, JSON.stringify(f.state.rise));
+
+  // wild punches don't tag — and a punch with no position never can
+  f.step(DT, inp({ punches: [{ kind: 'jab', side: 'left', power: 1, x: 0, y: 0 }] }));
+  check('off-ring punch → rise-miss, still down',
+    f.state.events.includes('rise-miss') && f.state.phase === 'playerdown' && f.state.rise.got === 0,
+    `${f.state.events}`);
+  f.step(DT, inp({ punches: [{ kind: 'jab', side: 'left', power: 1 }] }));
+  check('positionless punch can never tag a ring',
+    f.state.rise.got === 0 && f.state.phase === 'playerdown', `got=${f.state.rise.got}`);
+
+  // tag every ring as it pops — the palm lands where the ring is
+  let hits = 0, revived = false;
+  for (let i = 0; i < TUNING.riseTargets * 4 && f.state.phase === 'playerdown'; i++) {
+    f.step(DT, inp({ punches: [{ kind: 'jab', side: 'left', power: 1,
+      x: f.state.rise.x, y: f.state.rise.y }] }));
+    if (f.state.events.includes('rise-hit')) hits++;
+    if (f.state.events.includes('revive')) revived = true;
+  }
+  check(`${TUNING.riseTargets} rings tagged → revive + back to fighting`,
+    revived && hits === TUNING.riseTargets && f.state.phase === 'fighting',
+    `hits=${hits} phase=${f.state.phase}`);
+  check('revive stands you up at riseHp of max',
+    f.state.player.hp === Math.round(f.state.player.maxHp * TUNING.riseHp)
+      && f.state.player.hp > 0 && !f.state.rise.active,
+    `hp=${f.state.player.hp} rise=${JSON.stringify(f.state.rise)}`);
+  check('PIP backs off while you rise', f.state.npc.action === 'idle', f.state.npc.action);
+
+  // second knockdown — the count re-arms; stay down and the verdict lands
+  drop(f);
+  const seen = [];
+  check('second KO re-arms the QTE',
+    f.state.phase === 'playerdown' && f.state.rise.active && f.state.rise.got === 0,
+    `phase=${f.state.phase} got=${f.state.rise.got}`);
+  until(f, s => f._phaseT >= TUNING.downT + .5, TUNING.riseT, null, seen);
+  check('the count outlasts the npc down timer (no early lose)',
+    f.state.phase === 'playerdown', `phase=${f.state.phase} t=${f._phaseT.toFixed(2)}`);
+  const lost = until(f, s => s.phase === 'lose', TUNING.riseT + 1, null, seen);
+  check('letting the count run out → lose phase + event',
+    lost && f.state.phase === 'lose' && seen.includes('lose') && !f.state.rise.active,
+    `phase=${f.state.phase}`);
+
+  // an untagged ring fades on its own timer → the next one pops
+  const f2 = new Fight({ seed: 8 });
+  toFighting(f2);
+  drop(f2);
+  const seen2 = [];
+  until(f2, s => s.events.includes('rise-fade'), TUNING.riseEachT + .5, null, seen2);
+  check('untagged ring fades → next pops (still down)',
+    seen2.includes('rise-fade') && f2.state.phase === 'playerdown' && f2.state.rise.got === 0,
+    `events=${seen2.filter(e => e.startsWith('rise'))}`);
+  f2.reset();
+  check('reset() clears the QTE and returns to intro',
+    !f2.state.rise.active && f2.state.phase === 'intro', f2.state.phase);
+
+  // a glove TOUCHING the ring counts too — a depth-punch that never emits
+  // can't strand you on the canvas while your mitt is on the circle
+  const f3 = new Fight({ seed: 9 });
+  toFighting(f3);
+  drop(f3);
+  const touchAt = () => ({ x: f3.state.rise.x, y: f3.state.rise.y });
+  f3.step(DT, { ...inp(), riseTouch: [touchAt()] });
+  check('palm parked under a fresh pop does NOT auto-tag (must re-touch)',
+    f3.state.rise.got === 0 && f3.state.phase === 'playerdown', `got=${f3.state.rise.got}`);
+  f3.step(DT, { ...inp(), riseTouch: [] });              // lift off
+  f3.step(DT, { ...inp(), riseTouch: [touchAt()] });     // press on
+  check('leave + press the glove onto the ring → rise-hit tag',
+    f3.state.rise.got === 1 && f3.state.events.includes('rise-hit'),
+    `got=${f3.state.rise.got} ev=${f3.state.events}`);
+  f3.step(DT, { ...inp(), riseTouch: [touchAt()] });     // new pop, still parked
+  check('a parked palm can\'t chain-tag the next pop either',
+    f3.state.rise.got === 1 && f3.state.phase === 'playerdown', `got=${f3.state.rise.got}`);
+  f3.step(DT, { ...inp(), riseTouch: [{ x: .02, y: .02 }] });
+  f3.step(DT, { ...inp(), riseTouch: [{ x: .02, y: .02 }] });
+  check('a glove outside the ring touches nothing',
+    f3.state.rise.got === 1 && f3.state.phase === 'playerdown', `got=${f3.state.rise.got}`);
+  let tRevived = false;
+  for (let i = 0; i < 24 && f3.state.phase === 'playerdown'; i++) {
+    f3.step(DT, { ...inp(), riseTouch: [] });            // lift
+    f3.step(DT, { ...inp(), riseTouch: [touchAt()] });   // press
+    if (f3.state.events.includes('revive')) tRevived = true;
+  }
+  check('touch-tags finish the count → revive at riseHp',
+    tRevived && f3.state.phase === 'fighting'
+      && f3.state.player.hp === Math.round(f3.state.player.maxHp * TUNING.riseHp),
+    `phase=${f3.state.phase} hp=${f3.state.player.hp}`);
+  f3.state.phase = 'playerdown'; f3.state.rise.active = true;
+  f3.state.rise.got = 0; f3._phaseT = 0; f3._riseNext();
+  let hostileOk = true;
+  try {   // garbage riseTouch must degrade to no-tag, never throw
+    f3.step(DT, { ...inp(), riseTouch: 'x' });
+    f3.step(DT, { ...inp(), riseTouch: [null, 5, { x: 'z' },
+      new Proxy({}, { get: () => { throw 1; } })] });
+  } catch { hostileOk = false; }
+  check('malformed riseTouch inputs degrade to no-tag, never throw', hostileOk, '');
+
+  // every knockdown the count climbs: more rings, tighter ring, shorter fuse —
+  // and it resets with the bout
+  const f4 = new Fight({ seed: 12 });
+  toFighting(f4);
+  drop(f4);
+  check('first knockdown is the base lay — riseTargets rings, depth 1',
+    f4.state.rise.need === Math.round(TUNING.riseTargets)
+      && f4.state.rise.depth === 1
+      && f4._eachFor === Math.max(.8, TUNING.riseEachT)
+      && f4.state.rise.r === TUNING.riseR,
+    `need=${f4.state.rise.need} depth=${f4.state.rise.depth} each=${f4._eachFor} r=${f4.state.rise.r}`);
+  for (let i = 0; i < 24 && f4.state.phase === 'playerdown'; i++) {   // touch out of it
+    f4.step(DT, { ...inp(), riseTouch: [] });
+    f4.step(DT, { ...inp(), riseTouch: [{ x: f4.state.rise.x, y: f4.state.rise.y }] });
+  }
+  drop(f4);   // down again
+  check('second knockdown needs +riseStepN rings, shorter fuse, smaller ring',
+    f4.state.rise.need === Math.round(TUNING.riseTargets + TUNING.riseStepN)
+      && f4.state.rise.depth === 2
+      && f4._eachFor < TUNING.riseEachT
+      && f4.state.rise.r < TUNING.riseR,
+    `need=${f4.state.rise.need} depth=${f4.state.rise.depth} each=${f4._eachFor} r=${f4.state.rise.r}`);
+  const fadeEach = f4._eachFor, fadeR = f4.state.rise.r;
+  until(f4, s => s.events.includes('rise-fade'), fadeEach + .5);
+  check('a faded ring keeps THIS count\'s radius and fuse (escalation is per-down)',
+    f4.state.rise.r === fadeR, `r=${f4.state.rise.r} want=${fadeR}`);
+  for (let i = 0; i < 40 && f4.state.phase === 'playerdown'; i++) {   // climb out again
+    f4.step(DT, { ...inp(), riseTouch: [] });
+    f4.step(DT, { ...inp(), riseTouch: [{ x: f4.state.rise.x, y: f4.state.rise.y }] });
+  }
+  drop(f4);   // a third down climbs again
+  check('third knockdown climbs again',
+    f4.state.rise.need === Math.round(TUNING.riseTargets + 2 * TUNING.riseStepN)
+      && f4.state.rise.depth === 3,
+    `need=${f4.state.rise.need} depth=${f4.state.rise.depth}`);
+  f4.reset(); toFighting(f4); drop(f4);
+  check('reset() drops the escalation — back to the base lay',
+    f4.state.rise.need === Math.round(TUNING.riseTargets) && f4.state.rise.depth === 1,
+    `need=${f4.state.rise.need}`);
+
+  // practice spars never arm it — the mat stays a trampoline
+  const pf = new Fight({ seed: 7, ai: false, practice: true });
+  toFighting(pf);
+  drop(pf);
+  check('practice mode: no KO, no QTE',
+    pf.state.phase === 'fighting' && !pf.state.rise.active, pf.state.phase);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

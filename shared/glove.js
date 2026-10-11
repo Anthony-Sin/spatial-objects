@@ -17,6 +17,10 @@ const KIND_TXT = { pinch: 'GRAB', palm: 'ORBIT', point: 'POINT', fist: 'FIST', o
 
 const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 const away = (p, c, k) => ({ x: p.x + (p.x - c.x) * k, y: p.y + (p.y - c.y) * k });
+/* proto-key safe lookup — '__proto__'/'constructor'/'toString' as a gesture
+   kind must not return inherited Object members (they'd land in fillStyle
+   /fillText as [object Object] or raw function source) */
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 /* ctx.roundRect is Chrome 99+/FF 112+/Safari 16+ — on an older engine the
    bare call is a TypeError that kills the caller's whole render tick, so
@@ -84,21 +88,37 @@ function toolGlyph(ctx, tx, ty, r, tool) {
 
 /* main entry — one hand per call. ctx state is fully save/restored: callers
    draw HUD text and more gloves after this, and a leaked font/lineCap used
-   to bleed into their output. */
+   to bleed into their output.
+
+   Domain contract: drawGlove NEVER throws. A Proxy landmark's throwing
+   getter, a poisoned kind/side/tool, a null opts, or a fake/partial ctx is
+   just "no glove this frame" — an escape here would kill the caller's whole
+   render tick every frame. */
 export function drawGlove(ctx, P, opts = {}) {
   if (!ctx) return;
-  if (!P || P.length < 21) { console.warn('glove: short landmarks', P?.length); return; }
-  // NaN/∞ landmarks silently no-op every canvas call anyway — bail early
-  // instead of burning a frame's worth of dead path work
-  for (let i = 0; i < 21; i++)
-    if (!P[i] || !Number.isFinite(P[i].x) || !Number.isFinite(P[i].y)) return;
-  ctx.save();
+  if (!opts || typeof opts !== 'object') opts = {};
+  let plen = -1, ok = false;
+  try {
+    plen = P ? P.length : -1;
+    ok = plen >= 21;
+    // NaN/∞ landmarks silently no-op every canvas call anyway — bail early
+    // instead of burning a frame's worth of dead path work
+    for (let i = 0; ok && i < 21; i++)
+      ok = !!P[i] && Number.isFinite(P[i].x) && Number.isFinite(P[i].y);
+  } catch { ok = false; }   // proxy/getter poison — bail, don't kill the tick
+  if (!ok) {
+    if (plen >= 0 && plen < 21) console.warn('glove: short landmarks', plen);
+    return;
+  }
+  try { ctx.save(); } catch { return; }   // a ctx that can't save can't draw
   try {
   // hand close to the camera spans half the frame — cap the glove so it
   // reads as an overlay, not a billboard. Landmarks rescale toward the
   // palm center so proportions survive.
   const raw = Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y);
-  const MAX = Math.max(90, ctx.canvas.width * .09);
+  // a ctx with no canvas (or a NaN width) floors at the absolute cap —
+  // Math.max(90, NaN) used to disable the cap silently
+  const MAX = Math.max(90, (ctx.canvas?.width || 0) * .09);
   if (raw > MAX) {
     const ring = [0, 1, 5, 9, 13, 17];
     const c = { x: ring.reduce((s, i) => s + P[i].x, 0) / ring.length,
@@ -108,7 +128,7 @@ export function drawGlove(ctx, P, opts = {}) {
   }
   const size = Math.max(18, Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y));
   const fw = size * .24;
-  const col = KIND_COL[opts.kind] || INK;
+  const col = own(KIND_COL, opts.kind) ? KIND_COL[opts.kind] : INK;
   const ang = Math.atan2(P[9].y - P[0].y, P[9].x - P[0].x);
 
   // One solid glove: the INK pass paints fingers + palm as a single ink
@@ -136,7 +156,8 @@ export function drawGlove(ctx, P, opts = {}) {
   ctx.restore();
 
   // pinch ring
-  if (opts.kind === 'pinch' && opts.pinchAt) {
+  if (opts.kind === 'pinch' && opts.pinchAt
+      && Number.isFinite(opts.pinchAt.x) && Number.isFinite(opts.pinchAt.y)) {
     ctx.beginPath();
     ctx.arc(opts.pinchAt.x, opts.pinchAt.y, 8 + Math.sin(performance.now() / 130) * 2, 0, 7);
     ctx.strokeStyle = ACC; ctx.lineWidth = 2.5; ctx.stroke();
@@ -146,8 +167,14 @@ export function drawGlove(ctx, P, opts = {}) {
     const top = P.reduce((m, p) => p.y < m.y ? p : m, P[0]);
     toolGlyph(ctx, top.x + fw * 1.2, top.y - fw * 1.4, fw * .8, opts.tool);
   }
-  // role tag under the wrist
-  const st = opts.side ? opts.side[0].toUpperCase() + ' · ' : '';
-  tag(ctx, st + (KIND_TXT[opts.kind] || 'READY'), P[0].x, P[0].y + fw * 2.6, col);
-  } finally { ctx.restore(); }
+  // role tag under the wrist — side is 'left'|'right'|absent; anything else
+  // (42, {}, []) just gets no letter instead of a TypeError
+  const st = typeof opts.side === 'string' && opts.side
+    ? opts.side[0].toUpperCase() + ' · ' : '';
+  tag(ctx, st + (own(KIND_TXT, opts.kind) ? KIND_TXT[opts.kind] : 'READY'),
+    P[0].x, P[0].y + fw * 2.6, col);
+  } catch (e) {
+    if (!drawGlove._warned) { drawGlove._warned = 1;
+      console.warn('glove: draw failed — one bad frame dropped:', e); }
+  } finally { try { ctx.restore(); } catch {} }
 }

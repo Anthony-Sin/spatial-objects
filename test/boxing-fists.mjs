@@ -51,6 +51,11 @@ const settle = (ft, h, f = fc(), n = 30) => { for (let i = 0; i < n; i++) ft.upd
   check('jab side left', ev[0]?.side === 'left', ev[0]?.side);
   check('jab power>0', ev[0]?.power > 0, ev[0]?.power);
   check('jab power strong near cap', ev[0]?.power >= .9, ev[0]?.power);
+  // the get-up QTE reads where the glove was when the punch let go
+  check('punch carries palm spot (x,y in 0..1)',
+    Number.isFinite(ev[0]?.x) && Number.isFinite(ev[0]?.y)
+      && ev[0].x >= 0 && ev[0].x <= 1 && ev[0].y >= 0 && ev[0].y <= 1,
+    `x=${ev[0]?.x} y=${ev[0]?.y}`);
 }
 
 // ---- 3. right thrust → cross; lateral-dominant → hook; up-dominant → uppercut

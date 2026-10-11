@@ -160,7 +160,7 @@
     background: radial-gradient(ellipse at center, transparent 42%,
       rgba(200,26,14,.45) 74%, rgba(150,8,6,.75) 100%); }
 
-  /* 30-second tutorial coach — sits low-centre, under PIP, above your gloves */
+  /* 40-second tutorial coach — sits low-centre, under PIP, above your gloves */
   .tutor { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%) translateY(20px);
     z-index: 33; width: min(520px, calc(100vw - 32px)); padding: 10px 18px 12px; text-align: center;
     background: var(--paper); color: var(--ink); border: 3px solid var(--ink); border-radius: 18px;
@@ -224,6 +224,26 @@
   @keyframes cpop { 0% { transform: scale(1.9); opacity: 0; } 25% { transform: scale(1); opacity: 1; }
     80% { opacity: 1; } 100% { transform: scale(.85); opacity: .15; } }
 
+  /* corner-break blackout — the walk back to the marks hides under it, then
+     the curtain lifts on reset corners. Covers the whole stage, HUD included */
+  .wipe { position: fixed; inset: 0; z-index: 40; background: #171009;
+    opacity: 0; pointer-events: none; transition: opacity .34s ease; }
+  .wipe.on { opacity: 1; }
+  /* ROUND N hero card — the pop between the blackout and 3-2-1. The
+     countdown number only deals once this card is gone */
+  .roundpop { position: fixed; left: 50%; top: 40%; z-index: 32; pointer-events: none;
+    transform: translate(-50%,-50%); text-align: center; display: none; }
+  .roundpop.on { display: block; }
+  .roundpop span { display: inline-block; padding: 0 .16em;
+    font-size: clamp(54px, 9.5vw, 128px); font-weight: 900; letter-spacing: .06em;
+    color: var(--sun); -webkit-text-stroke: 3px var(--ink);
+    text-shadow: 0 8px 0 var(--ink), 0 18px 44px rgba(0,0,0,.6); }
+  .roundpop.on span { animation: rpop 1.15s cubic-bezier(.2,1.6,.4,1) both; }
+  @keyframes rpop { 0% { transform: scale(1.9) rotate(2.5deg); opacity: 0; }
+    22% { transform: scale(1) rotate(-1.5deg); opacity: 1; }
+    78% { transform: scale(1) rotate(-1.5deg); opacity: 1; }
+    100% { transform: scale(.84); opacity: 0; } }
+
   /* big center callouts — PERFECT! / PUNCH NOW! — the moments that matter */
   .callout { position: fixed; left: 50%; top: 17%; z-index: 31; pointer-events: none;
     transform: translate(-50%,-50%) scale(.4) rotate(-4deg); opacity: 0;
@@ -282,6 +302,9 @@
     .callout { top: 36%; }
     .coach { bottom: 118px; }
   }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -313,6 +336,8 @@
     </div>
   </div>
   <div class="countdown" data-countdown><div class="rnd" data-cdround>ROUND 1</div><div class="n" data-cdn>3</div></div>
+  <div class="roundpop" data-roundpop><span data-rpround>ROUND 2</span></div>
+  <div class="wipe" data-wipe></div>
 
   <div class="score"><div class="n" data-score>0</div><div class="l">ringside pts</div><div class="combo" data-combo></div><div class="counter" data-counter>COUNTER READY</div></div>
   <div class="feed" data-feed></div>
@@ -352,6 +377,35 @@
     const gameModP = import('./shared/boxing/game.js');
     const audioModP = import('./shared/boxing/audio.js');
 
+    /* Autoplay policy: an AudioContext only reaches 'running' when built (or
+       resumed) inside a DOM user gesture — and a hands-tracked bout can run
+       bell-to-KO without a single pointer/key event, which is exactly how the
+       audio used to stay silent until the first knockdown panic-keypress.
+       Catch the FIRST gesture the moment it lands — even mid-boot — by
+       building a context right inside the handler; unlock() below adopts it.
+       A suspended grab (shouldn't happen on real input) keeps the listeners
+       armed so the next gesture retries the resume. */
+    let earlyAC = null;
+    try {   // eager grab first — running straight away where the browser
+            // allows autoplay; suspended elsewhere until a gesture resumes it
+      const ACEarly = window.AudioContext || window.webkitAudioContext;
+      earlyAC = ACEarly ? new ACEarly() : null;
+      earlyAC?.resume?.();
+    } catch { earlyAC = null; }
+    const grabAC = () => {
+      if (!earlyAC) try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        earlyAC = AC ? new AC() : null;
+      } catch { earlyAC = null; }
+      try { earlyAC?.resume?.(); } catch {}
+      if (earlyAC && earlyAC.state !== 'suspended') {
+        removeEventListener('pointerdown', grabAC);
+        removeEventListener('keydown', grabAC);
+      }
+    };
+    addEventListener('pointerdown', grabAC);
+    addEventListener('keydown', grabAC);
+
     const params = new URLSearchParams(location.search);
     const practice = !!(params.get('practice') || params.get('tutorial'));   // endless spar — nobody goes down
     const tutorialMode = practice;          // ?practice=1 / ?tutorial=1 → the 30s guided tutorial
@@ -369,6 +423,7 @@
       plate: $('[data-plate]'), nhpGhost: $('[data-nhpghost]'), npcGas: $('[data-npcgas]'),
       nstam: $('[data-nstam]'), nstamW: $('[data-nstamwrap]'),
       countdown: $('[data-countdown]'), cdRound: $('[data-cdround]'), cdN: $('[data-cdn]'),
+      wipe: $('[data-wipe]'), rpop: $('[data-roundpop]'), rpRound: $('[data-rpround]'),
       coach: $('[data-coach]'), coachRd: $('[data-coachrd]'), coachTip: $('[data-coachtip]'),
       coachGo: $('[data-coachgo]'), coachTime: $('[data-coachtime]'),
     };
@@ -486,7 +541,7 @@
     const mitt = await mittP;
     let game = null;
     window.__boxing = { THREE, scene, cam, log: [] };
-    let tutor = null;
+    let tutor = null, tutSteps = 6;         // step count lands with the import
     try {
       const { createGame } = await gameModP;
       game = await createGame({ THREE, renderer: ren, cam, world, hands, face,
@@ -495,7 +550,8 @@
         fightOpts: { practice, ai: !tutorialMode } });   // tutorial scripts PIP itself
       game.skipIntro();                     // straight to the fight countdown (no walk-on intro / fighting pose)
       if (tutorialMode) try {
-        const { Tutorial } = await import('./shared/boxing/tutorial.js');
+        const { Tutorial, STEPS } = await import('./shared/boxing/tutorial.js');
+        tutSteps = STEPS?.length || tutSteps;
         document.body.classList.add('tutorial');
         tutor = new Tutorial({ fight: game.fight, sim: game.sim, root: $('[data-tutor]'),
           onDone: passed => showTutorialEnd(passed) });
@@ -524,9 +580,39 @@
         const v = Number(localStorage.getItem('boxing:volume'));
         if (Number.isFinite(v)) audio.setVolume(Math.min(1, Math.max(0, v / 100)));
       }
-      const un = () => audio.unlock();
-      addEventListener('pointerdown', un, { once: true });
-      addEventListener('keydown', un, { once: true });
+      /* a gesture may already have landed during boot — its stashed ctx is
+         running; otherwise the first post-boot gesture builds/adopts one.
+         NOT once:true — if the adopted ctx is somehow still suspended, the
+         listeners stay armed and the next gesture retries resume() instead
+         of burning the one shot. */
+      if (earlyAC) audio.unlock(earlyAC);
+      const un = () => {
+        const c = audio.unlock(earlyAC);
+        try { c?.resume?.(); } catch {}
+        if (c && c.state !== 'suspended') {
+          removeEventListener('pointerdown', un);
+          removeEventListener('keydown', un);
+        }
+      };
+      addEventListener('pointerdown', un);
+      addEventListener('keydown', un);
+      /* a tracked bout may never produce a DOM gesture — keep nudging the
+         ctx so any activation that lands mid-boot (nav-propagated gesture,
+         cam-allow click, autoplay-permitted profile) flips it live on its
+         own instead of waiting for a click that never comes */
+      const nudge = () => {
+        try { earlyAC?.resume?.(); audio?.ctx?.resume?.(); } catch {}
+        if (earlyAC?.state === 'running' || audio?.ctx?.state === 'running') {
+          clearInterval(pump); return true;
+        }
+      };
+      let pumps = 0;
+      const pump = setInterval(() => { if (++pumps > 60 || nudge()) clearInterval(pump); }, 350);
+      addEventListener('pagehide', () => clearInterval(pump));
+      addEventListener('pageshow', nudge);
+      document.addEventListener('visibilitychange', () => {
+        try { document.hidden ? audio?.ctx?.suspend?.() : nudge(); } catch {}
+      });
     } catch {}
 
     /* ================= HUD ================= */
@@ -543,11 +629,18 @@
       'player-dodged': (s, lb) => lb?.perfect ? 'PERFECT DODGE — UNLOAD!' : 'DODGED · COUNTER!',
       'counter': () => 'COUNTER! +35% POWER',
       'corner': () => 'CORNER — LISTEN UP',
+      'rise': (s) => s.rise.depth > 1
+        ? `DOWN AGAIN ×${s.rise.depth} — MORE RINGS NOW`
+        : 'DOWN — TAG THE RINGS TO GET UP',
+      'rise-hit': (s) => `RING TAGGED ${s.rise.got}/${s.rise.need}`,
+      'rise-miss': () => 'OFF THE MARK',
+      'rise-fade': () => 'RING FADED — NEXT ONE',
+      'revive': () => 'BACK UP AT 25%!',
     };
     const FLASH = {
       'player-hit': 'POW!', 'npc-hit': 'POW!', 'player-hit-taken': 'TAGGED!',
       'ko': 'K.O.!', 'player-blocked': 'BLOCKED', 'player-dodged': 'SLIPPED!',
-      'counter': 'COUNTER!',
+      'counter': 'COUNTER!', 'rise-hit': 'TAGGED!', 'revive': 'UP!',
     };
     let flashT = 0, vinT = 0, calloutT = 0;
     const flash = (t) => { el.flash.textContent = t; el.flash.style.opacity = 1; flashT = performance.now(); };
@@ -591,7 +684,7 @@
       document.body.classList.add('ended');
       el.feed.innerHTML = '';
       el.end.classList.toggle('lose', !win);
-      el.endTitle.textContent = win ? 'YOU WIN!' : 'DOWN GOES YOU';
+      el.endTitle.textContent = win ? 'YOU WIN!' : 'DOWN YOU GO!';
       const name = (st.npc.name || 'PIP').toUpperCase();
       const score = (st.player.score || 0).toLocaleString();
       const best = recordEnd(win, st);
@@ -600,15 +693,31 @@
       el.end.classList.add('on');
     };
     $('[data-replay]').onclick = () => location.reload();
-    // tutorial wrap-up reuses the end card: straight into the real fight
+    /* tutorial wrap-up reuses the end card — the verdict scales with the
+       score: sweep the lessons and you're ready; flub most of them and your
+       corner has opinions. Straight into the real fight either way. */
+    const TUT_QUIPS = [    // indexed by lessons passed — scales to STEPS.length
+      'PIP BARELY SWEATED',        // 0
+      'YOUR CORNER IS CONCERNED',  // 1
+      'WARMING UP, ROOKIE',        // 2
+      'HALF A FIGHTER',            // 3
+      'CLOSE ENOUGH FOR A BRAWL',  // 4
+      'ALMOST A CONTENDER',        // 5
+      "YOU'RE READY!",             // 6+ — the lot
+    ];
     function showTutorialEnd(passed) {
       if (ended) return; ended = true;
       document.body.classList.add('ended');
       el.feed.innerHTML = '';
-      el.endTitle.textContent = "YOU'RE READY!";
-      el.endSub.textContent = `BASICS · ${passed.length} / 4 NAILED`;
+      /* tally the LIVE list, not the callback's slice: a final _pass can land
+         between _finish()'s snapshot and the endcard paint (the TOTAL failsafe
+         fires _finish outside _next, so a just-passed drill reads short) */
+      const n = Math.max(passed.length, tutor?.passed?.length ?? 0);
+      el.endTitle.textContent = n >= tutSteps ? "YOU'RE READY!"
+        : TUT_QUIPS[Math.min(n, TUT_QUIPS.length - 2)];   // partial runs never reach the last quip
+      el.endSub.textContent = `BASICS · ${n} / ${tutSteps} NAILED`;
       const go = $('[data-replay]');
-      go.textContent = 'Fight the champ →';
+      go.textContent = n >= tutSteps ? 'Fight the champ →' : 'Fight anyway →';
       go.onclick = () => { location.href = './boxing.html'; };
       el.end.classList.add('on');
     }
@@ -704,9 +813,16 @@
       const down = st.phase === 'npcdown' || st.phase === 'playerdown';
       tog('countOn', el.count, down);
       if (down) {
-        const n = Math.min(3, Math.floor(game.fight._phaseT / .8) + 1);
+        /* a player down runs the ref's full count over the get-up window
+           (riseT → 1..10) — the rings + progress live on the hand canvas */
+        const rise = st.phase === 'playerdown' && st.rise?.active;
+        const n = rise
+          ? Math.min(10, Math.floor(game.fight._phaseT / (game.fight._T.riseT / 10)) + 1)
+          : Math.min(3, Math.floor(game.fight._phaseT / .8) + 1);
         if (hLast.cntN !== n) { hLast.cntN = n; el.count.firstElementChild.textContent = n; }
-        txt('cntLbl', el.count.lastElementChild, st.phase === 'npcdown' ? `${st.npc.name} IS DOWN` : 'YOU ARE DOWN');
+        txt('cntLbl', el.count.lastElementChild,
+          rise ? `TAG THE RINGS · ${st.rise.got}/${st.rise.need}`
+            : st.phase === 'npcdown' ? `${st.npc.name} IS DOWN` : 'YOU ARE DOWN');
       }
       tog('teleOn', el.tele, st.npc.action === 'windup');
       if (st.npc.telegraph) {
@@ -714,7 +830,7 @@
         // telegraph.side is the NPC's glove — it lands on the player's
         // opposite side, so the cue names the guard to raise
         const guardSide = tg.side === 'left' ? 'R' : 'L';
-        const how = tg.kind === 'upper' ? 'UPPERCUT · SLIP ⟷  NO DUCK!'
+        const how = tg.kind === 'upper' ? 'UPPERCUT · SLIP ⟷ — NO DUCK!'
           : tg.kind === 'hook' ? `HOOK · DUCK ↓ / GUARD ${guardSide}`
           : `JAB · SLIP ⟷ / GUARD ${guardSide}`;
         const name = tg.special ? `${tg.special} — ` : '';
@@ -734,6 +850,8 @@
         if (FLASH[e]) flash(FLASH[e]);
         if (e === 'player-hit-taken' || (e === 'ko' && st.phase === 'playerdown')) vinT = performance.now();
         if (e === 'perfect-dodge') callout('PERFECT!', 'perfect', 650);
+        if (e === 'rise') callout('GET UP!', 'flurry', 1600);
+        if (e === 'revive') callout('BACK IN IT!', 'perfect', 900);
         if (e === 'round-start') callout('FIGHT!', '', 750);
         if (e === 'npc-special') callout(`${st.npc.telegraph?.special || 'SPECIAL'}!`, 'flurry', 850);
         if (e === 'ko') recordKo(st);
@@ -777,10 +895,15 @@
       url: '/api/coach',    // server.mjs proxies TensorMux — the key stays off the page
       hold: 8000,           // break length — then the bell deals the next round
       apiMs: 5000,          // the tip can never hold up the restart
+      wipeIn: 340,          // blackout falls — the walk back to the marks hides under it
+      wipeHold: 260,        // a beat at full black before the curtain lifts
+      pop: 1150,            // ROUND card length — 3-2-1 only deals once it's gone
     };
     const coachOn = params.get('coach') === '1'
       || (params.get('coach') !== '0' && params.get('coach') !== 'off' && !practice && !noTrack);
-    const corner = { on: false, used: false, t0: 0, skip: false, voice: null };
+    const corner = { on: false, used: false, t0: 0, skip: false, voice: null,
+      stage: 'idle', stageT: 0, resetDone: false, tip: null, voiced: false,
+      bout: -1 };
     /* what the corner actually SAW: punches by kind, where each glove sits
        (guard level = hand raised into the face band, sampled every fighting
        frame), slips/ducks attempted, hits eaten vs blocked vs landed. This is
@@ -838,7 +961,8 @@
     }
     /* the corner TALKS: tip text → mp3 via /api/coach-voice (ElevenLabs key
        stays server-side). A muted game keeps a silent corner; a clip can't
-       outlive its own break (stale fetch → discarded, close → paused). */
+       outlive its own card (stale fetch → discarded, close → paused) — a
+       late fetch must never start talking over the blackout/round card. */
     async function coachVoice(t, myT0) {
       if (audio?.muted) return;
       try {
@@ -847,7 +971,7 @@
           body: JSON.stringify({ text: t, voice: params.get('voice') || undefined }) });
         if (!r.ok) return;                       // 501 no-key / 502 upstream — quiet card
         const buf = await r.arrayBuffer();
-        if (!corner.on || corner.t0 !== myT0 || !buf.byteLength) return;
+        if (!corner.on || corner.t0 !== myT0 || corner.stage !== 'coach' || !buf.byteLength) return;
         corner.voice?.pause?.();
         const a = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' })));
         corner.voice = a; a.play().catch(() => {});
@@ -855,11 +979,25 @@
     }
     /* trigger + break clock — runs every frame from the main loop:
        fresh bout re-arms the one-time flag and wipes the prompt stats;
-       two-thirds gone while fighting → patch up + next round's countdown;
-       the card stays up COACH.hold ms (or until you wave it off) */
+       two-thirds gone while fighting → patch up + next round's countdown.
+       The scramble folds to black FIRST (never a mid-fight freeze frame):
+       under the curtain both fighters walk back to their marks, the coach
+       card talks over the reset corners, then the ROUND card pops, and only
+       once it's gone does the 3-2-1 deal the bell. corner.on (→ cornerHold)
+       holds the freeze through every beat. */
     const cornerTick = (st, now) => {
-      if (st.phase === 'intro' || (st.phase === 'countdown' && st.round === 1 && !corner.on)) {
-        if (corner.on) { corner.on = false; corner.voice?.pause?.(); el.coach.classList.remove('on'); }   // rematch mid-break
+      /* a fresh bout re-arms the corner on ANY frame — the bout epoch bumps
+         inside reset(), so the sighting survives step-bursts that burn
+         intro/countdown between rAFs (the old phase-sighting could miss the
+         window entirely and latch `used` for the whole bout) */
+      if (st.bout !== corner.bout) {
+        corner.bout = st.bout;
+        if (corner.on || corner.stage !== 'idle') {   // rematch mid-break — every stage prop dies with it
+          corner.on = false; corner.stage = 'idle'; corner.voice?.pause?.();
+          el.coach.classList.remove('on');
+          el.wipe.classList.remove('on');
+          el.rpop.classList.remove('on');
+        }
         corner.used = false;
         cstatsReset();
       }
@@ -875,25 +1013,65 @@
         const hpPct = Math.round(st.player.hp / (st.player.maxHp || 1) * 100);
         if (game?.fight.corner?.()) {
           corner.on = true; corner.skip = false; corner.t0 = now;
-          el.coachRd.textContent = `ROUND ${st.round} UP NEXT · PATCHED TO ${Math.round(st.player.hp / st.player.maxHp * 100)}%`;
+          corner.stage = 'wipe'; corner.stageT = now; corner.resetDone = false;
+          corner.tip = null; corner.voiced = false;
           txt('ctip', el.coachTip, '— your corner is shouting over the crowd —');
-          el.coach.classList.add('on');
-          feed('CORNER — LISTEN UP');
-          callout('HALFTIME', 'perfect', 1200);
-          audio?.handleEvent('corner', st);
+          el.wipe.classList.add('on');                       // the scramble folds to black FIRST
+          audio?.play('whoosh', { kind: 'uppercut', miss: true, peak: .5 });   // heavy curtain swish
+          // the tip fetch starts NOW — it can land mid-wipe, ready when the card opens
           const myT0 = corner.t0;         // a slow tip can't land into the NEXT break
           coachAdvice(hpPct, st).then(t => {
-            if (corner.on && corner.t0 === myT0) { txt('ctip', el.coachTip, t); coachVoice(t, myT0); }
+            const good = corner.on && corner.t0 === myT0
+              && (corner.stage === 'wipe' || corner.stage === 'coach');
+            if (!good) return;
+            corner.tip = t; txt('ctip', el.coachTip, t);
+            if (corner.stage === 'coach' && !corner.voiced) { corner.voiced = true; coachVoice(t, myT0); }
           });
         }
       }
-      if (corner.on) {
-        const left = COACH.hold - (now - corner.t0);
-        bar('ctime', el.coachTime, left / COACH.hold);
-        if (left <= 0 || corner.skip) {
-          corner.on = false; corner.voice?.pause?.();
-          el.coach.classList.remove('on');
+      if (!corner.on) return;
+      switch (corner.stage) {
+        case 'wipe': {
+          const u = now - corner.stageT;
+          if (!corner.resetDone && u >= COACH.wipeIn + COACH.wipeHold * .5) {
+            game?.recenter?.();      // back to the original marks — invisible at black
+            corner.resetDone = true;
+          }
+          if (u >= COACH.wipeIn + COACH.wipeHold) {
+            el.wipe.classList.remove('on');                   // curtain lifts on reset marks —
+            corner.stage = 'coach'; corner.stageT = now;      // THEN the corner talks
+            el.coachRd.textContent = `ROUND ${st.round} UP NEXT · PATCHED TO ${Math.round(st.player.hp / st.player.maxHp * 100)}%`;
+            el.coach.classList.add('on');
+            feed('CORNER — LISTEN UP');
+            callout('HALFTIME', 'perfect', 1200);
+            // a tip that beat the card in gets its voice the moment it opens
+            if (corner.tip && !corner.voiced) { corner.voiced = true; coachVoice(corner.tip, corner.t0); }
+          }
+          break;
         }
+        case 'coach': {
+          const left = COACH.hold - (now - corner.stageT);
+          bar('ctime', el.coachTime, left / COACH.hold);
+          if (left <= 0 || corner.skip) {
+            corner.stage = 'card'; corner.stageT = now;
+            corner.voice?.pause?.();
+            el.coach.classList.remove('on');
+            txt('rpn', el.rpRound, `ROUND ${st.round}`);
+            el.rpop.classList.remove('on'); void el.rpop.offsetWidth;   // restart the pop
+            el.rpop.classList.add('on');
+            audio?.play('bell', { times: 1 });                // the card announces the round
+          }
+          break;
+        }
+        case 'card': {
+          // the countdown waits its turn — it only deals once the card's gone
+          if (now - corner.stageT >= COACH.pop) {
+            el.rpop.classList.remove('on');
+            corner.stage = 'idle'; corner.on = false;         // freeze off → 3-2-1 ticks
+          }
+          break;
+        }
+        default: corner.stage = 'idle'; corner.on = false;
       }
     };
     el.coachGo.onclick = () => { corner.skip = true; };
@@ -991,7 +1169,7 @@
         else if (k === 'duck') duckTap = true;
       }
       if (e.key === 'c' || e.key === 'C') { game?.calibrate(); mouse.sway = 0; }
-      if (e.key === 'm' || e.key === 'M') { if (audio) { audio.unlock(); audio.muted = !audio.muted; } }
+      if (e.key === 'm' || e.key === 'M') { if (audio) { audio.unlock(earlyAC); audio.muted = !audio.muted; } }
     });
     addEventListener('keyup', e => {
       if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') moveKeys.forward = false;
@@ -1333,6 +1511,51 @@
           hx.restore();
         }
 
+        hx.restore();
+      }
+
+      /* ---- get-up QTE ------------------------------------------------------
+         You're down, the ref's counting — tag `need` rings before it ends.
+         One ring pops at a time (sun donut, ink rims) with a coral fuse arc
+         draining its own per-ring timer; tagged rings light the pips and the
+         top bar is the whole count window running out. */
+      const rise = out?.state?.rise;
+      if (rise?.active && out.state.phase === 'playerdown') {
+        const W = hc.width, H = hc.height;
+        const cx = rise.x * W, cy = rise.y * H, R = rise.r * W;
+        const popIn = Math.min(1, (1 - rise.each01) * 9);        // springy spawn
+        const pulse = 1 + Math.sin(nowS * 9) * .045;
+        const RR = Math.max(6, R * (.55 + .45 * popIn) * pulse);
+        hx.save();
+        hx.globalAlpha = .94;
+        // target donut: sun ring, ink rim, paper heart — punch the heart
+        hx.beginPath(); hx.arc(cx, cy, RR, 0, Math.PI * 2);
+        hx.fillStyle = '#FFC53D'; hx.fill();
+        hx.lineWidth = Math.max(5, RR * .13); hx.strokeStyle = '#2B2118'; hx.stroke();
+        hx.beginPath(); hx.arc(cx, cy, RR * .46, 0, Math.PI * 2);
+        hx.fillStyle = '#FFF8EC'; hx.fill();
+        hx.lineWidth = Math.max(3, RR * .07); hx.stroke();
+        hx.beginPath(); hx.arc(cx, cy, RR * .17, 0, Math.PI * 2);
+        hx.fillStyle = '#FF6B57'; hx.fill();
+        // per-ring fuse — coral arc drains until this pop times out
+        hx.beginPath();
+        hx.arc(cx, cy, RR * 1.24, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * rise.each01);
+        hx.lineWidth = Math.max(4, RR * .1); hx.lineCap = 'round';
+        hx.strokeStyle = '#FF6B57'; hx.stroke();
+        // progress: tagged pips + the count window draining, top-centre
+        const pipR = Math.max(7, R * .2), pipY = Math.max(96, H * .105);
+        for (let i = 0; i < rise.need; i++) {
+          const gx = W / 2 + (i - (rise.need - 1) / 2) * pipR * 3.1;
+          hx.beginPath(); hx.arc(gx, pipY, pipR, 0, Math.PI * 2);
+          hx.fillStyle = i < rise.got ? '#4FB06D' : 'rgba(255,248,236,.3)';
+          hx.fill();
+          hx.lineWidth = 3; hx.strokeStyle = '#2B2118'; hx.stroke();
+        }
+        const bw = Math.min(340, W * .3), bx = W / 2 - bw / 2, by = pipY + pipR + 8;
+        hx.beginPath(); hx.roundRect(bx, by, bw, 9, 4.5);
+        hx.fillStyle = 'rgba(43,33,24,.35)'; hx.fill();
+        hx.beginPath(); hx.roundRect(bx, by, bw * Math.max(0, rise.t01), 9, 4.5);
+        hx.fillStyle = '#FF6B57'; hx.fill();
         hx.restore();
       }
     };

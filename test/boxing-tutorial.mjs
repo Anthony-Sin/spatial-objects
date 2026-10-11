@@ -1,4 +1,4 @@
-/* test/boxing-tutorial.mjs — the 30s tutorial, driven headless against the
+/* test/boxing-tutorial.mjs — the ~40s tutorial, driven headless against the
    real Fight + RingSim. `node test/boxing-tutorial.mjs` */
 import { Fight, TUNING } from '../shared/boxing/fight.js';
 import { RingSim } from '../shared/boxing/ring.js';
@@ -25,7 +25,8 @@ function run(brain) {
     if (st.phase === 'fighting' && fightStart === null) fightStart = t;
     const inp = brain(st, tutor, () => (punchCd <= 0 ? (punchCd = .25, true) : false));
     punchCd -= DT;
-    sim.step(DT, { npcDir: fight.npcDir(), npcStunned: st.npc.action === 'stunned' });
+    sim.step(DT, { npcDir: fight.npcDir(), npcStunned: st.npc.action === 'stunned',
+      playerStep: inp.step || 0 });
     fight.step(DT, { ...inp, distance: sim.distance() });
     out.events = st.events.slice();
     tutor.update(out, t);
@@ -43,6 +44,10 @@ const good = run((st, tutor, canPunch) => {
   if (id === 'punch' && canPunch()) inp.punches = [{ kind: 'jab', side: 'left', power: 1 }];
   if (id === 'block' && seen) inp.guard[seen.side === 'left' ? 'right' : 'left'] = 1;
   if (id === 'slip' && seen && (!tg || tg.t01 > .7)) inp.sway = 1;
+  // scripted hook — duck the head under it once the telegraph is underway
+  if (id === 'duck' && seen && (!tg || tg.t01 > .5)) inp.duck = 1;
+  // head-driven footwork — press in until the lesson credits it
+  if (id === 'move') inp.step = 1;
   if (id === 'perfect') {
     if (tg && tg.t01 > .93) inp.dodge = 1;
     if (st.npc.action === 'stunned' && canPunch()) inp.punches = [{ kind: 'cross', side: 'right', power: 1 }];

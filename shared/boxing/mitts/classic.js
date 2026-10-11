@@ -87,7 +87,11 @@ const lmOk = lm => {
 };
 
 export function draw(ctx, pos, o = {}) {
+  /* a missing/gutted context (detached canvas, 0×0 getContext returning
+     null, a test stub) is a no-op, never a throw — "draw or don't" */
+  if (!ctx || typeof ctx.save !== 'function') return;
   if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+  if (!o || typeof o !== 'object') o = {};   // explicit null opts ≠ default
   /* finite-but-absurd origins (±1e308) stay finite through every guard yet
      still overflow the centroid sums inside blobPalm/the rescale (6×1e308
      = Infinity → -Infinity path args). A mitt centered past ±1e6px is far

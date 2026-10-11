@@ -281,6 +281,23 @@ try {
       flag(owned, page, lineOf(html, m.index),
         `emoji U+${m[0].codePointAt(0).toString(16).toUpperCase()} in markup — contract says draw shapes, no emojis`);
 
+    /* ---- wave-5 (b5-pages) a11y media-query checks ----
+       OS-level signals the page must honor: a stylesheet that animates but
+       never mentions prefers-reduced-motion ignores the vestibular
+       setting; outline:none with no :focus-visible anywhere erases the
+       keyboard focus indicator entirely. */
+    const cssBlob = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)]
+      .map(m => m[1]).join('\n');
+    if (cssBlob) {
+      if (/(?:animation|transition)(?:-[\w]+)?\s*:/.test(cssBlob)
+          && !/prefers-reduced-motion/.test(cssBlob))
+        flag(owned, page, 0,
+          'CSS animates but no prefers-reduced-motion media query — OS vestibular setting ignored');
+      if (/outline\s*:\s*(?:none|0)\b/.test(cssBlob) && !/:focus-visible\b/.test(cssBlob))
+        flag(owned, page, 0,
+          'outline:none with no :focus-visible replacement — keyboard focus indicator erased');
+    }
+
     // every local src=/href= (and meta-refresh url=) must resolve on disk
     for (const m of html.matchAll(/\b(?:src|href)\s*=\s*["']([^"']+)["']/gi)) {
       const u = m[1];
@@ -431,6 +448,7 @@ async function dynamicProbes() {
             detectForVideo(frame, ts) {
               (globalThis.__detectLog ||= []).push(ts);
               if (globalThis.__detectThrow) throw new Error('detect boom');
+              if (globalThis.__detectUndef) return undefined;   // skipped frame, not a fault
               return { landmarks: [], handedness: [], detections: [] };
             } };
           (globalThis.__lmLog ||= []).push(lm);
@@ -486,7 +504,8 @@ async function dynamicProbes() {
     const isHands = (Ctor) => Ctor.name === 'Hands';
     const gotHands = (h) => isHands(h.constructor) ? h.state.hands.length : h.state.found;
     const resetFlags = () => { globalThis.__lmDelay = 0; globalThis.__lmCloseThrow = false;
-      globalThis.__lmFail = false; globalThis.__failPost = false; };
+      globalThis.__lmFail = false; globalThis.__failPost = false;
+      globalThis.__detectThrow = false; globalThis.__detectUndef = false; };
 
     for (const Ctor of [Hands, Face]) {
       const F = `shared/${Ctor.name.toLowerCase()}.js`;
@@ -599,10 +618,16 @@ async function dynamicProbes() {
         if (inflight) w.emit({ type: 'ready', delegate: 'gpu' });
         const h = await p;
         globalThis.__lmDelay = 0;
-        const lm = (globalThis.__lmLog || []).at(-1);
         probe(h && h._worker === w && h.delegate === 'gpu-worker',
           F, `${Ctor.name}: 'ready' during pending _initLocal not adopted`);
-        probe(lm && lm.closed === 1 && h.landmarker === null,
+        /* the inline wait is itself capped now — `await p` may return BEFORE
+           the delayed build lands; the post-await check still has to close
+           it when it does (never installed over the adopted worker) */
+        const closedPending = await puntil(() => {
+          const l = (globalThis.__lmLog || []).at(-1);
+          return l && l.closed === 1;
+        }, 2500);
+        probe(closedPending && h && h.landmarker === null,
           F, `${Ctor.name}: pending inline landmarker installed over the adopted worker`);
         h?.stop();
       }
@@ -739,9 +764,12 @@ async function dynamicProbes() {
         w.emit({ type: 'result', landmarks: 'oops', handedness: 7, inferMs: 'x' });
         w.emit({ type: 'result',
           landmarks: isHands(Ctor) ? [bad] : bad, handedness: [] });
-        w.emit({ type: 'result',
-          landmarks: isHands(Ctor) ? [VALID_HAND] : VALID_HAND,
-          handedness: [[{ categoryName: 'Left' }]] });
+        // hands gate first-sight detections behind CONFIRM_FRAMES of
+        // persistence — emit enough results for the track to go live
+        for (let e = 0; e < 4; e++)
+          w.emit({ type: 'result',
+            landmarks: isHands(Ctor) ? [VALID_HAND] : VALID_HAND,
+            handedness: [[{ categoryName: 'Left' }]] });
         const got = gotHands(h);
         probe(isHands(Ctor) ? got === 1 && h.state.hands[0].side === 'right' : got === true,
           F, `${Ctor.name}: malformed payloads not dropped / valid payload lost (got=${got})`);
@@ -758,12 +786,134 @@ async function dynamicProbes() {
           F, `${Ctor.name}: Worker ctor throw did not fall back to inline`);
         h?.stop();
         const v2 = fakeVideo();
+        const n2 = fakeWorkers.length;
         globalThis.__failPost = true;
         h = await make(Ctor, v2);
         globalThis.__failPost = false;
         probe(h && !!h.landmarker && h._worker === null,
           F, `${Ctor.name}: init-post throw did not fall back to inline`);
+        probe(fakeWorkers.length > n2 && fakeWorkers.at(-1).terminated,
+          F, `${Ctor.name}: init-post throw left a half-spawned worker running`);
         h?.stop();
+      }
+
+      /* N) grace-3 dead-man cap: a silently-dead worker (posts NOTHING —
+            no 'ready', no error, no fatal) must resolve create() after
+            bootMs+bootMs+bootMs*3 total: cover with inline while the worker
+            KEEPS booting for a late adopt. No inline fetch may start
+            before the cap — that's the whole point of verdict-wait. */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const lmN = (globalThis.__lmLog || []).length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        await ptick(OPTS.bootMs * 2 + 40);              // inside grace-3 — too early for inline
+        probe((globalThis.__lmLog || []).length === lmN, F,
+          `${Ctor.name}: inline build started before the grace-3 cap`);
+        const h = await Promise.race([p, ptick(3000).then(() => null)]);
+        probe(!!h && h._worker === null && !!h.landmarker
+          && (h.delegate === 'cpu' || h.delegate === 'gpu'), F,
+          `${Ctor.name}: silent-dead worker did not resolve to inline cover (delegate=${h?.delegate})`);
+        probe(h && h._bootW === w && !w.terminated, F,
+          `${Ctor.name}: grace-3 cap reaped a still-plausibly-booting worker`);
+        probe(h && !!v._rvc, F,
+          `${Ctor.name}: pump never armed after the cap — a late 'ready' could never adopt`);
+        const lm = (globalThis.__lmLog || []).at(-1);
+        w.emit({ type: 'ready', delegate: 'gpu' });      // late 'ready' post-inline → adopt + close it
+        probe(h && h._worker === w && h.delegate === 'gpu-worker' && h.landmarker === null
+          && h._bootW === null && lm && lm.closed === 1, F,
+          `${Ctor.name}: post-cap 'ready' did not adopt over inline (delegate=${h?.delegate}, closed=${lm?.closed})`);
+        h.stop();
+        probe(w.terminated, F, `${Ctor.name}: adopted-after-cap worker not reaped on stop`);
+      }
+
+      /* P) a hung INLINE build must not wedge create() either — the cover
+            gets its own dead-man window; a late-landing build still
+            installs (the pump picks it up) and no second fetch starts */
+      {
+        globalThis.__lmPending = 0;
+        globalThis.__lmDelay = 400;                       // inline build >> the cover cap (bootMs)
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        w.err();                                          // verdict 'fail' → _initLocal begins
+        const t0 = Date.now();
+        const h = await Promise.race([p, ptick(3000).then(() => null)]);
+        const dt = Date.now() - t0;
+        probe(!!h && dt < 300, F,
+          `${Ctor.name}: create() waited ${dt}ms on a hung inline build (cap=${OPTS.bootMs}ms)`);
+        probe(h && h.landmarker === null && h._worker === null, F,
+          `${Ctor.name}: pending inline build wrongly installed at resolve`);
+        probe(h && !!v._rvc, F, `${Ctor.name}: pump not armed after the capped inline wait`);
+        const built = await puntil(() => h && h.landmarker, 2500);   // late build still installs
+        probe(built && (h.delegate === 'cpu' || h.delegate === 'gpu'), F,
+          `${Ctor.name}: late inline build never installed after the cap (delegate=${h?.delegate})`);
+        globalThis.__lmDelay = 0;
+        h?.stop();
+      }
+
+      /* Q) once a worker owns the pump, _initLocal must be a no-op — a late
+            'ready' racing the verdict→inline gap must not trigger a second
+            ~13MB build. And a superseding _spawn reaps the stale boot
+            handle rather than orphaning it. */
+      {
+        const v = fakeVideo(), n0 = fakeWorkers.length;
+        const p = Ctor.create(v, VEND_URL, OPTS);
+        await puntil(() => fakeWorkers.length > n0);
+        const w = fakeWorkers.at(-1);
+        w.emit({ type: 'ready', delegate: 'gpu' });
+        const h = await p;
+        const lmN = (globalThis.__lmLog || []).length;
+        await h._initLocal();
+        probe((globalThis.__lmLog || []).length === lmN, F,
+          `${Ctor.name}: _initLocal built an inline landmarker over an adopted worker`);
+        const stale = new globalThis.Worker('qe-stale');     // an orphan boot handle
+        h._bootW = stale;
+        h._spawn();                                          // superseding spawn must reap it
+        probe(stale.terminated, F,
+          `${Ctor.name}: _spawn orphaned the previous still-booting worker`);
+        const w2 = fakeWorkers.at(-1);
+        w2.emit({ type: 'ready', delegate: 'gpu' });
+        probe(h._worker === w2 && w.terminated, F,
+          `${Ctor.name}: superseding spawn did not adopt / old worker kept alive`);
+        h?.stop();
+      }
+
+      /* R) rapid create→stop×20 with verdicts at every reachable lifecycle
+            point — no zombie workers, no resurrected landmarkers,
+            consistent post-stop state every cycle */
+      {
+        const base = fakeWorkers.length;
+        for (let i = 0; i < 20; i++) {
+          const mode = i % 4;
+          const v = fakeVideo(), n0 = fakeWorkers.length;
+          const p = Ctor.create(v, VEND_URL, OPTS);
+          await puntil(() => fakeWorkers.length > n0);
+          const w = fakeWorkers.at(-1);
+          if (mode === 1) w.emit({ type: 'ready', error: 'init blew up' });  // verdict: init error
+          else if (mode === 2) w.err();                                      // verdict: worker death
+          else w.emit({ type: 'ready', delegate: 'gpu' });                   // verdict: adopt
+          const h = await Promise.race([p, ptick(1500).then(() => null)]);
+          if (!h) { probe(false, F, `${Ctor.name}: cycle${i} create() never resolved`); continue; }
+          if (mode === 0) {              // adopt → stop → post-stop msgs ignored
+            h.stop();
+            w.emit({ type: 'result', landmarks: [], handedness: [] });
+            w.emit({ type: 'ready', delegate: 'gpu' });      // must NOT resurrect
+          } else if (mode === 3) {       // death → respawn armed → stop cancels it
+            h._workerDied(w);
+            h.stop();
+          } else h.stop();               // modes 1/2 — verdict already resolved create
+          probe(h._stopped && h._worker === null && h._bootW === null
+            && h.landmarker === null && h.delegate === 'none' && h._inFlight === false,
+            F, `${Ctor.name}: cycle${i} stop left inconsistent state `
+              + `(worker=${!!h._worker}, lm=${!!h.landmarker}, delegate=${h.delegate})`);
+        }
+        await ptick(OPTS.respawnMs + 80);                    // a leaked respawn timer would fire here
+        const alive = fakeWorkers.slice(base).filter(w => !w.terminated);
+        probe(alive.length === 0, F,
+          `${Ctor.name}: ${alive.length} zombie worker(s) after 20 rapid create/stop cycles`);
       }
       resetFlags();
     }
@@ -788,6 +938,12 @@ async function dynamicProbes() {
       // garbage envelopes — ignored without crashing the handler
       post(42); post('x'); post(null); post({ type: 'nope' });
       probe(true, F, 'garbage envelopes crashed the worker handler');   // reaching here = pass
+      // a frame before ANY init — landmarker is null but the page's
+      // _inFlight still needs its clearing result
+      const preN = results().length;
+      post({ type: 'frame', frame: frame() });
+      probe(results().length === preN + 1 && results().at(-1).landmarks === null,
+        F, 'pre-init frame got no clearing result');
       post({ type: 'init', kind: 'bogus', vendorUrl: VEND_URL });
       probe(await puntil(() => readyErr().length === 1), F,
         "init kind='bogus' did not post ready+error");
@@ -860,6 +1016,148 @@ async function dynamicProbes() {
       post({ type: 'frame', frame: frame() });
       probe(results().at(-1)?.face === null && results().at(-1)?.landmarks === null,
         F, 'post-close frame did not get the empty result');
+
+      /* wave-5 additions — lifecycle chain + healthy-detect edge cases */
+
+      // init→close→init must serialize on the chain: the superseded init's
+      // landmarker is closed, the last init wins, readies stay ordered
+      const lmBase = (globalThis.__lmLog || []).length;
+      post({ type: 'init', kind: 'hands', vendorUrl: VEND_URL });
+      post({ type: 'close' });
+      post({ type: 'init', kind: 'face', vendorUrl: VEND_URL });
+      probe(await puntil(() => readyOk().length >= 5), F,
+        'serialized init→close→init never posted the final ready');
+      const chained = (globalThis.__lmLog || []).slice(lmBase);
+      probe(chained.length >= 2 && chained[0].closed === 1, F,
+        'init→close→init leaked the superseded landmarker');
+
+      // out-of-order media stamps stay monotonic — anchored offset + floor
+      const logBase2 = (globalThis.__detectLog || []).length;
+      post({ type: 'frame', frame: frame({ timestamp: 9_000_000 }) });
+      post({ type: 'frame', frame: frame({ timestamp: 1_000_000 }) });   // media-time went backwards
+      const log2 = (globalThis.__detectLog || []).slice(logBase2);
+      probe(log2.length === 2 && log2[1] > log2[0], F,
+        'out-of-order media stamps broke the monotonic-ts floor');
+
+      // a landmarker returning undefined = a skipped frame, not a fault —
+      // still answers a clearing result and must never burn failN
+      globalThis.__detectUndef = true;
+      const resN = results().length, fatN = fatals().length;
+      for (let i = 0; i < 35; i++) post({ type: 'frame', frame: frame() });
+      probe(fatals().length === fatN && results().length === resN + 35, F,
+        'undefined detect results escalated a healthy landmarker to fatal');
+      globalThis.__detectUndef = false;
+      post({ type: 'close' });
+      await ptick(40);
+    }
+
+    /* ---------- shared/glove.js — drawGlove domain fuzz on the real module.
+       A recording fake ctx stands in for canvas 2d; every assertion is
+       "returned, didn't throw" + canvas state balanced + no poison reached
+       a style/text sink. */
+    {
+      const F = 'shared/glove.js';
+      const { drawGlove } = await import(
+        new URL('../shared/glove.js', import.meta.url).href);
+      const P21 = Array.from({ length: 21 }, (_, i) =>
+        ({ x: 50 + i * 8, y: 100 + (i % 4) * 20 }));
+      class FakeCtx {
+        constructor(failAt) {
+          this.calls = []; this.styles = []; this.texts = [];
+          this._failAt = failAt; this._saves = 0; this._restores = 0;
+          this.canvas = { width: 800, height: 600 };
+        }
+        _r(n) { this.calls.push(n); if (n === this._failAt) throw new Error(n + ' boom'); }
+        save() { this._saves++; } restore() { this._restores++; }
+        beginPath() { this._r('beginPath'); } moveTo() { this._r('moveTo'); }
+        lineTo() { this._r('lineTo'); } quadraticCurveTo() { this._r('quadraticCurveTo'); }
+        closePath() { this._r('closePath'); } arc() { this._r('arc'); }
+        arcTo() { this._r('arcTo'); } rect() { this._r('rect'); }
+        ellipse() { this._r('ellipse'); } roundRect() { this._r('roundRect'); }
+        fill() { this._r('fill'); } stroke() { this._r('stroke'); }
+        translate() { this._r('translate'); } rotate() { this._r('rotate'); }
+        fillText(t) { this._r('fillText'); this.texts.push(String(t)); }
+        measureText() { return { width: 20 }; }
+        set fillStyle(v) { this.styles.push(v); }
+        set strokeStyle(v) { this.styles.push(v); }
+        set lineWidth(v) {} set lineCap(v) {} set lineJoin(v) {}
+        set font(v) {} set textAlign(v) {}
+      }
+      const okCall = (fn) => { try { fn(); return true; } catch { return false; } };
+
+      probe(okCall(() => drawGlove(null, P21)), F, 'null ctx threw');
+      const c1 = new FakeCtx();
+      probe(okCall(() => drawGlove(c1, P21)) && c1._saves >= 1 && c1._saves === c1._restores,
+        F, 'valid draw left unbalanced ctx save/restore');
+      probe(c1.calls.includes('fill') && c1.calls.includes('fillText'),
+        F, 'valid landmarks produced no paint ops');
+
+      // invalid P shapes must return BEFORE touching ctx state
+      for (const bad of [null, [], P21.slice(0, 20),
+          P21.map((p, i) => i === 5 ? { x: NaN, y: 0 } : p), 'string', 42]) {
+        const c = new FakeCtx();
+        probe(okCall(() => drawGlove(c, bad)) && c._saves === 0 && !c.calls.length,
+          F, `bad landmarks (${typeof bad}) reached paint or threw`);
+      }
+      // a Proxy landmark whose getter throws must not escape into the tick
+      const proxyP = new Proxy(P21, {
+        get(t, k) { if (k === '7') throw new Error('poison'); return t[k]; } });
+      const cp = new FakeCtx();
+      probe(okCall(() => drawGlove(cp, proxyP)) && cp._saves === 0,
+        F, 'throwing proxy landmark escaped validation or reached paint');
+
+      // frozen inputs — rescale path must copy, not mutate
+      const cf = new FakeCtx();
+      probe(okCall(() => drawGlove(cf,
+        Object.freeze(P21.map(Object.freeze)), { kind: 'fist', side: 'left' })),
+        F, 'frozen landmarks threw');
+      const BIG = Object.freeze(P21.map(p =>
+        Object.freeze({ x: p.x * 100, y: p.y * 100 })));   // forces the rescale path
+      const cb = new FakeCtx();
+      probe(okCall(() => drawGlove(cb, BIG)) && cb._saves === cb._restores && cb._saves >= 1,
+        F, 'frozen oversized landmarks threw (rescale mutated input?)');
+
+      // hostile opts — every field is untrusted
+      for (const o of [null, 42, 'x', { kind: '__proto__' }, { kind: 'constructor' },
+          { kind: 'toString' }, { kind: 'hasOwnProperty' }, { kind: {} }, { kind: null },
+          { side: 42 }, { side: {} }, { side: [] },
+          { kind: 'pinch', pinchAt: { x: NaN, y: NaN } },
+          { kind: 'pinch', pinchAt: 'no' }, { tool: 'drill' }, { tool: {} }, { tool: 42 }]) {
+        const c = new FakeCtx();
+        probe(okCall(() => drawGlove(c, P21, o)),
+          F, `opts ${JSON.stringify(o)} threw`);
+      }
+      // proto-key kinds must not leak inherited objects into style/text sinks
+      const ck = new FakeCtx();
+      drawGlove(ck, P21, { kind: '__proto__' });
+      probe(!ck.styles.some(s => s !== null && typeof s === 'object'), F,
+        "'__proto__' kind leaked an inherited object into a canvas style");
+      const ck2 = new FakeCtx();
+      drawGlove(ck2, P21, { kind: 'toString' });
+      probe(ck2.texts.length && !ck2.texts.some(t => /function|native code/.test(t)), F,
+        "'toString' kind rendered function source as the tag text");
+
+      // a mid-draw fault drops ONE frame — restore() still runs, no escape
+      const ct = new FakeCtx('quadraticCurveTo');
+      probe(okCall(() => drawGlove(ct, P21)) && ct._saves === ct._restores && ct._restores >= 1,
+        F, 'mid-draw canvas fault leaked ctx state or escaped drawGlove');
+      // a ctx with no canvas must not NaN the size cap or throw
+      const cno = new FakeCtx();
+      delete cno.canvas;
+      probe(okCall(() => drawGlove(cno, P21)), F, 'canvas-less ctx threw');
+      // a throwing save()/restore() pair can't wedge the tick either
+      const cs = new FakeCtx();
+      cs.save = () => { throw new Error('save boom'); };
+      probe(okCall(() => drawGlove(cs, P21)), F, 'throwing ctx.save() escaped');
+    }
+
+    /* every inline landmarker built anywhere in this suite must have been
+       closed — workers, cycles, pending builds: a live one is a leaked
+       GPU/CPU graph */
+    {
+      const openLm = (globalThis.__lmLog || []).filter(l => !l.closed);
+      probe(openLm.length === 0, 'shared/hands.js',
+        `${openLm.length} inline landmarker(s) leaked across all probes`);
     }
 
     /* the whole point of res()-only spawnP + .catch'd _initLocal: no tracker

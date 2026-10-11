@@ -127,7 +127,23 @@ export const TUNING = {
   counterWindow: 1.0,  // a block or slip opens a short reply window
   counterDamage: 1.35,
   tiltDecay: .7,        // tilt (recent player hits) fades per second
-  score: { hitMul: 5, block: 15, dodge: 30, perfect: 80, ko: 500, decision: 300 },
+
+  /* beat the count — a player KO isn't the end while the ref counts. One
+     target circle at a time pops up on the canvas; tag `riseTargets` of them
+     (each fades after riseEachT) before riseT runs out and you rise with
+     riseHp of your max — miss the window and it's 'lose' as before. Punch
+     x/y (normalized overlay coords) does the tagging; a punch with no
+     position can never hit a ring. */
+  riseT: 8.0,           // seconds on the canvas — the whole count window
+  riseTargets: 3,       // circles you must tag to get back up
+  riseEachT: 2.6,       // a circle fades untagged after this — next one pops
+  riseHp: .25,          // fraction of maxHp you stand back up with
+  riseR: .09,           // target radius as a fraction of screen width
+  riseStepN: 1,         // +this many rings per knockdown — it keeps climbing
+  riseStepFuse: .3,     // each ring's fuse drops by this per knockdown
+  riseStepR: .008,      // ring radius shrinks a touch per knockdown
+
+  score: { hitMul: 5, block: 15, dodge: 30, perfect: 80, ko: 500, decision: 300, revive: 120 },
 };
 
 /* Signature specials per proto variant — every rival gets one the way PIP's
@@ -168,13 +184,28 @@ export const VSTATS = {
 const _TDEF = JSON.parse(JSON.stringify(TUNING));
 const _SDEF = JSON.parse(JSON.stringify(SPECIALS));
 const _VDEF = JSON.parse(JSON.stringify(VSTATS));
+// garbage-in guards — trackers can emit NaN/undefined on lost frames, and
+// hostile callers can hand in Proxies / throwing getters / Symbol fields
+const num = (v, d = 0) => { try { return Number.isFinite(+v) ? +v : d; } catch { return d; } };
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const sget = (o, k) => { try { return o?.[k] } catch { return undefined; } };
+// own-property test that also survives hostile keys (toString-throwing
+// objects, revoked Proxies) — '__proto__'/'constructor' resolve through the
+// chain and must never pass a dispatch-table gate
+const sown = (t, k) => {
+  try {
+    return (typeof k === 'string' || typeof k === 'symbol')
+      && Object.prototype.hasOwnProperty.call(t, k);
+  } catch { return false; }
+};
+
 const saneT = (src, def) => {
   const out = {};
   for (const k in def) {
-    const d = def[k], v = src ? src[k] : undefined;
-    out[k] = (d !== null && typeof d === 'object') ? saneT(v, d)
-      : Number.isFinite(+v) ? +v : d;
-  }
+    const d = def[k], v = src ? sget(src, k) : undefined;   // sget: a throwing
+    out[k] = (d !== null && typeof d === 'object') ? saneT(v, d)   // getter on a
+      : Number.isFinite(+v) ? +v : d;                       // tuning table
+  }                                                       // falls back, not throws
   return out;
 };
 
@@ -186,20 +217,25 @@ const mulberry32 = (s) => () => {
   return ((t ^ t >>> 14) >>> 0) / 4294967296;
 };
 
-// garbage-in guards — trackers can emit NaN/undefined on lost frames
-const num = (v, d = 0) => Number.isFinite(+v) ? +v : d;
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-
 export class Fight {
   constructor(opts = {}) {
-    this.opts = { playerHp: 100, npcHp: 100, npcName: 'PIP', roundLen: 90, seed: 1,
-      ai: true, practice: false, npcVariant: 'bubble', ...opts };
+    /* a hostile opts (Proxy with throwing getters) once killed construction —
+       the spread touches every own key. Build into a local, fall back to
+       defaults, and assign only on success so this.opts is never poisoned. */
+    const def = { playerHp: 100, npcHp: 100, npcName: 'PIP', roundLen: 90, seed: 1,
+      ai: true, practice: false, npcVariant: 'bubble' };
+    try { this.opts = { ...def, ...opts }; } catch { this.opts = def; }
     this.state = {
-      phase: 'intro', round: 0, timeLeft: this.opts.roundLen, countdown: 0,
+      phase: 'intro', round: 0, bout: 0, timeLeft: this.opts.roundLen, countdown: 0,
       player: { hp: 0, maxHp: 0, stamina: 1, score: 0, combo: 0, bestCombo: 0,
         counterT: 0, status: 'idle', hurtT: 0, gassed: false,
         dodge: { dir: null, t: 9, cd: 0 }, perfects: 0 },   // dir: 'left'|'right'|'duck'|null
       npc: { hp: 0, maxHp: 0, stamina: 1, name: '', action: 'idle', actionT: 0, telegraph: null, gassed: false },
+      /* the get-up QTE, live only while 'playerdown': tag `need` rings
+         (current one at x,y — normalized overlay coords, r = width-fraction
+         radius, each01 = its own fade timer) before t01 (count window) hits
+         zero. HUD reads this verbatim — never null, check .active. */
+      rise: { active: false, need: 0, got: 0, t01: 0, each01: 0, x: .5, y: .5, r: .09, depth: 0 },
       events: [],       // strings, cleared at the top of every step
       lastBlow: null,   // resolution details for the most recent punch
     };
@@ -207,8 +243,10 @@ export class Fight {
   }
 
   /* ai/practice are read live so a caller can flip the tutorial switches
-     mid-fight (practice→real transitions) without a rebuild. */
-  get ai() { return this.opts.ai !== false; }
+     mid-fight (practice→real transitions) without a rebuild. A caller that
+     swapped this.opts for a throwing Proxy must not kill every step. */
+  get ai() { return sget(this.opts, 'ai') !== false; }
+  get _practice() { return !!sget(this.opts, 'practice'); }
 
   /* effective distance gates — bigger rivals start and land swings from
      farther out (VSTATS.range/reach scale the base TUNING numbers) */
@@ -223,17 +261,17 @@ export class Fight {
        reads the locals — and _startRound re-floors opts.roundLen on its own —
        so a frozen or live-mutated opts can no longer bake garbage into hp or
        wedge the round clock on NaN. */
-    const php  = Math.max(1, num(o.playerHp, 100));
-    const nhp  = Math.max(1, num(o.npcHp, 100));
-    const rlen = Math.max(1, num(o.roundLen, 90));
-    const nnm  = (typeof o.npcName === 'string' && o.npcName) ? o.npcName : 'PIP';
+    const php  = Math.max(1, num(sget(o, 'playerHp'), 100));
+    const nhp  = Math.max(1, num(sget(o, 'npcHp'), 100));
+    const rlen = Math.max(1, num(sget(o, 'roundLen'), 90));
+    const nnm  = (typeof sget(o, 'npcName') === 'string' && sget(o, 'npcName'))
+      ? sget(o, 'npcName') : 'PIP';
     try {
       o.playerHp = php; o.npcHp = nhp; o.roundLen = rlen; o.npcName = nnm;
     } catch { /* frozen opts — sanitized values still govern state below */ }
     // own-key check: '__proto__'/'constructor' resolve through the prototype
     // chain and once snapshotted {} → NaN windup/dmg — PIP telegraphed forever
-    const vk = Object.prototype.hasOwnProperty.call(SPECIALS, o.npcVariant)
-      ? o.npcVariant : 'bubble';
+    const vk = sown(SPECIALS, sget(o, 'npcVariant')) ? sget(o, 'npcVariant') : 'bubble';
     this._T = saneT(TUNING, _TDEF);          // fresh sanitized tuning snapshot
     /* saneT guarantees finite, NOT sane: a finite-negative edit (live or
        pre-reset) of TUNING/SPECIALS/VSTATS still inverted the sim — dmg<0
@@ -251,22 +289,24 @@ export class Fight {
       'pressMax', 'celebrateT', 'celebrateCd', 'comboWindup', 'comboWindow',
       'counterWindow', 'tiltDecay', 'specialEvery', 'reach', 'reachPow',
       'attackAt', 'npcReach', 'hurtRegenT', 'introT', 'countT', 'downT',
-      'punchDur', 'rageSpeed', 'specialStam', 'specialCost'])
+      'punchDur', 'rageSpeed', 'specialStam', 'specialCost',
+      'riseT', 'riseEachT', 'riseR', 'riseStepN', 'riseStepFuse', 'riseStepR'])
       T[k] = Math.max(0, T[k]);
     for (const k of ['roundHeal', 'cornerHeal', 'cornerStam', 'powFloor', 'blockMul',
-      'gasPower', 'gasGuard',
+      'gasPower', 'gasGuard', 'riseHp',
       'exhaustMul', 'regenBusy', 'regenHurt', 'slipBase', 'slipRage',
       'retreatOnHurt', 'guardT', 'dodgeT', 'gassedT', 'gassedHyst', 'hitAt',
       'npcCost'])
       T[k] = clamp(T[k], 0, 1);
     T.comboMax = Math.max(1, T.comboMax);
+    T.riseTargets = Math.max(1, T.riseTargets);
     this._special = saneT(SPECIALS[vk], _SDEF[vk]);
     for (const k of ['stam', 'cost', 'dmgMul', 'chip', 'windup', 'windupMul'])
       this._special[k] = Math.max(0, this._special[k]);
     this._special.chain = Math.max(1, this._special.chain);
     this._stat = saneT(VSTATS[vk], _VDEF[vk]);
     for (const k in this._stat) this._stat[k] = Math.max(0, this._stat[k]);
-    this._rng = mulberry32((o.seed | 0) || 1);
+    this._rng = mulberry32((num(sget(o, 'seed'), 1) | 0) || 1);
     this._phaseT = 0;                 // generic timer for intro/down phases
     this._actFor = .35;               // duration of the current npc action
     this._windupFor = 0;
@@ -286,42 +326,91 @@ export class Fight {
     this._wantSledge = false;         // (legacy alias — same gate as _wantSlam)
     this._normals = 0;                // normal attacks since the last special
     this._swing = null;               // how the live swing resolved: hit|blocked|dodged|perfect|whiff
-    s.phase = 'intro'; s.round = 0; s.timeLeft = rlen; s.countdown = 0;
+    this._riseEach = 0;               // per-ring fade clock while down
+    this._touchIn = true;             // touch-tag latch — re-armed per ring
+    this._downs = 0;                  // knockdowns this bout — the count escalates
+    s.phase = 'intro'; s.round = 0; s.bout = (s.bout | 0) + 1; s.timeLeft = rlen; s.countdown = 0;
     s.events.length = 0; s.lastBlow = null;
     this._comboT = 0;
     Object.assign(s.player, { hp: php, maxHp: php, stamina: 1, score: 0,
       combo: 0, bestCombo: 0, counterT: 0, status: 'idle', hurtT: 0, gassed: false,
       dodge: { dir: null, t: 9, cd: 0 }, perfects: 0 });
     Object.assign(s.npc, { hp: nhp, maxHp: nhp, stamina: 1, name: nnm, action: 'idle', actionT: 0, telegraph: null, gassed: false, specialReady: false });
+    Object.assign(s.rise, { active: false, need: 0, got: 0, t01: 0, each01: 0, x: .5, y: .5, r: .09, depth: 0 });
   }
 
   step(dt, inputs = {}) {
     const s = this.state, p = s.player, T = this._T;
-    dt = Math.min(Math.max(+dt || 0, 0), .1);
-    s.events.length = 0; s.lastBlow = null;
+    dt = Math.min(Math.max(num(dt, 0) || 0, 0), .1);   // +Symbol/BigInt throws — num catches
+    /* a freeze frame (dt=0: cornerHold halftime, hit-stop, tracker wait) must
+       not DESTROY the event queue: corner() emits 'corner' between steps —
+       the old unconditional clear ate it before the drain ever saw it.
+       Nothing internal emits at dt=0, so the queue is exactly what external
+       emitters left — the consumer's drain still owns delivery. */
+    /* the public drain queue is caller-visible: a consumer that froze or
+       replaced it must not kill step — rebind a fresh writable array BEFORE
+       the clear (a frozen array refuses .length writes before it can be
+       rebound, and refuses push in _emit afterwards) */
+    try {
+      if (!Array.isArray(s.events) || Object.isFrozen(s.events)) s.events = [];
+      if (dt > 0) s.events.length = 0;
+    } catch { /* state itself sealed — _emit drops events instead of throwing */ }
+    if (dt > 0) s.lastBlow = null;
     if (!inputs || typeof inputs !== 'object') inputs = {};   // step(dt, null) must not crash
     const inp = this._inp || (this._inp = {   // persistent — same fields re-set each step
-      punches: [], guard: { left: 0, right: 0 }, sway: 0, duck: 0, dodge: 0, distance: Infinity });
+      punches: [], touch: [], guard: { left: 0, right: 0 }, sway: 0, duck: 0, dodge: 0,
+      distance: Infinity, riseAspect: 1 });
     /* punches are COPIED into the persistent buffer (≤64/step) — assigning the
        caller's array and clearing it later mutated the caller's input stream,
-       which made two runs over the same stream diverge (nondeterminism). */
+       which made two runs over the same stream diverge (nondeterminism).
+       Every input field now crosses a safe-get: a Proxy input object, a
+       getter that throws, a hostile punches array or a punch whose .kind
+       is a throwing object all drop at the door — never inside the sim. */
     inp.punches.length = 0;
-    if (Array.isArray(inputs.punches))
-      for (let i = 0, n = Math.min(inputs.punches.length, 64); i < n; i++)
-        inp.punches[i] = inputs.punches[i];
-    inp.guard.left = clamp(num(inputs.guard?.left, 0), 0, 1);
-    inp.guard.right = clamp(num(inputs.guard?.right, 0), 0, 1);
-    inp.sway = clamp(num(inputs.sway, 0), -1, 1);
-    inp.duck = clamp(num(inputs.duck, 0), 0, 1);
-    inp.dodge = Math.sign(num(inputs.dodge, 0));
-    inp.distance = Number.isFinite(+inputs.distance) ? Math.max(0, +inputs.distance) : Infinity;
+    const pl = sget(inputs, 'punches');
+    let pn; try { pn = Array.isArray(pl) ? pl : null; } catch { pn = null; }
+    if (pn) {
+      let n; try { n = Math.min(pn.length, 64); } catch { n = 0; }
+      for (let i = 0; i < n; i++) {
+        const p0 = sget(pn, i);
+        if (p0 && typeof p0 === 'object')
+          inp.punches.push({ kind: sget(p0, 'kind'), side: sget(p0, 'side'),
+            power: sget(p0, 'power'), x: sget(p0, 'x'), y: sget(p0, 'y') });
+        else inp.punches.push(p0);
+      }
+    }
+    const gd = sget(inputs, 'guard');
+    inp.guard.left = clamp(num(sget(gd, 'left'), 0), 0, 1);
+    inp.guard.right = clamp(num(sget(gd, 'right'), 0), 0, 1);
+    inp.sway = clamp(num(sget(inputs, 'sway'), 0), -1, 1);
+    inp.duck = clamp(num(sget(inputs, 'duck'), 0), 0, 1);
+    inp.dodge = Math.sign(num(sget(inputs, 'dodge'), 0));
+    inp.distance = Math.max(0, num(sget(inputs, 'distance'), Infinity));
+    inp.riseAspect = num(sget(inputs, 'riseAspect'), 1);   // overlay W/H — ring hit-test
+    inp.touch.length = 0;
+    const tl = sget(inputs, 'riseTouch');      // glove palms, for touch-tags
+    let ta; try { ta = Array.isArray(tl) ? tl : null; } catch { ta = null; }
+    if (ta) {
+      let n; try { n = Math.min(ta.length, 8); } catch { n = 0; }
+      for (let i = 0; i < n; i++) {
+        const t0 = sget(ta, i);
+        if (t0 && typeof t0 === 'object')
+          inp.touch.push({ x: sget(t0, 'x'), y: sget(t0, 'y') });
+      }
+    }
 
     // dodge move clock: active window → cooldown → ready
     const dg = p.dodge;
     dg.t = Math.min(9, dg.t + dt);   // 9 = "long ago" sentinel — no unbounded clock
     if (dg.dir && dg.t >= T.dodgeWin) { dg.dir = null; dg.cd = T.dodgeCd; }
     else if (!dg.dir && dg.cd > 0) dg.cd = Math.max(0, dg.cd - dt);
-    if (s.phase === 'fighting') {
+    /* a dt=0 step is a FREEZE frame (cornerHold halftime, tracker-boot wait):
+       nothing may be committed by it. A fresh lean at dt=0 used to bank a
+       dodge whose dg.t stayed 0 for the whole hold — a guaranteed
+       perfect-dodge for the first impact after release — and queued
+       punches/KOs resolved through the pause. Edge memory still updates so
+       a lean sustained through the break is consumed, not fired late. */
+    if (s.phase === 'fighting' && dt > 0) {
       // a FRESH lean / duck past dodgeT (or a key) commits a dodge
       const swEdge = Math.abs(inp.sway) >= T.dodgeT && Math.abs(this._prevSway) < T.dodgeT;
       const dkEdge = inp.duck >= T.dodgeT && this._prevDuck < T.dodgeT;
@@ -349,7 +438,10 @@ export class Fight {
     if (this._comboT === 0) p.combo = 0;
     this._tilt = Math.max(0, this._tilt - T.tiltDecay * dt);
 
-    switch (s.phase) {
+    /* dt=0 freeze: the phase machine (punches, the npc brain, the rise QTE,
+       the round clock, down counts) does not advance — a held bout can
+       neither leak a buffered punch/dodge nor burn a decision mid-pause. */
+    if (dt > 0) switch (s.phase) {
       case 'intro':
         this._phaseT += dt;
         if (this._phaseT >= T.introT) this._startRound();
@@ -374,13 +466,19 @@ export class Fight {
         if (s.phase !== 'fighting') break;
         this._npc(dt, inp);
         if (s.phase !== 'fighting') break;
-        if (!this.opts.practice) s.timeLeft = Math.max(0, s.timeLeft - dt);
+        if (!this._practice) s.timeLeft = Math.max(0, s.timeLeft - dt);
         if (s.timeLeft <= 0) this._roundEnd();
         break;
-      case 'playerdown': case 'npcdown':
+      case 'playerdown': case 'npcdown': {
         this._phaseT += dt;
-        if (this._phaseT >= T.downT) this._verdict();
+        /* you're not out until the count ends — while the get-up QTE is
+           armed it owns the down phase: rings tick, punches tag, and the
+           verdict waits for the full riseT instead of the npc's downT. */
+        if (s.phase === 'playerdown' && s.rise.active) this._riseTick(dt, inp);
+        const downFor = s.phase === 'playerdown' && s.rise.active ? T.riseT : T.downT;
+        if (this._phaseT >= downFor) this._verdict();
         break;
+      }
       // 'win' / 'lose' are terminal — nothing else ticks
     }
 
@@ -432,16 +530,20 @@ export class Fight {
     const s = this.state, n = s.npc;
     if (s.phase !== 'fighting' || ['windup', 'punch', 'down', 'hurt', 'stunned'].includes(n.action)) return false;
     // finite-own-key check, not truthiness: '__proto__'/'constructor' used to
-    // pass the gate → T.windup[kind] returned Object.prototype → NaN windup
-    this._windup(false, { kind: Number.isFinite(this._T.windup[kind]) ? kind : 'jab',
+    // pass the gate → T.windup[kind] returned Object.prototype → NaN windup.
+    // And a hostile kind (toString-throwing key) must coerce to 'jab', not crash.
+    this._windup(false, { kind: typeof kind === 'string' && Number.isFinite(sget(this._T.windup, kind)) ? kind : 'jab',
       side: side === 'right' ? 'right' : 'left',
-      windup: Number.isFinite(+windup) && +windup > 0 ? +windup : null });
+      windup: num(windup, 0) > 0 ? num(windup, 0) : null });
     return true;
   }
 
   /* ---------- internals ---------- */
 
-  _emit(e) { this.state.events.push(e); }
+  _emit(e) {
+    try { this.state.events.push(e); }
+    catch { /* caller sealed/froze the drain — drop the event, keep the sim */ }
+  }
   _startDodge(dir) {   // ignored mid-dodge or during the reset — no spamming
     const dg = this.state.player.dodge;
     if (dg.dir || dg.cd > 0 || this.state.player.hp <= 0) return;
@@ -463,7 +565,7 @@ export class Fight {
     /* re-floor here too — opts.roundLen is read LIVE between bouts (the reset
        write-back may have been refused by a frozen opts, or a devtools edit
        landed mid-fight); a NaN/-∞ clock once wedged 'fighting' forever */
-    s.round++; s.timeLeft = Math.max(1, num(this.opts.roundLen, 90));
+    s.round++; s.timeLeft = Math.max(1, num(sget(this.opts, 'roundLen'), 90));
     s.phase = 'countdown'; this._phaseT = 0; s.countdown = 0;
     this._chain = 0; this._swing = null;
     this._setAct('idle', .5);
@@ -487,6 +589,7 @@ export class Fight {
 
   _verdict() {  // bell after a down phase
     const s = this.state, win = s.phase === 'npcdown';
+    s.rise.active = false;                    // the count is over either way
     s.phase = win ? 'win' : 'lose';
     if (!win) s.npc.action = 'celebrate';
     this._emit(win ? 'win' : 'lose');
@@ -494,7 +597,7 @@ export class Fight {
 
   _ko(who) {
     const s = this.state;
-    if (this.opts.practice) {   // practice: nobody goes down — just keep the floor
+    if (this._practice) {   // practice: nobody goes down — just keep the floor
       const f = who === 'npc' ? s.npc : s.player;
       f.hp = Math.max(1, f.maxHp * .35);
       return;
@@ -508,7 +611,92 @@ export class Fight {
     } else {
       s.npc.action = 'celebrate'; s.npc.actionT = 0;   // PIP showboats over you
       s.phase = 'playerdown';
+      this._riseOpen();                                // beat the count, or stay down
     }
+  }
+
+  /* ---------- beat the count (player get-up QTE) ---------- */
+
+  _riseOpen() {
+    const r = this.state.rise, T = this._T;
+    /* every knockdown is meaner than the last: more rings on a shorter fuse
+       in a tighter circle — _downs counts completed counts, so the first is
+       always the base lay */
+    r.active = true;
+    r.need = Math.round(Math.max(1, T.riseTargets + this._downs * Math.max(0, T.riseStepN)));
+    r.got = 0; r.t01 = 1; r.depth = this._downs + 1;
+    this._eachFor = Math.max(.8, T.riseEachT - this._downs * Math.max(0, T.riseStepFuse));
+    this._riseR = Math.max(.05, T.riseR - this._downs * Math.max(0, T.riseStepR));
+    this._riseEach = 0;
+    this._riseNext();
+    this._downs++;
+    this._emit('rise');
+  }
+
+  _riseNext() {   // pop the next ring — rng-driven, so tests see a stable lay
+    const r = this.state.rise, T = this._T;
+    // inside the gloves' reach — a hair off the screen edge/corners
+    r.x = .18 + this._rng() * .64;
+    r.y = .28 + this._rng() * .44;
+    r.r = Math.max(.02, this._riseR || T.riseR);   // per-count radius — fades
+    r.each01 = 1;                                   // within a count keep it
+    this._riseEach = Math.max(.2, this._eachFor || T.riseEachT);
+    this._touchIn = true;   // a fist parked under a fresh pop must lift + re-touch
+  }
+
+  _riseTick(dt, inp) {
+    const s = this.state, r = s.rise, T = this._T;
+    r.t01 = Math.max(0, 1 - this._phaseT / Math.max(.01, T.riseT));
+    this._riseEach -= dt;
+    r.each01 = Math.max(0, this._riseEach / Math.max(.2, this._eachFor || T.riseEachT));
+    if (this._riseEach <= 0) { this._emit('rise-fade'); this._riseNext(); }
+    /* every punch is a tag attempt: the glove's palm spot must land inside
+       the ring. x,y are normalized overlay coords; riseAspect (W/H) turns
+       the on-screen circle back into a fair radial test. A punch carrying
+       no position (scripts/trackers that don't report it) falls to the -9
+       sentinel — always off-target, never free. */
+    const asp = Math.max(.05, inp.riseAspect);
+    for (const pn of inp.punches) {
+      if (s.phase !== 'playerdown' || !r.active) break;
+      if (!pn || typeof pn !== 'object') continue;
+      this._emit('player-punch');
+      const dx = num(pn.x, -9) - r.x, dy = (num(pn.y, -9) - r.y) / asp;
+      if (dx * dx + dy * dy <= r.r * r.r) {
+        r.got++; this._emit('rise-hit');
+        if (r.got >= r.need) this._revive();
+        else this._riseNext();
+      } else this._emit('rise-miss');
+    }
+    /* touch-tag: a glove pressed inside the ring counts too — the depth-punch
+       emit is the same circle, but a player who just puts the mitt on it
+       shouldn't whiff the count on a technicality. Entry edge only: the
+       latch is set at each pop, so a palm already inside must leave and
+       come back — nothing farms a ring by happening to sit under it. */
+    if (s.phase !== 'playerdown' || !r.active) return;
+    let inside = false;
+    for (const t of inp.touch) {
+      if (!t) continue;
+      const dx = num(t.x, -9) - r.x, dy = (num(t.y, -9) - r.y) / asp;
+      if (dx * dx + dy * dy <= r.r * r.r) { inside = true; break; }
+    }
+    if (inside && !this._touchIn) {
+      this._touchIn = true;
+      r.got++; this._emit('rise-hit');
+      if (r.got >= r.need) this._revive();
+      else this._riseNext();
+    } else if (!inside) this._touchIn = false;
+  }
+
+  _revive() {
+    const s = this.state, p = s.player;
+    s.rise.active = false;
+    p.hp = Math.max(1, Math.min(p.maxHp, Math.round(p.maxHp * this._T.riseHp)));
+    p.hurtT = 0; p.dodge.dir = null; p.dodge.cd = 0;
+    p.score += this._T.score.revive;
+    this._tilt = 0; this._chain = 0; this._swing = null;
+    this._setAct('idle', .9);                       // PIP backs off while you rise
+    s.phase = 'fighting'; this._phaseT = 0;
+    this._emit('revive');
   }
 
   /* ---------- player offense ---------- */
@@ -517,8 +705,10 @@ export class Fight {
     const s = this.state, T = this._T, p = s.player, n = s.npc;
     this._emit('player-punch');
     // inherited keys ('__proto__', 'constructor') passed a truthy lookup and
-    // once baked NaN into stamCost/dmg — hp and stamina stayed NaN forever
-    const kind = Number.isFinite(T.dmg[pn?.kind]) ? pn.kind : 'jab';
+    // once baked NaN into stamCost/dmg — hp and stamina stayed NaN forever.
+    // typeof gate too: a non-string kind (Symbol, toString-throwing object)
+    // can never be a real punch kind — coerce before the table read.
+    const kind = typeof pn.kind === 'string' && Number.isFinite(T.dmg[pn.kind]) ? pn.kind : 'jab';
     const cost = T.stamCost[kind];
     const gassed = p.gassed;
     this._punchT = .22 * (gassed ? T.gasRecover : 1);   // gassed arms recover slower
@@ -571,7 +761,8 @@ export class Fight {
     const s = this.state, T = this._T;
     this._emit('player-miss');
     // kind sanitized — a garbage pn.kind once leaked into lastBlow/audio
-    s.lastBlow = { who: 'player', kind: Number.isFinite(T.dmg[pn?.kind]) ? pn.kind : 'jab',
+    s.lastBlow = { who: 'player',
+      kind: typeof pn.kind === 'string' && Number.isFinite(T.dmg[pn.kind]) ? pn.kind : 'jab',
       result: 'miss', reason };
     // PIP loves watching you miss — occasional taunt (only from mobile states)
     if (this.ai && reason !== 'exhausted' && this._celebrateCd <= 0 && this._rng() < .18

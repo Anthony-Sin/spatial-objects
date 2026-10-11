@@ -76,8 +76,15 @@ function mulberry32(seed) {
 
 export class RingSim {
   constructor(opts = {}) {
-    this.t = { ...TUNING, ...opts };            // every TUNING key overridable
-    this._seed = (opts.seed ?? 1337) >>> 0;
+    /* a hostile opts (Proxy / throwing getters / Symbol seed) once killed
+       construction — the spread touches every key and `Symbol >>> 0` throws */
+    try { this.t = { ...TUNING, ...opts }; } catch { this.t = { ...TUNING }; }
+    let sd = 1337;
+    try {
+      const s = (opts == null) ? 1337 : opts.seed;
+      sd = (s == null ? 1337 : +s) >>> 0;
+    } catch { sd = 1337; }
+    this._seed = Number.isFinite(sd) ? sd : 1337;
     this._clean();
     this.reset();
   }
@@ -101,9 +108,11 @@ export class RingSim {
       if (t.orbitFlipMax < t.orbitFlipMin) t.orbitFlipMax = t.orbitFlipMin;
     } catch {
       /* a frozen/sealed tuning table refuses every write (strict mode) —
-         rebase onto a writable copy so lockdown can't wedge or NaN the sim */
+         rebase onto a writable copy so lockdown can't wedge or NaN the sim.
+         If even the spread throws (hostile Proxy table), drop to clean
+         defaults rather than leaving t hostile for the next step. */
       if (depth) return;
-      try { this.t = { ...t }; } catch { return; }
+      try { this.t = { ...t }; } catch { this.t = { ...TUNING }; }
       this._clean(1);
     }
   }
@@ -127,16 +136,27 @@ export class RingSim {
   }
 
   step(dt, input = {}) {
-    if (!(dt > 0)) return;                    // ignore 0 / negative / NaN dt
-    dt = Math.min(dt, 0.1);                   // stability cap for huge hitches
+    let d0; try { d0 = +dt; } catch { d0 = NaN; }   // Symbol/BigInt dt can't compare
+    if (!(d0 > 0)) return;                    // ignore 0 / negative / NaN dt
+    dt = Math.min(d0, 0.1);                   // stability cap for huge hitches
     this._clean();                            // live tuning mutation can't NaN us
     if (!input || typeof input !== 'object') input = {};   // step(dt, null) must not crash
+    // Read the input object ONCE into locals behind a single try — hostile
+    // getters/Proxies can't kill the frame, and a getter that returns a
+    // different value on each read can't split-validate playerStep.
+    let iDir = 'hold', iStun = false, iStep = 0;
+    try {
+      const nd = input.npcDir;
+      iDir = typeof nd === 'string' ? nd : 'hold';
+      iStun = !!input.npcStunned;
+      const ps = +input.playerStep;
+      iStep = Number.isFinite(ps) ? clamp(ps, -1, 1) : 0;
+    } catch { iDir = 'hold'; iStun = false; iStep = 0; }
+    const inp = this._inp || (this._inp = { dir: 'hold', stun: false, step: 0 });
+    inp.dir = iDir; inp.stun = iStun; inp.step = iStep;
+    try {
     const t = this.t, P = this.player, N = this.npc;
     // Sway and dodge steer the head only. Depth controls footwork.
-    const inp = this._inp || (this._inp = { dir: 'hold', stun: false, step: 0 });
-    inp.dir = typeof input.npcDir === 'string' ? input.npcDir : 'hold';
-    inp.stun = !!input.npcStunned;
-    inp.step = Number.isFinite(+input.playerStep) ? clamp(+input.playerStep, -1, 1) : 0;
 
     // ---- shared geometry (recomputed post-collision via _syncHeadings) ----
     let dx = N.pos.x - P.pos.x, dz = N.pos.z - P.pos.z;
@@ -242,19 +262,30 @@ export class RingSim {
     this._pushNpcOff();
     this._clamp(N);
     this._syncHeadings();
+    } catch {
+      /* externally poisoned internals (sim.player = Proxy, NaN pos planted
+         by a caller) throw mid-frame — skip the rest of the step and keep
+         the sim alive; the next clean step resynchronizes */
+    }
   }
 
   distance() {
-    return Math.hypot(this.npc.pos.x - this.player.pos.x,
-                      this.npc.pos.z - this.player.pos.z);
+    try {
+      const d = Math.hypot(this.npc.pos.x - this.player.pos.x,
+                           this.npc.pos.z - this.player.pos.z);
+      return Number.isFinite(d) ? d : 0;
+    } catch { return 0; }
   }
 
   angleToNpc() {
     // Camera-yaw convention: camera.rotation.y = angleToNpc() aims a -Z
     // three.js camera at the npc (= heading + π).
-    const dx = this.npc.pos.x - this.player.pos.x;
-    const dz = this.npc.pos.z - this.player.pos.z;
-    return Math.atan2(-dx, -dz);
+    try {
+      const dx = this.npc.pos.x - this.player.pos.x;
+      const dz = this.npc.pos.z - this.player.pos.z;
+      const a = Math.atan2(-dx, -dz);
+      return Number.isFinite(a) ? a : 0;
+    } catch { return 0; }
   }
 
   // Soft separation — the npc absorbs almost all of it; the player takes

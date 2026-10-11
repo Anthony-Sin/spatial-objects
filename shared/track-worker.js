@@ -55,6 +55,9 @@ async function doInit(m) {
       if (kind === 'hands') {
         attempts = order.map(delegate => [HandLandmarker, {
           baseOptions: { modelAssetPath: `${m.vendorUrl}/hand_landmarker.task`, delegate },
+          /* thresholds stay permissive — phantom filtering lives in hands.js
+             (the confirm gate + dead-spot memory), NOT here: pop-outs score
+             .9+ anyway, so a higher floor only drops real edge-on fists */
           runningMode: 'VIDEO', numHands: 2, minHandDetectionConfidence: .4,
           minHandPresenceConfidence: .35, minTrackingConfidence: .3 }, delegate.toLowerCase()]);
       } else {
@@ -128,7 +131,10 @@ function handleFrame(m) {
       raw != null ? raw + tsOff : performance.now());
     lastTs = ts;
     const inferStart = performance.now();
-    const res = landmarker.detectForVideo(frame, ts);
+    /* a detect may legitimately resolve with undefined (skipped frame on a
+       busy graph) — treating that as a throw used to burn failN on a
+       perfectly healthy landmarker and could escalate it to 'fatal' */
+    const res = landmarker.detectForVideo(frame, ts) || {};
     const inferMs = performance.now() - inferStart;
     failN = 0;
     if (kind === 'hands')

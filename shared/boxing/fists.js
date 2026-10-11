@@ -82,10 +82,17 @@ const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const ema = (cur, tgt, rate, dt) => cur + (tgt - cur) * (1 - Math.exp(-rate * dt));
 const SIDES = ['left', 'right'];
 const NO_FACE = {};                              // shared — faceState may be null
+/* hostile-input guards — a hands/face state that is a Proxy, has throwing
+   getters, or carries Symbol-keyed fields must degrade like a lost frame,
+   not kill the frame loop */
+const sget = (o, k) => { try { return o?.[k] } catch { return undefined; } };
+const sarr = (v) => { try { return Array.isArray(v) ? v : [] } catch { return [] } };
 
 export class FistTracker {
   constructor(opts = {}) {
-    this.T = { ...TUNING, ...opts };        // per-instance tuning overrides
+    /* per-instance tuning overrides — a hostile opts (Proxy, throwing
+       getters) once killed construction: the spread touches every key */
+    try { this.T = { ...TUNING, ...opts }; } catch { this.T = { ...TUNING }; }
     this._clean();
     this.punches = [];
     this.guard = { left: 0, right: 0 };
@@ -140,9 +147,11 @@ export class FistTracker {
       T.POWER_FLOOR = clamp(T.POWER_FLOOR, 0, 1);
     } catch {
       /* a frozen/sealed tuning table refuses every write (strict mode) —
-         rebase onto a writable copy so lockdown can't wedge the tracker */
+         rebase onto a writable copy so lockdown can't wedge the tracker.
+         If even the spread throws (hostile Proxy table), drop to a clean
+         default copy rather than leaving T hostile for the next update. */
       if (depth) return;
-      try { this.T = { ...T }; } catch { return; }
+      try { this.T = { ...T }; } catch { this.T = { ...TUNING }; }
       this._clean(1);
     }
   }
@@ -179,15 +188,21 @@ export class FistTracker {
   update(handsState, faceState, dt) {
     this._clean();                        // live tuning mutation can't wedge us
     const T = this.T;
-    if (!(dt > 0)) dt = 1 / 60;
+    { let d; try { d = +dt; } catch { d = NaN; }          // Symbol/BigInt dt
+      dt = Number.isFinite(d) ? d : 1 / 60; }
+    if (dt <= 0) dt = 1 / 60;
     if (dt > T.DT_MAX) dt = T.DT_MAX;
     this._t += dt;
 
     // ---- face: sway + the anchor for the guard height band --------------
     const f = faceState || NO_FACE;
-    const faceFound = !!(f.found && f.nose
-      && Number.isFinite(f.nose.x) && Number.isFinite(f.nose.y));
+    let faceFound = false;
+    try {
+      faceFound = !!(f.found && f.nose
+        && Number.isFinite(f.nose.x) && Number.isFinite(f.nose.y));
+    } catch { faceFound = false; }                        // throwing getters → lost face
     if (faceFound) {
+      try {
       this._nose.x = ema(this._nose.x, f.nose.x, T.FACE_SMOOTH, dt);
       this._nose.y = ema(this._nose.y, f.nose.y, T.FACE_SMOOTH, dt);
       if (Number.isFinite(f.size) && f.size > 0) this._faceSize = this._faceSize
@@ -234,6 +249,11 @@ export class FistTracker {
            real tilt freezes neutral until the head comes level again. */
         if (Math.abs(d) < T.PITCH_LO) this._pr = ema(this._pr, this._r, T.CENTER_RATE, dt);
       } else this.pitch = ema(this.pitch, 0, T.PITCH_SMOOTH * .5, dt);
+      } catch {   // hostile face object threw mid-read — decay like a lost face
+        this.sway = ema(this.sway, 0, T.SWAY_SMOOTH * .5, dt);
+        this.duck = ema(this.duck, 0, T.SWAY_SMOOTH * .5, dt);
+        this.pitch = ema(this.pitch, 0, T.PITCH_SMOOTH * .5, dt);
+      }
     } else {
       this.sway = ema(this.sway, 0, T.SWAY_SMOOTH * .5, dt);
       this.duck = ema(this.duck, 0, T.SWAY_SMOOTH * .5, dt);
@@ -241,12 +261,15 @@ export class FistTracker {
     }
 
     // ---- hands ------------------------------------------------------------
-    const hands = Array.isArray(handsState?.hands) ? handsState.hands : [];
+    const hands = sarr(sget(handsState, 'hands'));
     const pick = this._pick; pick.left = pick.right = null;
-    for (let i = 0, n = hands.length; i < n; i++) {
-      const h = hands[i];
-      if (!this._usable(h)) continue;
-      const s = this._sideOf(h);
+    let hn = 0; try { hn = hands.length | 0; } catch { hn = 0; }
+    for (let i = 0; i < hn; i++) {
+      let h; try { h = hands[i]; } catch { continue; }      // hostile element slot
+      let ok = false, s = null;
+      try { ok = this._usable(h); } catch { ok = false; }   // Proxy/throwing lm
+      if (!ok) continue;
+      try { s = this._sideOf(h); } catch { continue; }
       if (pick[s] === null) pick[s] = h;    // first usable per side — same as find()
     }
     for (const side of SIDES) {
@@ -254,6 +277,7 @@ export class FistTracker {
       const h = pick[side];
       if (!h) { this._missed(S, dt); this.guard[side] = S.guard; this.reach[side] = S.reach; continue; }
 
+      try {
       const reacq = S.miss > 0;               // gap → snap, don't spike
       S.miss = 0;
       const lm = h.lm;
@@ -334,7 +358,12 @@ export class FistTracker {
         : clamp((T.GUARD_Y_ZERO - h.palm.y) / (T.GUARD_Y_ZERO - T.GUARD_Y_FULL), 0, 1);
       const close = clamp((reach - T.GUARD_REACH_LO) / (T.GUARD_REACH_HI - T.GUARD_REACH_LO), 0, 1);
       S.guard = ema(S.guard, high * close, T.GUARD_RATE, dt);
-      this.guard[side] = S.guard;
+      } catch {
+        /* hostile hand object threw mid-frame (Proxy, throwing getters) —
+           treat it like a tracking dropout, never crash the frame */
+        this._missed(S, dt);
+      }
+      this.guard[side] = S.guard; this.reach[side] = S.reach;
     }
     return this;
   }
@@ -347,7 +376,9 @@ export class FistTracker {
       : side === 'left' ? 'jab' : 'cross';
     const power = Math.max(T.POWER_FLOOR,
       clamp((S.peak - 1) / (T.REACH_CAP - 1), 0, 1));
-    this.punches.push({ kind, side, power, t: +this._t.toFixed(3) });
+    // x/y = palm spot at emit (norm overlay coords) — the down-count get-up
+    // QTE in fight.js needs WHERE the glove was, not just that it flew
+    this.punches.push({ kind, side, power, x: S.px, y: S.py, t: +this._t.toFixed(3) });
     if (this.punches.length > T.PUNCH_MAX) this.punches.shift();
   }
 

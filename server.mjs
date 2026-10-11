@@ -91,7 +91,7 @@ async function coachTip(req, res) {
    the page just stays quiet instead of failing the break. */
 const ELEVEN = {
   key: process.env.ELEVENLABS_KEY || '',
-  voice: process.env.ELEVENLABS_VOICE || '2EiwWnXFnvU5JabPnvig',  // Clyde — war-vet rasp, born for corners
+  voice: process.env.ELEVENLABS_VOICE || 'IKne3meq5aSn9XLyUdCD', // Charlie — deep, hyped corner energy
   model: 'eleven_turbo_v2_5',                                   // fast enough to land mid-break
 };
 async function coachVoice(req, res) {
@@ -258,7 +258,10 @@ const server = createServer(async (req, res) => {
       // `|| 0` fallback would invent a validator the client never sent.
       const iusHdr = im === undefined ? req.headers['if-unmodified-since'] : undefined;
       const ius = iusHdr === undefined ? NaN : Date.parse(iusHdr);
-      if (ius && st.mtimeMs > ius + 999) {                       // file IS newer → precondition fails
+      // finite, NOT truthy: Date.parse of a valid epoch date yields 0 —
+      // a truthiness gate would silently ignore "If-Unmodified-Since:
+      // Thu, 01 Jan 1970 00:00:00 GMT" and return 200 where 412 is due
+      if (Number.isFinite(ius) && st.mtimeMs > ius + 999) {      // file IS newer → precondition fails
         res.writeHead(412, hdrs); return res.end('precondition failed');
       }
       const inm = req.headers['if-none-match'];
@@ -272,7 +275,7 @@ const server = createServer(async (req, res) => {
       // not by conditional date. (Presence-gated like IUS — see above.)
       const imsHdr = inm === undefined ? req.headers['if-modified-since'] : undefined;
       const ims = imsHdr === undefined ? NaN : Date.parse(imsHdr);
-      if (!range && !cacheable && ims && st.mtimeMs <= ims + 999) {   // 1s slack for sec-granularity
+      if (!range && !cacheable && Number.isFinite(ims) && st.mtimeMs <= ims + 999) {   // 1s slack for sec-granularity
         res.writeHead(304, hdrs); return res.end();
       }
 

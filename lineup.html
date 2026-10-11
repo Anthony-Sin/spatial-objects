@@ -150,6 +150,28 @@
   .enter.locked { background:rgba(43,33,24,.2); color:rgba(43,33,24,.5);
     box-shadow:none; cursor:not-allowed; }
 
+  /* every keyboard-focusable control needs a visible indicator — the UA
+     ring is thin against the dark arena; use the house sun color */
+  .chip:focus-visible, .enter:focus-visible, .back:focus-visible {
+    outline:3px solid var(--sun); outline-offset:2px; }
+
+  /* ---------- a11y media queries ---------- */
+  @media (prefers-contrast: more) {
+    .pick, .stat .lbl, .spec .sd { color:var(--ink); }
+    .note { color:rgba(255,248,236,.95); }
+    .pill, .chip, .enter, .back, .card { border-width:3.5px; }
+  }
+  @media (forced-colors: active) {
+    /* pip fill + chip selection are pure-color state — forced-colors
+       flattens backgrounds and the info is gone; use system Highlight */
+    .pips i.on { background:Highlight; }
+    .chip.sel { outline:3px solid Highlight; }
+    .enter.locked { outline:2px dashed ButtonText; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation:none !important; transition:none !important; }
+  }
+
   @media (max-width:640px) {
     .mast { padding:10px 14px; }
     .pills { display:none; }
@@ -207,6 +229,83 @@
 </div>
 
 <script type="module">
+  /* menu tune + pick blips — the same lazy BoxingAudio as the menu: the ctx
+     is grabbed immediately (running where the browser allows autoplay —
+     the tune carries over from the menu without a dead beat), else the
+     queued resume() + this fallback flips it live on the first gesture. */
+  const lineAudioP = import('./shared/boxing/audio.js').catch(() => null);
+  let lineAC = null, lineAudio = null;
+  try {
+    const ACEarly = window.AudioContext || window.webkitAudioContext;
+    lineAC = ACEarly ? new ACEarly() : null;
+    lineAC?.resume?.();
+  } catch { lineAC = null; }
+  const lineUp = () => { try {
+    if (!lineAudio) return;
+    const c = lineAudio.unlock(lineAC);
+    try { c?.resume?.(); } catch {}
+    if (!lineAudio.muted) { lineAudio.crowd(true); lineAudio.menuTune(true); }
+    if (c && c.state !== 'suspended') {
+      removeEventListener('pointerdown', lineUnlock);
+      removeEventListener('keydown', lineUnlock);
+    }
+  } catch {} };
+  lineAudioP.then(m => { try {
+    if (!m) return;
+    if (!lineAudio) {
+      lineAudio = new m.BoxingAudio();
+      if (localStorage.getItem('boxing:sound') === '0') lineAudio.muted = true;
+      const rawV = localStorage.getItem('boxing:volume');
+      if (rawV !== null) {
+        const v = Number(rawV);
+        if (Number.isFinite(v)) lineAudio.setVolume(Math.min(1, Math.max(0, v / 100)));
+      }
+    }
+    lineUp();
+  } catch {} });
+  const lineUnlock = () => {
+    if (!lineAC) try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      lineAC = AC ? new AC() : null;
+    } catch { lineAC = null; }
+    try { lineAC?.resume?.(); } catch {}
+    lineAudioP.then(() => lineUp());
+  };
+  addEventListener('pointerdown', lineUnlock);
+  addEventListener('keydown', lineUnlock);
+  /* same resume-pump as the ring: any activation that lands after load
+     flips the parked ctx instead of waiting on a gesture */
+  let linePumps = 0;
+  const linePump = setInterval(() => { try {
+    if (++linePumps > 60) return clearInterval(linePump);
+    lineAC?.resume?.(); lineAudio?.ctx?.resume?.();
+    if (lineAC?.state === 'running' || lineAudio?.ctx?.state === 'running')
+      clearInterval(linePump);
+  } catch {} }, 350);
+  document.addEventListener('visibilitychange', () => { try {
+    if (!lineAC) return;
+    document.hidden ? lineAC.suspend?.() : lineAC.resume?.();
+  } catch {} });
+  /* every rival picks their own chirp — BUBBLE pops up, BEAN springs down,
+     SUMO lands like a dropped kettlebell; a locked pick answers with a dull
+     denied thunk */
+  const RIVAL_SFX = {
+    bubble: { f: 1046.5, f1: 1568, dur: .09, peak: .22 },
+    bean:   { f: 880, f1: 659.25, dur: .11, peak: .22 },
+    sumo:   { f: 392, f1: 196, dur: .16, peak: .3 },
+  };
+  const rivalSfx = (c) => { try {
+    if (!lineAudio) return;
+    if (c?.locked) { lineAudio.play('thud', { dmg: 6 }); return; }
+    lineAudio.play('blip', RIVAL_SFX[c?.variant] || RIVAL_SFX.bubble);
+  } catch {} };
+  /* chips tick softly on a pass-over too — the highlight doesn't move for
+     a hover, but the ear should still feel it */
+  document.querySelectorAll('[data-sel]').forEach((el, i) =>
+    el.addEventListener('pointerenter', () => { try {
+      lineAudio?.play('blip', { f: 620 + i * 120, dur: .05, peak: .07 });
+    } catch {} }));
+
   /* The stage engine lives in lineup-mockups/_hero. It's a dynamic import on
      purpose: if the engine (or one of its deps — protoBoxer, three) fails to
      load, a static import would kill this module and leave a black stage
@@ -225,6 +324,7 @@
       centerSlot: { x: 0, z: 0.1, s: 1.0 },
     camRad: 9.0, camPhi: 1.42, camTgtY: 1.0,
       fixedCam: true,
+      onSelect: (i, c, userDriven) => { if (userDriven) rivalSfx(c); },
     });
   } catch (e) {
     console.warn('lineup: stage engine unavailable — card below still works:', e);
@@ -234,31 +334,98 @@
     if (n) n.textContent = 'the stage lights are out — the card below still picks your rival';
     /* keep that note honest: without the engine nothing wired the chips, so
        a dead stage used to mean a dead picker — clicks did nothing and the
-       stored pick never updated. Minimal fallback: chips select + persist,
-       pick label follows, ENTER keeps the practice flag. Lock gating stays
-       server-side (npc.js re-checks koAvg), so an ungated pick here can't
-       sneak a locked fighter into the ring. */
+       stored pick never updated. Fallback: chips select + persist, the
+       whole card (hero, stats, pips, spec, pick, ENTER) follows like the
+       engine would drive it, career pills still read the real record, and
+       the engine's keymap works the same. Lock gating stays server-side
+       (npc.js re-checks koAvg), so an ungated pick can't sneak a locked
+       fighter into the ring. */
     try {
+      const get = (k, d) => { try { const v = localStorage.getItem(k);
+        return v == null ? d : JSON.parse(v); } catch { return d; } };
+      const num = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : 0;
+      const cnt = (v) => Math.max(0, Math.floor(num(v)));   // career counters are whole, non-negative — corrupt storage renders 0, never '-5 KOs'
+      const ko = get('boxing:ko', { n: 0, sum: 0 });
+      const koN = cnt(ko?.n), koSum = Math.max(0, num(ko?.sum));
+      const put = (sel, v) => { const el = document.querySelector(sel); if (el) el.textContent = v; };
+      put('[data-best]', cnt(get('boxing:best', 0)).toLocaleString());
+      put('[data-wins]', cnt(get('boxing:wins', 0)));
+      put('[data-kos]', koN);
+      put('[data-koavg]', koN && koSum
+        ? Math.min(Math.max(koSum / koN, 1), 99.9).toFixed(1) : '—');
+
+      /* display copy mirrors VARIANT_INFO in shared/boxing/protoBoxer.js —
+         the engine's own static dep likely failed with it, so a small local
+         table is the only honest source left. Keyed by the chip labels. */
+      const INFO = {
+        BUBBLE: { desc: 'sprout crown · springy stance', stats: [3, 3, 4],
+          spec: ['TRIPLE TAP', '3 hits, one stamina'] },
+        BEAN: { desc: 'tall bean · snappy reach', stats: [4, 4, 3],
+          spec: ['BEAN BARRAGE', "the bean's heavy 1-2"] },
+        SUMO: { desc: 'heavyweight boss · massive frame · iron palm', stats: [5, 5, 2],
+          spec: ['SUMO SLAM', 'iron palm guard crusher'] },
+      };
       const practice = new URLSearchParams(location.search).get('practice') ? '?practice=1' : '';
       const chips = [...document.querySelectorAll('[data-sel]')];
       const pickEl = document.querySelector('[data-pick]');
       const enterEl = document.querySelector('[data-enter]');
       const nameOf = (c) => c?.querySelector('[data-sel-name]')?.textContent?.trim() || '';
+      const pips = (sel_, n) => {
+        const el = document.querySelector(sel_);
+        if (!el) return;
+        el.innerHTML = '';
+        for (let i = 0; i < 5; i++) {
+          const p = document.createElement('i');
+          if (i < n) p.className = 'on';
+          el.appendChild(p);
+        }
+      };
+      let sel = -1;
       const choose = (i, store) => {
         const name = nameOf(chips[i]);
         if (!name) return;
+        sel = i;
+        const info = INFO[name] || { desc: 'original contender', stats: [3, 3, 3],
+          spec: ['MYSTERY MOVE', 'unscouted'] };
         chips.forEach((c, j) => c.classList.toggle('sel', i === j));
+        put('[data-hero-name]', name);
+        put('[data-hero-desc]', info.desc);
+        put('[data-stat-atk]', info.stats[0]);
+        put('[data-stat-def]', info.stats[1]);
+        put('[data-stat-spd]', info.stats[2]);
+        pips('[data-pip-atk]', info.stats[0]);
+        pips('[data-pip-def]', info.stats[1]);
+        pips('[data-pip-spd]', info.stats[2]);
+        put('[data-spec-name]', info.spec[0]);
+        put('[data-spec-desc]', `— ${info.spec[1]}`);
         if (pickEl) pickEl.textContent = name;
         if (enterEl) enterEl.href = `./boxing.html${practice}`;
-        if (store) try { localStorage.setItem('boxing:npc', `proto:${name.toLowerCase()}`); } catch {}
+        if (store) {
+          rivalSfx({ variant: name.toLowerCase() });   // user-driven pick — same chirp as the live stage
+          try { localStorage.setItem('boxing:npc', `proto:${name.toLowerCase()}`); } catch {}
+        }
       };
       chips.forEach((c, i) => c.addEventListener('click', () => choose(i, true)));
-      // reflect a stored pick so the card matches what the ring will load
-      const stored = localStorage.getItem('boxing:npc');
+      /* the engine's keymap, degraded edition — chips are <button>s so
+         Tab+Enter always worked; ←/→/digits keep parity for keyboard-only
+         rivals on a dead stage */
+      addEventListener('keydown', (e) => {
+        const len = chips.length;
+        if (!len || sel < 0) return;
+        if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A')
+          choose((sel + len - 1) % len, true);
+        else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D')
+          choose((sel + 1) % len, true);
+        else if (e.key >= '1' && e.key <= String(len)) choose(+e.key - 1, true);
+      });
+      // reflect a stored pick so the card matches what the ring will load —
+      // blocked storage must not skip the default pick
+      let stored = null;
+      try { stored = localStorage.getItem('boxing:npc'); } catch {}
       const cur = (stored || '').replace(/^proto:/, '').toUpperCase();
       const idx = chips.findIndex(c => nameOf(c).toUpperCase() === cur);
       if (idx >= 0) choose(idx, false);
-      else if (!stored) choose(0, false);   // fresh visitor — mark the house favorite
+      else choose(0, false);   // nothing stored/matched — show the house favorite
     } catch {}
   }
 </script>

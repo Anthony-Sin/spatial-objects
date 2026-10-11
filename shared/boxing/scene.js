@@ -52,7 +52,9 @@ export function buildScene(THREE, renderer, opts = {}) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(C.void_);
   scene.fog = new THREE.Fog(C.void_, 9, 19);
-  if (renderer) renderer.shadowMap.enabled = true;
+  /* a stub/partial renderer ({}) has no shadowMap — writing .enabled on it
+     threw before a single mesh was built */
+  if (renderer && renderer.shadowMap) renderer.shadowMap.enabled = true;
 
   /* Lambert over Standard: our lighting is ~all diffuse (roughness .92,
      metalness 0) — Lambert shades it the same for ~half the fragment cost,
@@ -180,8 +182,19 @@ export function buildScene(THREE, renderer, opts = {}) {
   };
 
   /* ---------- per-frame animation ---------- */
-  let t = 0, excite = 0, jolt = 0, tel = 0, crowdFrame = 0, prevPhase = null;
+  let t = 0, tw = 0, wallT0 = -1, excite = 0, jolt = 0, tel = 0, crowdFrame = 0,
+    prevPhase = null, pendingPayoff = false, ropesHot = false;
   const spotWarm = new THREE.Color(0xffe9b8), spotHot = new THREE.Color(C.coral);
+  /* Ambient clock, wall-time. cornerHold and hit-stop hand update() dt=0 so
+     the BOUT freezes — but the crowd bob, rope wobble and light flicker are
+     arena ambience, not fight state: a ring that stops animating behind the
+     8s corner card reads as a hung renderer, and transient hit state (rope
+     jolt, crowd hype, a half-charged telegraph glow) must still be able to
+     SETTLE during the pause instead of holding mid-pose until release.
+     tw advances by real elapsed time between calls, clamped so a tab that
+     slept for minutes can't slam a giant step into the phases. */
+  const wallNow = () =>
+    (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
   function update(dt, state = {}) {
     /* NaN/negative dt must not reach `t`: a single NaN frame would poison
@@ -189,7 +202,12 @@ export function buildScene(THREE, renderer, opts = {}) {
        still process below — they're drained once per step, never replayed. */
     if (!Number.isFinite(dt) || dt < 0) dt = 0;
     if (!state || typeof state !== 'object') state = {};   // null/primitive → empty frame
-    t += dt;
+    const wn = wallNow();
+    let wdt = wallT0 < 0 ? Math.min(dt, .25) : (wn - wallT0) / 1000;
+    wallT0 = wn;
+    if (!Number.isFinite(wdt) || wdt < 0) wdt = 0;
+    else if (wdt > .25) wdt = .25;
+    t += dt; tw += wdt;
     /* events is contractually the drained fight array — but a truthy
        non-iterable (number, object) makes for..of throw, which would kill
        the whole render frame from inside game.step. */
@@ -205,34 +223,51 @@ export function buildScene(THREE, renderer, opts = {}) {
     if (ph === 'intro' && prevPhase && prevPhase !== 'intro') {
       confetti.visible = false;
       for (const c of cf) c.life = 0;
-      excite = 0; jolt = 0;
+      excite = 0; jolt = 0; pendingPayoff = false;   // a deferred payoff dies with its bout
     }
     if (ph) prevPhase = ph;
     for (const e of ev) {
       if (e === 'npc-hit' || e === 'player-hit' || e === 'player-hit-taken') { excite = Math.min(1.6, excite + .55); jolt = Math.min(1.4, jolt + 1); }
-      else if (e === 'ko') { excite = 1.8; jolt = 1.6; burst(); }
-      else if (e === 'win' || e === 'lose') { excite = 1.8; burst(); }
+      /* a payoff event drained on a frozen frame (cornerHold/hit-stop dt=0)
+         must NOT birth confetti mid-air — it would hang there, a sprite born
+         inside the freeze surviving past it. Defer the burst to the first
+         live frame: the payoff still plays, just when it can move. */
+      else if (e === 'ko') { excite = 1.8; jolt = 1.6; if (dt > 0) burst(); else pendingPayoff = true; }
+      else if (e === 'win' || e === 'lose') { excite = 1.8; if (dt > 0) burst(); else pendingPayoff = true; }
       else excite = Math.min(1.6, excite + .22);
     }
-    excite = Math.max(0, excite - dt * .75);
-    jolt = Math.max(0, jolt - dt * 2.6);
-    tel = lerp(tel, npcAction === 'windup' ? 1 : 0, Math.min(1, dt * 9));
+    if (pendingPayoff && dt > 0) { pendingPayoff = false; burst(); }
+    /* transient hit state decays on the wall clock: during a freeze the
+       jolt/hype/telegraph-glow must play out and settle, not hold mid-pose
+       for the whole break. */
+    excite = Math.max(0, excite - wdt * .75);
+    jolt = Math.max(0, jolt - wdt * 2.6);
+    tel = lerp(tel, npcAction === 'windup' ? 1 : 0, Math.min(1, wdt * 9));
 
     // spotlight flushes coral + flickers while the NPC telegraphs
     spot.color.lerpColors(spotWarm, spotHot, tel);
-    spot.intensity = 90 + tel * (30 + Math.sin(t * 31) * 22) + excite * 18;
+    spot.intensity = 90 + tel * (30 + Math.sin(tw * 31) * 22) + excite * 18;
     redGlow.intensity = 8 + excite * 10; bluGlow.intensity = 8 + tel * 10;
 
-    // ropes jolt when a hit lands — skip the writes entirely while calm
-    if (jolt > .001) for (const r of ropes)
-      r.position.y = r.userData.y0 + Math.sin(t * 26 + r.userData.ph) * jolt * .045;
+    // ropes jolt when a hit lands — skip the writes entirely while calm.
+    // jolt decays past the .001 gate in ONE step, so the last write can
+    // leave a rope parked off its rest position until the next hit — snap
+    // the ropes home once when the shake dies.
+    if (jolt > .001) {
+      ropesHot = true;
+      for (const r of ropes)
+        r.position.y = r.userData.y0 + Math.sin(tw * 26 + r.userData.ph) * jolt * .045;
+    } else if (ropesHot) {
+      ropesHot = false;
+      for (const r of ropes) r.position.y = r.userData.y0;
+    }
 
     // crowd bobs at 30Hz — 150 matrix composes + a 9.6KB instance upload is
     // a lot to spend per frame on background blob heads
     if ((crowdFrame++ & 1) === 0) {
       for (let i = 0; i < N; i++) {
         const c = cd[i];
-        dummy.position.set(c.x, c.y + Math.sin(t * c.sp + c.ph) * (.05 + excite * .3), c.z);
+        dummy.position.set(c.x, c.y + Math.sin(tw * c.sp + c.ph) * (.05 + excite * .3), c.z);
         dummy.updateMatrix(); crowd.setMatrixAt(i, dummy.matrix);
       }
       crowd.instanceMatrix.needsUpdate = true;

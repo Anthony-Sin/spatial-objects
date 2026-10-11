@@ -28,7 +28,17 @@
    Upgrade/HTTP-1.0/absolute-form/missing-Host), M request-smuggling
    robustness (dup-CL, CL+TE, negative/huge CL, trailers, desync framing),
    N URL normalization (encoded slashes, //, ./, overlong UTF-8, confusables)
-   and O keep-alive lifecycle + fd hygiene. L/M/O are scratch-only. */
+   and O keep-alive lifecycle + fd hygiene. L/M/O are scratch-only.
+
+   Wave 5 adds: P conditional×Range TRUTH TABLE — every precondition-combo
+   cell (If-Match/IUS/INM/IMS/If-Range × Range × vendor × method) run as
+   GET and mirrored as HEAD (live-safe), Q HEAD/GET header-parity matrix +
+   proof that HEAD never reads the file body (/proc/<pid>/io rchar),
+   R ETag stability under utimes (sub-second floors, epoch, pure-function
+   of size+mtime), S 50-way same-URL flood on a 12MB file with sha256
+   body verification, T raw-socket garbage fuzz (seeded byte soup, FIN
+   mid-request, oversized start-lines, malformed version tokens, NULs,
+   space/tab header names, h2 preface) + fd-stability. S/T scratch-only. */
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -72,6 +82,24 @@ const req = (path, { method = 'GET', headers = {}, body } = {}) => new Promise((
   r.end();
 });
 
+/* streaming GET that sha256s the body without retaining it — the 50×12MB
+   flood would otherwise pin ~600MB in the probe process */
+const reqHash = (path, { headers = {} } = {}) => new Promise((resolve, reject) => {
+  let r;
+  try {
+    r = request({ host: '127.0.0.1', port: PORT, path, headers, agent: false }, rsp => {
+      const h = createHash('sha256');
+      let n = 0;
+      rsp.on('data', c => { h.update(c); n += c.length; });
+      rsp.on('error', reject);
+      rsp.on('end', () => resolve({ status: rsp.statusCode, headers: rsp.headers, sha: h.digest('hex'), bytes: n }));
+    });
+  } catch (e) { return reject(e); }
+  r.on('error', reject);
+  r.setTimeout(30000, () => r.destroy(new Error('client timeout')));
+  r.end();
+});
+
 /* raw bytes on a socket — for requests http.request refuses to send */
 const raw = bytes => new Promise(resolve => {
   const s = connect(PORT, '127.0.0.1');
@@ -85,6 +113,25 @@ const raw = bytes => new Promise(resolve => {
   s.setTimeout(2000, fin);
 });
 const statusOf = resp => +(String(resp).match(/^HTTP\/\d\.\d (\d+)/)?.[1] || 0);
+
+/* like raw() but half-closes after the write — for FIN mid-request probes:
+   the server sees a truncated byte stream then EOF */
+const rawEnd = bytes => new Promise(resolve => {
+  const s = connect(PORT, '127.0.0.1');
+  const out = [];
+  let done = false;
+  const fin = () => { if (!done) { done = true; s.destroy(); resolve(Buffer.concat(out).toString('latin1')); } };
+  s.on('connect', () => { s.write(bytes); s.end(); });
+  s.on('data', d => out.push(d));
+  s.on('error', () => {});
+  s.on('close', fin);
+  s.setTimeout(2000, fin);
+});
+
+/* deterministic LCG for the garbage fuzz — fixed seed keeps runs reproducible */
+let lcg = 0x5eedb05;
+const rnd = () => { lcg = (lcg * 1103515245 + 12345) >>> 0; return lcg / 0x100000000; };
+const soup = len => Buffer.from(Array.from({ length: len }, () => Math.floor(rnd() * 256)));
 
 /* scratch child's RSS in KB via /proc (linux-only, like the server's own
    /proc/self/fd check); 0 = unavailable — RSS checks then just record 0 */
@@ -237,6 +284,14 @@ try {
   await wf('UPPER.HTML', '<b>up</b>');
   await wf('dir/index.html', '<!doctype html><title>qe-dir</title><p>dir index</p>');
   await wf('cond.bin', 'conditional bytes');
+  await wf('etag.bin', 'etag probe bytes');
+  if (!LIVE) {
+    // 12MB deterministic blob — flood + HEAD-io probes (scratch only; the
+    // live server doesn't need it and writing it would be wasted I/O)
+    const big = Buffer.alloc(12_000_000);
+    for (let i = 0; i < big.length; i++) big[i] = (i * 29 + 11) & 0xff;
+    await wf('big.bin', big);
+  }
   let symlinks = true;
   try {
     await symlink('/etc/passwd', join(FIX, 'escape.lnk'));   // escapes root
@@ -1479,6 +1534,402 @@ try {
         r1.status === 405 && r2.status === 200);
       c.close();
     }
+  }
+
+  /* ================ P. conditional × Range truth table ================
+     RFC 9110 §13.2.2 evaluation order encoded as data: If-Match →
+     If-Unmodified-Since → If-None-Match → If-Modified-Since → Range
+     (with If-Range inside the range step). Every cell runs as GET and
+     is mirrored as HEAD — same status, empty body. `alt` tolerates the
+     pre-fix build on --live (no conditional support there → naive
+     200/206/416 semantics). Method cells show the method gate wins over
+     precondition evaluation (405 before any 412/304). */
+  {
+    const F = FIX_URL + 'blob.bin';
+    const V = '/vendor/mediapipe/wasm/vision_wasm_internal.js';
+    const one = await req(F);
+    const ET = one.headers.etag || '"x"', LM = one.headers['last-modified'];
+    const v0 = await req(V);
+    const VET = v0.headers.etag || '"x"';
+    const past = 'Wed, 01 Jan 2020 00:00:00 GMT';
+    const epoch = 'Thu, 01 Jan 1970 00:00:00 GMT';
+    const future = new Date(Date.now() + 3600e3).toUTCString();
+    const RG = 'bytes=0-9';                                    // satisfiable 10B range
+    // [name, path, headers, wantStatus, toleratedExtraOnLive, wantBodyLen?]
+    const table = [
+      // ---- If-Match × Range (strongest precondition first) ----
+      ['IM bogus + Range',            F, { 'if-match': '"deadbeef"', range: RG },                  412, [200, 206]],
+      ['IM own + Range',              F, { 'if-match': ET, range: RG },                            206, [200], 10],
+      ['IM * + Range',                F, { 'if-match': '*', range: RG },                           206, [200], 10],
+      ['IM weak W/own + Range',       F, { 'if-match': 'W/' + ET, range: RG },                     412, [200, 206]],
+      ['IM list incl own + Range',    F, { 'if-match': `"deadbeef", ${ET}`, range: RG },           206, [200], 10],
+      ['IM own + IUS stale + Range',  F, { 'if-match': ET, 'if-unmodified-since': past, range: RG }, 206, [200, 412], 10],
+      ['IM bogus + INM own + Range',  F, { 'if-match': '"deadbeef"', 'if-none-match': ET, range: RG }, 412, [200, 206, 304]],
+      ['IM own + INM own',            F, { 'if-match': ET, 'if-none-match': ET },                  304, [200]],
+      // ---- If-Unmodified-Since × Range ----
+      ['IUS stale + Range',           F, { 'if-unmodified-since': past, range: RG },               412, [206]],
+      ['IUS future + Range',          F, { 'if-unmodified-since': future, range: RG },             206, [200], 10],
+      ['IUS epoch + Range',           F, { 'if-unmodified-since': epoch, range: RG },              412, [206]],
+      ['IUS epoch (no range)',        F, { 'if-unmodified-since': epoch },                         412, [200]],
+      ['IUS garbage + Range',         F, { 'if-unmodified-since': 'not a date', range: RG },       206, [200], 10],
+      ['IUS stale + INM own + Range', F, { 'if-unmodified-since': past, 'if-none-match': ET, range: RG }, 412, [206, 304]],
+      ['IUS future + INM own + Range',F, { 'if-unmodified-since': future, 'if-none-match': ET, range: RG }, 304, [206]],
+      // ---- If-None-Match × Range ----
+      ['INM own + Range',             F, { 'if-none-match': ET, range: RG },                       304, [206]],
+      ['INM weak W/own + Range',      F, { 'if-none-match': 'W/' + ET, range: RG },                304, [206]],
+      ['INM * + Range',               F, { 'if-none-match': '*', range: RG },                      304, [206]],
+      ['INM list incl own + Range',   F, { 'if-none-match': `W/"deadbeef", ${ET}`, range: RG },    304, [206]],
+      ['INM bogus + Range',           F, { 'if-none-match': '"deadbeef"', range: RG },             206, [200], 10],
+      ['INM bogus + IMS=LM + Range',  F, { 'if-none-match': '"deadbeef"', 'if-modified-since': LM, range: RG }, 206, [200], 10],
+      ['INM own + malformed Range',   F, { 'if-none-match': ET, range: 'bytes=abc' },              304, [416]],
+      ['INM bogus + unknown unit',    F, { 'if-none-match': '"deadbeef"', range: 'items=0-1' },    200, [416, 206]],
+      // ---- If-Modified-Since (range suppresses it) ----
+      ['IMS=LM + Range',              F, { 'if-modified-since': LM, range: RG },                   206, [200], 10],
+      ['IM own + IMS=LM',             F, { 'if-match': ET, 'if-modified-since': LM },              304, [200]],
+      // ---- If-Range (evaluated inside the range step) ----
+      ['IfR own-etag + Range',        F, { 'if-range': ET, range: RG },                            206, [200], 10],
+      ['IfR own-LM + Range',          F, { 'if-range': LM, range: RG },                            206, [200], 10],
+      ['IfR stale-etag + Range',      F, { 'if-range': '"deadbeef"', range: RG },                  200, [206], BLOB.length],
+      ['IfR stale-date + Range',      F, { 'if-range': past, range: RG },                          200, [206], BLOB.length],
+      ['IfR weak + Range',            F, { 'if-range': 'W/' + ET, range: RG },                     200, [206], BLOB.length],
+      ['IfR garbage + Range',         F, { 'if-range': 'garbage-value', range: RG },               200, [206], BLOB.length],
+      ['IfR own + malformed Range',   F, { 'if-range': ET, range: 'bytes=abc' },                   416, [416]],
+      ['IfR stale + malformed Range', F, { 'if-range': '"deadbeef"', range: 'bytes=abc' },         200, [416], BLOB.length],
+      ['IfR own + unsatisfiable',     F, { 'if-range': ET, range: 'bytes=999999-' },               416, [416]],
+      ['IfR own + suffix',            F, { 'if-range': ET, range: 'bytes=-10' },                   206, [200], 10],
+      ['IfR own + multi-range',       F, { 'if-range': ET, range: 'bytes=0-1,2-3' },               200, [416, 206], BLOB.length],
+      ['IfR alone, no Range',         F, { 'if-range': ET },                                       200, [200], BLOB.length],
+      ['IfR own + INM own + Range',   F, { 'if-range': ET, 'if-none-match': ET, range: RG },       304, [206]],
+      ['IfR stale + INM own + Range', F, { 'if-range': '"deadbeef"', 'if-none-match': ET, range: RG }, 304, [206]],
+      ['IfR own + IUS stale + Range', F, { 'if-range': ET, 'if-unmodified-since': past, range: RG }, 412, [206]],
+      ['IfR own + IM bogus + Range',  F, { 'if-range': ET, 'if-match': '"deadbeef"', range: RG },  412, [206]],
+      // ---- vendor file: immutable policy still honors real preconditions ----
+      ['vendor IUS stale + Range',    V, { 'if-unmodified-since': past, range: RG },               412, [206]],
+      ['vendor INM own + Range',      V, { 'if-none-match': VET, range: RG },                      304, [206]],
+      ['vendor IfR own + Range',      V, { 'if-range': VET, range: RG },                           206, [200], 10],
+    ];
+    for (const [name, path, hdrs, want, alt = [], wantLen] of table) {
+      const g = await req(path, { headers: hdrs });
+      const h = await req(path, { method: 'HEAD', headers: hdrs });
+      const ok = st => st === want || (LIVE && alt.includes(st));
+      check(`P×GET/HEAD ${name}`, `${want}${wantLen !== undefined ? ` len=${wantLen}` : ''}`,
+        `GET=${g.status} HEAD=${h.status}${h.body.length ? ` hbody=${h.body.length}` : ''}`,
+        ok(g.status) && h.status === g.status && h.body.length === 0
+        && (wantLen === undefined || !ok(g.status) || g.status !== want || g.body.length === wantLen));
+    }
+    // non-GET/HEAD methods: the 405 gate wins over any precondition eval
+    if (!LIVE) {
+      for (const [m, hdrs] of [
+        ['POST', { 'if-match': '"deadbeef"' }],
+        ['POST', { 'if-none-match': '*' }],
+        ['PUT', { 'if-unmodified-since': past }],
+        ['DELETE', { 'if-range': ET, range: RG }],
+      ]) {
+        const r = await req(F, { method: m, headers: hdrs });
+        check(`${m} + preconditions → 405`, '405', `${r.status}`, r.status === 405);
+      }
+    }
+  }
+
+  /* ================ Q. HEAD/GET header parity matrix ================
+     Same URL + same conditions → identical status and identical
+     representation/validator headers; HEAD carries no body. Framing
+     headers (transfer-encoding/connection/date) legitimately differ —
+     node emits TE: chunked on bodied GET errors but nothing on HEAD —
+     so parity is checked over an allowlist, not the raw header set. */
+  {
+    const F = FIX_URL + 'blob.bin';
+    const one = await req(F);
+    const ET = one.headers.etag, LM = one.headers['last-modified'];
+    const past = 'Wed, 01 Jan 2020 00:00:00 GMT';
+    const future = new Date(Date.now() + 3600e3).toUTCString();
+    const KEYS = ['content-type', 'content-length', 'content-range', 'etag',
+      'last-modified', 'cache-control', 'accept-ranges',
+      'cross-origin-opener-policy', 'cross-origin-embedder-policy',
+      'cross-origin-resource-policy', 'origin-agent-cluster'];
+    const rows = [
+      ['/package.json', {}], [F, {}],
+      [F, { headers: { range: 'bytes=0-9' } }],
+      [F, { headers: { range: 'bytes=-500' } }],
+      [F, { headers: { range: 'bytes=100-' } }],
+      [F, { headers: { range: 'bytes=abc' } }],
+      [F, { headers: { range: 'items=0-1' } }],
+      [F, { headers: { 'if-none-match': ET || '"x"' } }],
+      [F, { headers: { 'if-none-match': '"deadbeef"' } }],
+      [F, { headers: { 'if-match': '"deadbeef"' } }],
+      [F, { headers: { 'if-unmodified-since': past } }],
+      [F, { headers: { 'if-modified-since': future } }],
+      [F, { headers: { range: 'bytes=0-9', 'if-range': ET || '"x"' } }],
+      [F, { headers: { range: 'bytes=0-9', 'if-range': '"deadbeef"' } }],
+      [FIX_URL + 'dir/', {}], [FIX_URL + 'nope.bin', {}],
+      ['/vendor/mediapipe/wasm/vision_wasm_internal.js', {}],
+    ];
+    for (const [path, opts] of rows) {
+      const g = await req(path, opts);
+      const h = await req(path, { ...opts, method: 'HEAD' });
+      const diff = KEYS.filter(k => g.headers[k] !== h.headers[k]);
+      const bodyOk = h.body.length === 0
+        && (![200, 206].includes(g.status) || g.body.length === +g.headers['content-length']);
+      check(`HEAD≡GET ${path.split('/').pop()} ${JSON.stringify(opts.headers || {})}`.slice(0, 70),
+        `same status+hdrs, no HEAD body`, `${g.status}=${h.status} diff=[${diff}] hbody=${h.body.length}`,
+        g.status === h.status && diff.length === 0 && bodyOk);
+    }
+    // byte-identical validators: ETag/Last-Modified must match literally
+    {
+      const g = await req(F), h = await req(F, { method: 'HEAD' });
+      check('ETag+LM byte-identical GET vs HEAD', 'identical strings',
+        `etag=${h.headers.etag === g.headers.etag} lm=${h.headers['last-modified'] === g.headers['last-modified']}`,
+        h.headers.etag === g.headers.etag && h.headers['last-modified'] === g.headers['last-modified']);
+    }
+    // HEAD must not read the file body: /proc/<pid>/io rchar grows ≈0 over
+    // 3 HEADs of a 12MB file but ~12MB on one GET (negative control —
+    // proves the counter would have caught a read)
+    if (!LIVE) {
+      const ioRead = async () => {
+        try {
+          const s = await readFile(`/proc/${child.pid}/io`, 'utf8');
+          return +(/rchar:\s*(\d+)/.exec(s)?.[1] || 0);
+        } catch { return -1; }
+      };
+      const io1 = await ioRead();
+      for (let i = 0; i < 3; i++) await req(FIX_URL + 'big.bin', { method: 'HEAD' });
+      const io2 = await ioRead();
+      const g = await req(FIX_URL + 'big.bin');
+      const io3 = await ioRead();
+      check('HEAD never touches file body (rchar)', 'HEAD×3 ≈ 0, GET ≈ +12MB',
+        io1 < 0 ? 'n/a (no /proc io)' : `headΔ=${io2 - io1}B getΔ=${io3 - io2}B`,
+        io1 < 0 || io2 < 0 || io3 < 0
+        || (g.status === 200 && io2 - io1 < 4_000_000 && io3 - io2 > 11_000_000));
+    }
+  }
+
+  /* ================ R. ETag stability under utimes ================
+     etag = "sizeHEX-mtimeMsHEX" — a pure function of size+mtimeMs. utimes
+     gives deterministic mtime control: any mtime move ⇒ new etag; same
+     size+same mtime ⇒ identical etag; sub-second moves change the etag
+     while Last-Modified (second granularity) stays put. */
+  {
+    const ep = join(FIX, 'etag.bin');
+    const EU = FIX_URL + 'etag.bin';
+    const g0 = await req(EU);
+    const g0b = await req(EU);
+    check('etag stable across repeated GETs', 'etag identical',
+      `${g0.headers.etag} vs ${g0b.headers.etag}`,
+      !!g0.headers.etag && g0.headers.etag === g0b.headers.etag);
+    const h0 = await req(EU, { method: 'HEAD' });
+    check('etag identical on HEAD', 'etag same as GET',
+      `${h0.headers.etag}`, h0.headers.etag === g0.headers.etag);
+
+    // move mtime 3s → new etag + new Last-Modified
+    await utimes(ep, new Date(), new Date('2024-01-01T00:00:00.000Z'));
+    const e1 = await req(EU);
+    await utimes(ep, new Date(), new Date('2024-01-01T00:00:03.000Z'));
+    const e2 = await req(EU);
+    check('mtime +3s → new etag + new LM', 'both change',
+      `${e1.headers.etag}/${e1.headers['last-modified']} → ${e2.headers.etag}/${e2.headers['last-modified']}`,
+      e2.headers.etag !== e1.headers.etag && e2.headers['last-modified'] !== e1.headers['last-modified']);
+
+    // move +300ms inside the SAME second → etag must still change while
+    // Last-Modified (second floor) provably stays put
+    await utimes(ep, new Date(), new Date('2024-01-01T00:00:03.300Z'));
+    const e3 = await req(EU);
+    check('sub-second mtime move: etag changes, LM does not', 'etag≠, LM=',
+      `etag ${e2.headers.etag}→${e3.headers.etag} lm ${e2.headers['last-modified']}→${e3.headers['last-modified']}`,
+      e3.headers.etag !== e2.headers.etag && e3.headers['last-modified'] === e2.headers['last-modified']);
+
+    // move mtime BACK to the exact prior instant → etag returns: pure
+    // function of (size, mtimeMs), no hidden counter/state
+    await utimes(ep, new Date(), new Date('2024-01-01T00:00:03.000Z'));
+    const e4 = await req(EU);
+    check('mtime restored exactly → etag restored', 'etag == earlier value',
+      `${e4.headers.etag} vs ${e2.headers.etag}`, e4.headers.etag === e2.headers.etag);
+
+    // revalidation tracks it: stale etag → 200, current → 304
+    let r = await req(EU, { headers: { 'if-none-match': e3.headers.etag } });
+    check('INM with stale (300ms-old) etag → 200', '200', `${r.status}`,
+      LIVE ? (r.status === 200 || r.status === 304) : r.status === 200);
+    r = await req(EU, { headers: { 'if-none-match': e4.headers.etag } });
+    check('INM with current etag → 304', '304', `${r.status}`,
+      LIVE ? (r.status === 304 || r.status === 200) : r.status === 304);
+
+    // documented invariant: same size + same mtime ⇒ same etag even when
+    // CONTENT differs — a same-length rewrite at a fixed mtime is invisible
+    // (known size+mtime limitation, recorded so it can't regress silently)
+    await writeFile(ep, 'etag PROBE bytes');                 // same 17 bytes, diff content
+    await utimes(ep, new Date(), new Date('2024-01-01T00:00:03.000Z'));
+    const e5 = await req(EU);
+    check('same size+mtime + different content → same etag (documented)',
+      'etag unchanged', `${e5.headers.etag}`, e5.headers.etag === e4.headers.etag);
+
+    // epoch mtime: etag "len-0", LM is the real epoch date, INM round-trips
+    await writeFile(ep, 'etag probe bytes');
+    await utimes(ep, new Date(0), new Date(0));
+    const e6 = await req(EU);
+    check('epoch mtime → sane etag + LM', '"<len-hex>-0" + 1970 LM',
+      `${e6.headers.etag} ${e6.headers['last-modified']}`,
+      !!e6.headers.etag && e6.headers['last-modified'] === 'Thu, 01 Jan 1970 00:00:00 GMT');
+    r = await req(EU, { headers: { 'if-none-match': e6.headers.etag || '"x"' } });
+    check('INM on epoch-mtime file → 304', LIVE ? '304 / 200 (pre-fix live)' : '304',
+      `${r.status}`, LIVE ? (r.status === 304 || r.status === 200) : r.status === 304);
+    // and the IMS-epoch sibling of the IUS fix: epoch file + IMS epoch → 304
+    r = await req(EU, { headers: { 'if-modified-since': 'Thu, 01 Jan 1970 00:00:00 GMT' } });
+    check('IMS epoch on epoch-mtime file → 304', LIVE ? '304 / 200' : '304',
+      `${r.status}`, LIVE ? (r.status === 304 || r.status === 200) : r.status === 304);
+    await wf('etag.bin', 'etag probe bytes');                // restore
+  }
+
+  /* ================ S. concurrent same-URL flood (scratch only) ================
+     50 parallel full GETs on one 12MB file. Each response is sha256'd
+     streaming; every client must receive byte-identical content (no
+     interleaved reads) under one consistent etag. */
+  if (!LIVE) {
+    const bigBuf = await readFile(join(FIX, 'big.bin'));
+    const bigSha = createHash('sha256').update(bigBuf).digest('hex');
+    const fdS = await fdCount();
+    const rssS = await rssKB();
+    const t0 = Date.now();
+    const N = 50;
+    const rs = await Promise.all(Array.from({ length: N }, () => reqHash(FIX_URL + 'big.bin')));
+    const dt = Date.now() - t0;
+    const bad = rs.findIndex(r => r.status !== 200 || r.sha !== bigSha
+      || r.bytes !== bigBuf.length || +r.headers['content-length'] !== bigBuf.length);
+    check('50 parallel GETs on one 12MB file — sha256 identical', 'all 200, all == file hash',
+      `${bad < 0 ? `${N}/${N} ok` : `#${bad} bad`} ${dt}ms`,
+      bad < 0 && rs.every(r => r.sha === bigSha));
+    const ets = new Set(rs.map(r => r.headers.etag));
+    check('flood responses share one etag', '1 distinct etag',
+      `${ets.size} distinct`, ets.size === 1);
+    check('12MB flood completes promptly', '< 20s', `${dt}ms`, dt < 20000);
+    await delay(700);
+    const fdS2 = await fdCount();
+    const rssS2 = await rssKB();
+    check('fds reclaimed after 50-conn flood', '≈ baseline +15',
+      `fd ${fdS}→${fdS2} rss ${rssS}→${rssS2}KB`,
+      (fdS < 0 || fdS2 < 0 || fdS2 <= fdS + 15) && (rssS2 <= 0 || rssS2 < 1536 * 1024));
+    const after = await req('/');
+    check('server alive after flood', 'GET / → 200', `${after.status}`,
+      after.status === 200 && child.exitCode === null);
+  }
+
+  /* ================ T. raw-socket garbage fuzz (scratch only) ================
+     Seeded byte soup, FIN mid-request, oversized start-lines, malformed
+     version tokens, NULs, space/tab in header names, obs-text values,
+     h2 preface. Contract: never throw, never wedge — every socket gets a
+     4xx or a clean close, the server stays alive, fds stay flat. */
+  if (!LIVE) {
+    const fdT = await fdCount();
+    const okRef = st => st === 0 || (st >= 400 && st < 500);   // closed or client-error
+    const alive = async tag => {
+      const r = await req('/package.json');
+      check(`server alive after ${tag}`, '200', `${r.status}`,
+        r.status === 200 && child.exitCode === null);
+    };
+
+    // seeded random byte soup — 16 sockets of pure noise, in parallel
+    {
+      const sizes = [1, 3, 8, 24, 64, 200, 512, 1024, 2048, 333, 77, 4096, 129, 8192, 31, 7];
+      const results = await Promise.all(sizes.map(n => rawEnd(soup(n))));
+      const badIdx = results.findIndex(resp => !okRef(statusOf(resp)));
+      check('16× seeded byte-soup sockets', 'all refused/closed, never 2xx',
+        badIdx < 0 ? 'all refused' : `#${badIdx} → ${statusOf(results[badIdx])}`,
+        badIdx < 0);
+      await alive('byte soup');
+    }
+
+    // FIN mid-request — truncated at every protocol seam
+    for (const [name, wire] of [
+      ['FIN mid-request-line "GE"', 'GE'],
+      ['FIN mid-request-line "GET /package.js"', 'GET /package.js'],
+      ['FIN after request-line, no CRLF', 'GET /package.json HTTP/1.1'],
+      ['FIN after request-line CRLF', 'GET /package.json HTTP/1.1\r\n'],
+      ['FIN mid-header-name', 'GET /package.json HTTP/1.1\r\nHo'],
+      ['FIN mid-header-value', 'GET /package.json HTTP/1.1\r\nHost: x\r\nX-Drip: '],
+      ['FIN on trailing \\r', 'GET /package.json HTTP/1.1\r\nHost: x\r\n\r'],
+      ['zero bytes + FIN', ''],
+      // abort mid-body: for-await may end short (→400) or throw 'aborted'
+      // (→500 via the route's own catch) — both are clean, never a wedge
+      ['POST partial JSON body + FIN', 'POST /api/coach HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n{"prompt":"x'],
+    ]) {
+      const resp = await rawEnd(wire);
+      const st = statusOf(resp);
+      check(`garbage-fin: ${name}`, '4xx/500(abort)/closed', `${st || 'closed'}`,
+        okRef(st) || st === 500);
+    }
+    await alive('FIN mid-request storm');
+
+    // oversized start-lines: 16KB+ blows llhttp's maxHeaderSize → 431/closed
+    for (const n of [16_500, 65_536, 262_144]) {
+      const resp = await raw(`GET /${'a'.repeat(n)} HTTP/1.1\r\nHost: x\r\n\r\n`);
+      check(`request-line ~${n}B`, '431/400/closed', `${statusOf(resp) || 'closed'}`,
+        statusOf(resp) === 431 || statusOf(resp) === 400 || statusOf(resp) === 0);
+    }
+    await alive('oversized start-lines');
+
+    // malformed version tokens — llhttp rejects garbage, tolerates near-miss
+    for (const v of ['XYZ/1.1', 'HTTP/A.B', 'HTTP/1', 'HTTP/', 'HTTP/1.1.2', 'http/1.1', 'HTTP/01.1']) {
+      const resp = await raw(`GET /package.json ${v}\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      check(`version token ${v}`, '200(lenient)/4xx/closed — never wedge',
+        `${statusOf(resp) || 'closed'}`,
+        okRef(statusOf(resp)) || statusOf(resp) === 200);
+    }
+    await alive('version tokens');
+
+    // NULs, spaces, tabs in header fields — llhttp is the gate; we assert
+    // "never dispatched, never wedged" and that a legal tab-in-value works
+    for (const [name, wire, expect] of [
+      ['NUL in header value', 'GET /package.json HTTP/1.1\r\nHost: x\r\nX-A: b\x00c\r\n\r\n', [0, 400]],
+      ['NUL in header name', 'GET /package.json HTTP/1.1\r\nHost: x\r\nX-B\x00C: v\r\n\r\n', [0, 400]],
+      ['NUL in request-target', 'GET /\x00 HTTP/1.1\r\nHost: x\r\n\r\n', [0, 400]],
+      ['NUL after version', 'GET /package.json HTTP/1.1\x00\r\nHost: x\r\n\r\n', [0, 400]],
+      ['space in header name', 'GET /package.json HTTP/1.1\r\nHost: x\r\nX Bad Name: v\r\n\r\n', [0, 400]],
+      ['tab in header name', 'GET /package.json HTTP/1.1\r\nHost: x\r\nX-Bad\tName: v\r\n\r\n', [0, 400]],
+      ['space before colon', 'GET /package.json HTTP/1.1\r\nHost: x\r\nX-Name : v\r\n\r\n', [0, 400]],
+      ['line starts with tab (fold)', 'GET /package.json HTTP/1.1\r\nHost: x\r\n\tX-Fold: v\r\n\r\n', [0, 400]],
+      ['tab inside header VALUE (legal)', 'GET /package.json HTTP/1.1\r\nHost: x\r\nX-Tab: a\tb\r\n\r\n', [200]],
+      ['obs-text bytes in value', 'GET /package.json HTTP/1.1\r\nHost: x\r\nX-High: \xff\xfe\x80\r\n\r\n', [0, 200, 400]],
+    ]) {
+      const resp = await raw(wire);
+      check(`hdr-garbage: ${name}`, expect.join('/') || 'closed', `${statusOf(resp) || 'closed'}`,
+        expect.includes(statusOf(resp)));
+    }
+    await alive('header garbage');
+
+    // request-line oddballs
+    for (const [name, wire, expect] of [
+      ['extra token after version', 'GET /package.json HTTP/1.1 EXTRA\r\nHost: x\r\n\r\n', [0, 400]],
+      // llhttp tolerates repeated SP separators in the request line —
+      // same documented leniency class as the minor-version tokens
+      ['double-space in request-line', 'GET  /package.json  HTTP/1.1\r\nHost: x\r\n\r\n', [0, 200, 400]],
+      ['tab as separator', 'GET\t/package.json HTTP/1.1\r\nHost: x\r\n\r\n', [0, 400]],
+      ['response-line sent to server', 'HTTP/1.1 200 OK\r\nHost: x\r\n\r\n', [0, 400]],
+      ['h2 preface PRI', 'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n', [0, 400, 405]],
+      ['single leading blank line', '\r\nGET /package.json HTTP/1.1\r\nHost: x\r\n\r\n', [200, 400]],
+      ['short bad escape %2', 'GET /%2 HTTP/1.1\r\nHost: x\r\n\r\n', [400]],
+      ['pipelined garbage after valid GET', 'GET /package.json HTTP/1.1\r\nHost: x\r\n\r\nGARBAGE NOTHTTP\r\n\r\n', null],
+    ]) {
+      const resp = await raw(wire);
+      if (name === 'pipelined garbage after valid GET') {
+        // node answers the parse error with ONE 400 and destroys the
+        // socket — the queued 200 for the first request never reaches the
+        // wire (same half-close drop class documented in section O). The
+        // invariant we own: the garbage request is never dispatched.
+        const codes = String(resp).match(/HTTP\/\d\.\d \d+/g) || [];
+        check(`req-line: ${name}`, '≤2 responses, all 200/4xx, garbage never dispatched',
+          `${codes.join(',') || 'closed'}`,
+          codes.length >= 1 && codes.length <= 2
+          && codes.every(c => / (200|4\d\d)$/.test(c)));
+      } else {
+        check(`req-line: ${name}`, expect.join('/'), `${statusOf(resp) || 'closed'}`,
+          expect.includes(statusOf(resp)));
+      }
+    }
+    await alive('request-line oddballs');
+
+    // fd stability across the whole fuzz run
+    await delay(700);
+    const fdT2 = await fdCount();
+    check('fd count stable after garbage fuzz', '≈ baseline +15',
+      `fd ${fdT}→${fdT2}`, fdT < 0 || fdT2 < 0 || fdT2 <= fdT + 15);
   }
 
   /* ================ report ================ */

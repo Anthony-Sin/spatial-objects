@@ -473,6 +473,28 @@
   .btn:focus-visible, .btn.sub:focus-visible, .settings-done:focus-visible, .settings-close:focus-visible {
     outline:3.5px solid var(--coral); outline-offset:3px;
   }
+  .range-input:focus-visible {
+    outline:3px solid var(--coral); outline-offset:2px; border-radius:6px;
+  }
+
+  /* ---------- a11y media queries ---------- */
+  @media (prefers-contrast: more) {
+    /* bump the quiet greys up to full ink and thicken every interactive
+       border — reduced-motion aside, this is the contrast the OS asked for */
+    .setting-desc { opacity:1; }
+    .cpill, .setting-row, .settings-card, .settings-close,
+    .btn, .tut-check, .tut-box, .btn-gear, .slider { border-width:4px; }
+  }
+  @media (forced-colors: active) {
+    /* the drawn checkbox face and switch track ARE the state indicator —
+       forced-colors would flatten them to ButtonFace and the checked state
+       disappears. They carry meaning → keep authored colors. */
+    .tut-box, .slider, .slider::before { forced-color-adjust:none; }
+    /* box-shadow is stripped in forced colors; replace the depth cue on the
+       primary action with a real outline so it still reads as a button */
+    .btn.main { outline:2px solid ButtonText; }
+    .logo-title { text-shadow:none; -webkit-text-stroke:2px CanvasText; }
+  }
 
   /* ---------- motion ---------- */
   @media (prefers-reduced-motion: no-preference) {
@@ -668,16 +690,21 @@
       const p = JSON.parse(v); return p == null ? d : p;   // 'null' parses fine — treat as missing
     } catch { return d; } };
     const num = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : 0;
+    /* career counters are whole non-negative numbers by nature — corrupt
+       storage showing "-5 KOs" or "2.9 WINS" renders as the honest 0 */
+    const cnt = (v) => Math.max(0, Math.floor(num(v)));
     const ko = get('boxing:ko', { n: 0, sum: 0 });
-    const koN = num(ko?.n), koSum = num(ko?.sum);
+    const koN = cnt(ko?.n), koSum = Math.max(0, num(ko?.sum));
     const set = (sel, v) => { const el = document.querySelector(sel); if (el) el.textContent = v; };
-    set('[data-best]', num(get('boxing:best', 0)).toLocaleString());
-    set('[data-wins]', num(get('boxing:wins', 0)));
+    set('[data-best]', cnt(get('boxing:best', 0)).toLocaleString());
+    set('[data-wins]', cnt(get('boxing:wins', 0)));
     set('[data-kos]', koN);
     /* a corrupt boxing:ko can carry an absurd sum — toFixed() prints every
        digit of a <1e21 number and blows the pill out of a 320px screen.
-       It's an average KO ROUND, so clamp the display at a sane ceiling. */
-    set('[data-koavg]', koN ? Math.min(koSum / koN, 99.9).toFixed(1) : '—');
+       It's an average KO ROUND, so clamp the display at a sane ceiling —
+       and floor at round 1: a KO before the first bell isn't a real stat. */
+    set('[data-koavg]', koN && koSum
+      ? Math.min(Math.max(koSum / koN, 1), 99.9).toFixed(1) : '—');
   })();
 
   // tutorial checkmark syncs with Enter the Ring destination
@@ -713,13 +740,22 @@
   const settingFps = document.getElementById('setting-fps');
   const settingTutorial = document.getElementById('setting-tutorial');
 
+  /* focus follows the modal: opening moves focus into the dialog (an
+     aria-modal dialog a keyboard user can't reach is decoration), closing
+     returns it to whatever had it — otherwise focus resets to <body> and
+     the user re-Tabs through the whole page */
+  let settingsFocusBack = null;
   function openSettings() {
+    settingsFocusBack = document.activeElement;
     settingsModal?.classList.add('open');
     settingsModal?.setAttribute('aria-hidden', 'false');
+    settingsCloseBtn?.focus();
   }
   function closeSettings() {
     settingsModal?.classList.remove('open');
     settingsModal?.setAttribute('aria-hidden', 'true');
+    try { if (settingsFocusBack?.isConnected) settingsFocusBack.focus(); } catch {}
+    settingsFocusBack = null;
   }
 
   /* every control derefs defensively — a renamed id must degrade ONE
@@ -776,6 +812,90 @@
   tutToggle?.addEventListener('change', () => {
     if (settingTutorial) settingTutorial.checked = tutToggle.checked;
   });
+
+  /* menu ambience — the same procedural synth as the fight: a low crowd
+     murmur under the spotlit ring, plus a bell ding riding ENTER THE RING
+     out. Autoplay policy still applies: a real AudioContext is grabbed inside
+     the first DOM gesture (any click/key — settings, toggles, the CTA) and
+     the lazily-imported BoxingAudio adopts it. Listeners stay armed until the
+     ctx reports non-suspended — a suspended grab retries resume() on the next
+     gesture instead of going dead for the session. */
+  const menuAudioP = import('./shared/boxing/audio.js').catch(() => null);
+  let menuAC = null, menuAudio = null;
+  /* the ctx is grabbed IMMEDIATELY — not inside a gesture: where the browser
+     allows autoplay (sticky activation / MEI — the usual case for a local
+     app on a repeat visit) it comes up running and the tune starts with the
+     page; elsewhere it sits suspended, and the resume() queued here plus the
+     one inside menuUnlock flips it live on the first gesture instead. */
+  try {
+    const ACEarly = window.AudioContext || window.webkitAudioContext;
+    menuAC = ACEarly ? new ACEarly() : null;
+    menuAC?.resume?.();
+  } catch { menuAC = null; }
+  const menuUp = () => { try {   // adopt + ambience — idempotent
+    if (!menuAudio) return;
+    const c = menuAudio.unlock(menuAC);
+    try { c?.resume?.(); } catch {}
+    if (!menuAudio.muted) { menuAudio.crowd(true); menuAudio.menuTune(true); }
+    if (c && c.state !== 'suspended') {
+      removeEventListener('pointerdown', menuUnlock);
+      removeEventListener('keydown', menuUnlock);
+    }
+  } catch {} };
+  /* the synth builds eagerly too — a running ctx means music with zero
+     gestures; the listeners are only the suspended-policy fallback */
+  menuAudioP.then(m => { try {
+    if (!m) return;
+    if (!menuAudio) {
+      menuAudio = new m.BoxingAudio();
+      if (localStorage.getItem('boxing:sound') === '0') menuAudio.muted = true;
+      const rawV = localStorage.getItem('boxing:volume');
+      if (rawV !== null) {                          // missing pref → keep .8 default
+        const v = Number(rawV);
+        if (Number.isFinite(v)) menuAudio.setVolume(Math.min(1, Math.max(0, v / 100)));
+      }
+    }
+    menuUp();
+  } catch {} });
+  const menuUnlock = () => {
+    if (!menuAC) try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      menuAC = AC ? new AC() : null;
+    } catch { menuAC = null; }
+    try { menuAC?.resume?.(); } catch {}
+    menuAudioP.then(() => menuUp());
+  };
+  addEventListener('pointerdown', menuUnlock);
+  addEventListener('keydown', menuUnlock);
+  /* keep nudging too — an autoplay-permitted profile or late-arriving
+     activation flips the suspended ctx without needing the gesture */
+  let menuPumps = 0;
+  const menuPump = setInterval(() => { try {
+    if (++menuPumps > 60) return clearInterval(menuPump);
+    menuAC?.resume?.(); menuAudio?.ctx?.resume?.();
+    if (menuAC?.state === 'running' || menuAudio?.ctx?.state === 'running')
+      clearInterval(menuPump);
+  } catch {} }, 350);
+  /* the tune dies on its own when the page unloads (ENTER THE RING); parking
+     the whole ctx on tab-hide keeps a backgrounded menu from vamping forever */
+  document.addEventListener('visibilitychange', () => { try {
+    if (!menuAC) return;
+    document.hidden ? menuAC.suspend?.() : menuAC.resume?.();
+  } catch {} });
+  /* the ding has ~a click's worth of runway before navigation unloads —
+     best-effort (module may still be in flight on a first-click exit) */
+  enterBtn?.addEventListener('pointerdown', () => {
+    try { menuAudio?.play('bell', { times: 1 }); } catch {}
+  });
+  // the settings toggles drive the live bed too, not just the stored prefs
+  settingSound?.addEventListener('change', () => { try {
+    if (!menuAudio) return;
+    menuAudio.muted = !settingSound.checked;
+    if (settingSound.checked) { menuAudio.crowd(true); menuAudio.menuTune(true); }   // unmute revives bed+tune
+  } catch {} });
+  settingVolume?.addEventListener('input', () => { try {
+    menuAudio?.setVolume(settingVolume.value / 100);
+  } catch {} });
 
   // 3D Animated Ring & Boxing Characters — decorative backdrop: if WebGL,
   // a scene piece, or a module file is unavailable the menu must still work,
@@ -1147,6 +1267,22 @@
       camera.updateProjectionMatrix();
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.setSize(window.innerWidth, window.innerHeight, false);
+      if (reduced) stillFrame();   // resize/DPR wiped the still frame — repaint
+    }
+    /* prefers-reduced-motion: the whole backdrop is decorative perpetual
+       motion — the CSS block can't reach a JS-driven render loop, so under
+       'reduce' the ring renders as a still diorama (one quiet frame,
+       repainted on resize/DPR/context-restore) and no rAF chain runs.
+       (Declared before updateCamera's first call — it reads `reduced`.) */
+    const rmQuery = window.matchMedia
+      ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+    let reduced = !!rmQuery.matches;
+    function stillFrame() {
+      try {
+        p1.pose('idle', 0); p2.pose('idle', 0);
+        for (let i = 0; i < 40; i++) { p1.tick(0.05); p2.tick(0.05); }
+        renderer.render(scene, camera);
+      } catch {}
     }
     updateCamera();
     window.addEventListener('resize', updateCamera);
@@ -1177,11 +1313,26 @@
     canvas.addEventListener('webglcontextlost', () => { dead = true; });
     canvas.addEventListener('webglcontextrestored', () => {
       fails = 0;
-      if (dead) { dead = false; if (!looping) renderFrame(); } // restart only a stopped loop — never double-schedule
+      // restart only a stopped loop — never double-schedule; under reduced
+      // motion a restored context repaints the still frame instead
+      if (dead) { dead = false; if (reduced) stillFrame(); else if (!looping) renderFrame(); }
     });
+    /* a live reduced-motion flip ends the loop at the next frame boundary
+       (renderFrame early-outs) or restarts it when the user re-enables —
+       addEventListener on MediaQueryList is missing on older Safari, which
+       only carries addListener */
+    const onRm = e => {
+      reduced = !!e.matches;
+      if (reduced) stillFrame();
+      else if (!dead && !looping) renderFrame();
+    };
+    try {
+      if (rmQuery.addEventListener) rmQuery.addEventListener('change', onRm);
+      else rmQuery.addListener?.(onRm);
+    } catch {}
 
     function renderFrame() {
-      if (dead) { looping = false; return; }
+      if (dead || reduced) { looping = false; return; }
       looping = true;
       requestAnimationFrame(renderFrame);
       try {
@@ -1231,7 +1382,7 @@
         if (++fails >= 5) { dead = true; console.warn('SCRAP! menu 3D render stopped — showing UI only:', e); }
       }
     }
-    renderFrame();
+    if (reduced) stillFrame(); else renderFrame();
   })();
   } catch (e) {
     console.warn('SCRAP! menu 3D unavailable — showing UI only:', e);

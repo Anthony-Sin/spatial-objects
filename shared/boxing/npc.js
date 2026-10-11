@@ -162,17 +162,24 @@ async function tryGlb(THREE, cand) {
     new GLTFLoader().load(url, res, undefined, rej));
   const obj = gltf.scene || gltf.scenes?.[0];
   if (!obj) throw new Error('empty glb');
+  /* a GLB that parses but carries no renderable geometry is a broken asset,
+     not a fighter: the auto-fit below measured an empty Box3 (max-min =
+     -Infinity, truthy) and baked scale.setScalar(-0) — an invisible fighter
+     — plus position.y += +Infinity from the un-guarded -b.min.y fallback.
+     Measure first, refuse the husk, let the proto fallback take the ring. */
+  const b0 = new THREE.Box3().setFromObject(obj);
+  const h0 = b0.max.y - b0.min.y;
+  if (!Number.isFinite(h0) || h0 <= 0) throw new Error('empty glb');
   const sc = +cand.scale;
   if (Number.isFinite(sc) && sc > 0) obj.scale.setScalar(sc);
-  else {   // auto-fit to chibi height when the manifest doesn't pin a scale
-    const b = new THREE.Box3().setFromObject(obj);
-    const h = b.max.y - b.min.y || 1;
-    obj.scale.setScalar(1.3 / h);
-  }
+  else obj.scale.setScalar(1.3 / h0);      // auto-fit to chibi height
   {   // manifest yOffset is the world lift that grounds the feet (scout-tuned);
     const b = new THREE.Box3().setFromObject(obj);   // absent/bogus → auto-rest on 0
     const yOff = cand.yOffset == null ? -b.min.y : +cand.yOffset;
-    obj.position.y += Number.isFinite(yOff) ? yOff : -b.min.y;
+    // the -b.min.y fallback itself is non-finite on a degenerate measure —
+    // never += Infinity onto the rig (it once teleported the whole fighter)
+    obj.position.y += Number.isFinite(yOff) ? yOff
+      : (Number.isFinite(b.min.y) ? -b.min.y : 0);
   }
   // unary + coerces numeric strings and drops NaN/'abc' to the next fallback —
   // a junk yaw in the manifest used to write NaN straight into the rotation

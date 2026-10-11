@@ -1,5 +1,6 @@
 /* test/qe-fuzz.mjs — deterministic seeded fuzz + property checks for the
-   pure game-logic modules. QE rounds 2 (w4-qe-fuzz) + 3 (b3-fuzz) + 4 (b4-fuzz).
+   pure game-logic modules. QE rounds 2 (w4-qe-fuzz) + 3 (b3-fuzz) + 4 (b4-fuzz)
+   + 5 (b5-fuzz).
 
    Wave 4 adds: dt boundary torture on every module entry point
    (0, -0, 1e-12, .1, ±∞, NaN, 'x'), live mutation fuzz on exported
@@ -8,6 +9,19 @@
    a 10k-step ring↔fists↔fight co-simulation with hp/score/stamina/distance
    invariants, state serialization round-trips, and event-stream legality
    (ko only from 'fighting', bell count === round, drain-once semantics).
+
+   Wave 5 adds: cornerHold dt=0 freeze semantics (held frames commit
+   nothing — no buffered punch/dodge/rise-tag leaks after release, corner()
+   refused outside 'fighting', toggle spam ≡ uninterrupted run, freeze
+   frames preserve pending events for the drain); module singleton
+   contamination (co-live fights/trackers/sims/protoBoxers/audios stepped
+   alternately share no events, tuning snapshots, telegraphs, warn budgets
+   or input buffers); adversarial structural inputs (throwing Proxies,
+   throwing getters, Symbol fields, flip-flopping getters, sparse arrays,
+   cyclic state) on every public entry point; three-bout replay
+   determinism (identical per-step digest + event stream ×3, reset() ≡
+   fresh construction); audio lifecycle churn (rapid unlock/dispose/mute,
+   crowd swell mid-dispose, node edge balance, no doubled crowd beds).
 
    Coverage: shared/boxing/{fight,fists,ring,tutorial,audio,protoBoxer}.js
      - malformed inputs: null/undefined/NaN states, non-array hands,
@@ -141,6 +155,10 @@ function chaosFightInputs() {
   if (rnd() < .5) o.duck = rnd() < .15 ? gnum() : rnd() * 1.4 - .2;
   if (rnd() < .2) o.dodge = rnd() < .2 ? gnum() : pick([-1, 0, 1, 2, -5]);
   if (rnd() < .9) o.distance = rnd() < .15 ? gnum() : rnd() * 4 - .5;
+  if (rnd() < .3) o.riseTouch = rnd() < .1 ? pick([5, 'x', null])   // glove-palm
+    : Array.from({ length: rnd() * 3 | 0 }, () =>                  // touch feeds
+      rnd() < .15 ? pick([null, 'x', {}]) : { x: rnd() * 1.4 - .2, y: rnd() * 1.4 - .2 });
+  if (rnd() < .2) o.riseAspect = rnd() < .2 ? gnum() : .3 + rnd() * 3;
   return o;
 }
 function chaosRingInput() {
@@ -162,7 +180,8 @@ const NPC_ACTS = new Set(['idle', 'press', 'circle', 'retreat', 'windup', 'punch
   'hurt', 'down', 'celebrate', 'whiff', 'stunned']);
 const EVENT_VOCAB = new Set(['player-punch', 'player-hit', 'player-miss', 'npc-hit', 'npc-blocked',
   'npc-punch', 'player-hit-taken', 'player-blocked', 'player-dodged', 'player-dodge',
-  'perfect-dodge', 'counter', 'npc-special', 'ko', 'round-start', 'countdown', 'win', 'lose']);
+  'perfect-dodge', 'counter', 'npc-special', 'ko', 'round-start', 'countdown', 'win', 'lose',
+  'rise', 'rise-hit', 'rise-miss', 'rise-fade', 'revive', 'corner']);
 const RESULTS = new Set(['hit', 'miss', 'blocked', 'dodged', 'whiff']);
 
 function fightInvariant(f, tag) {
@@ -796,7 +815,7 @@ reseed(0x7EA2);
     intro: new Set(['intro', 'countdown']),
     countdown: new Set(['countdown', 'fighting']),
     fighting: new Set(['fighting', 'countdown', 'npcdown', 'playerdown', 'win', 'lose']),
-    playerdown: new Set(['playerdown', 'lose']),
+    playerdown: new Set(['playerdown', 'fighting', 'lose']),
     npcdown: new Set(['npcdown', 'win']),
     win: new Set(['win']), lose: new Set(['lose']),
   };
@@ -1708,6 +1727,572 @@ reseed(0xE9E7A);
   }
   check('events: ko only from fighting, bells === round, drain-once, lastBlow legal',
     !err && kos > 0 && drains > 1000, `${err} kos=${kos} drains=${drains}`);
+}
+
+/* ============ 20. cornerHold — dt=0 freeze semantics (wave 5) ============
+   game.js (read-only) holds the bout by calling fight.step(0, inputs) while
+   controls.cornerHold is set. The Fight-level contract the fuzz verifies:
+   a held step commits NOTHING — no phase/clock/dodge/punch/rise progress,
+   no events, no buffered action leaking after release. */
+reseed(0xC0E7);
+const fightDig = f => { const s = f.state; return JSON.stringify([
+  s.phase, s.round, s.timeLeft, s.countdown, s.player.hp, s.player.stamina,
+  s.player.score, s.player.dodge.dir, s.player.gassed,
+  s.npc.hp, s.npc.stamina, s.npc.action, s.npc.actionT, s.npc.gassed,
+  s.rise.active, s.rise.got, s.rise.t01, s.rise.each01]); };
+{
+  // 240 held frames full of hostile-chaos inputs: state bit-identical, no events
+  const f = new Fight({ seed: 5 });
+  for (let i = 0; i < 700 && f.state.phase !== 'fighting'; i++) f.step(DT, {});
+  f.state.events.length = 0;
+  const d0 = fightDig(f);
+  let emitted = 0;
+  for (let i = 0; i < 240; i++) {
+    f.step(0, { punches: [{ kind: 'hook', side: 'left', power: 1 }],
+      sway: i % 2 ? .95 : -.95, dodge: i % 3 - 1, duck: .9,
+      guard: { left: 1, right: 1 }, distance: .5 });
+    emitted += f.state.events.length;
+  }
+  check('cornerHold: 240 held frames — state identical, zero events emitted',
+    fightDig(f) === d0 && emitted === 0, `emitted=${emitted}\n${d0}\n${fightDig(f)}`);
+
+  // release: real frames with EMPTY inputs — nothing held may resolve late
+  const hp0 = f.state.npc.hp;
+  let leaked = null;
+  for (let i = 0; i < 40; i++) {
+    f.step(DT, { distance: .5 });
+    for (const e of f.state.events)
+      if (['player-punch', 'player-hit', 'player-miss', 'player-dodge', 'player-dodged'].includes(e))
+        leaked = `event '${e}' @release ${i}`;
+    if (f.state.npc.hp < hp0) leaked = `npc.hp ${hp0}→${f.state.npc.hp}`;
+    if (f.state.player.dodge.dir) leaked = `dodge fired: ${f.state.player.dodge.dir}`;
+  }
+  check('cornerHold: buffered punches/dodges/leans never leak after release',
+    !leaked, leaked);
+}
+{
+  // held sway consumes the edge: a lean PRESENTED during the hold and still
+  // present at release does not start a dodge (game.js drops fightIn.sway
+  // only for its own dodge latch — the fight must not fire it late either)
+  const f = new Fight({ seed: 5 });
+  for (let i = 0; i < 700 && f.state.phase !== 'fighting'; i++) f.step(DT, {});
+  for (let i = 0; i < 30; i++) f.step(0, { sway: .9, distance: .8 });   // held lean
+  let dodged = false;
+  for (let i = 0; i < 10; i++) {
+    f.step(DT, { sway: .9, distance: .8 });                            // still leaning
+    if (f.state.player.dodge.dir || f.state.events.includes('player-dodge')) dodged = true;
+  }
+  check('cornerHold: lean held through the pause is consumed, not fired late',
+    !dodged && !f.state.player.dodge.dir, `dodge=${f.state.player.dodge.dir}`);
+}
+{
+  // live telegraph pins through the hold; the swing completes on schedule
+  const f = new Fight({ seed: 11, ai: false, practice: true });
+  for (let i = 0; i < 700 && f.state.phase !== 'fighting'; i++) f.step(DT, {});
+  f.throwPunch('hook', 'right', 1.0);
+  for (let i = 0; i < 20; i++) f.step(DT, { distance: .7 });
+  const t0 = JSON.stringify([f.state.npc.telegraph, f.state.npc.actionT, f.state.player.hp]);
+  for (let i = 0; i < 120; i++) f.step(0, { dodge: 1, sway: .9, distance: .7 });
+  check('cornerHold: mid-swing telegraph pins t01/actionT/hp through the hold',
+    JSON.stringify([f.state.npc.telegraph, f.state.npc.actionT, f.state.player.hp]) === t0,
+    `${t0} → ${JSON.stringify([f.state.npc.telegraph, f.state.npc.actionT])}`);
+  let dodged = false, resolved = false;
+  for (let i = 0; i < 90; i++) {
+    f.step(DT, { distance: .7 });
+    if (f.state.events.includes('player-dodge') || f.state.events.includes('player-dodged')) dodged = true;
+    if (f.state.lastBlow?.who === 'npc') resolved = true;
+  }
+  check('cornerHold: swing resolves on schedule; held dodge gives no retro i-frames',
+    resolved && !dodged, `resolved=${resolved} dodged=${dodged}`);
+}
+{
+  // corner() API itself: 'fighting'+hp>0 → heal floor + 'corner' + re-deal;
+  // refused in every other phase — and the event survives held frames to the drain
+  const g = new Fight({ seed: 5 });
+  for (let i = 0; i < 700 && g.state.phase !== 'fighting'; i++) g.step(DT, {});
+  g.state.player.hp = Math.floor(g.state.player.maxHp * .3);
+  const floor = Math.max(g.state.player.hp, g.state.player.maxHp * g._T.cornerHeal);
+  check('corner(): fighting → patches to heal floor + re-deals the round',
+    g.corner() === true && g.state.player.hp === floor && g.state.phase === 'countdown',
+    `hp=${g.state.player.hp} floor=${floor} ph=${g.state.phase}`);
+  check('corner(): refused while already in the break countdown',
+    g.corner() === false && g.state.phase === 'countdown');
+  g.state.events.length = 0;
+  g.state.phase = 'fighting'; g.state.player.hp = 1;         // re-arm the emit path
+  g.corner();
+  for (let i = 0; i < 12; i++) g.step(0, chaosFightInputs()); // held frames
+  const drained = g.state.events.splice(0);
+  check('cornerHold: corner() event survives held frames to the drain',
+    drained.includes('corner'), drained.join(','));
+}
+{
+  // freeze is phase-agnostic: countdown/down phases + terminals all ignore it
+  let err = null;
+  const holdSpam = f => {
+    for (let i = 0; i < 120; i++)
+      f.step(0, { punches: [{ kind: 'hook', side: 'left', power: 1 }],
+        dodge: i % 3 - 1, duck: .9, sway: .9, distance: .5 });
+  };
+  for (const [ph, mk] of [
+    ['countdown', () => { const f = new Fight({ seed: 6 }); f.startNow(); return f; }],
+    ['playerdown', () => { const f = new Fight({ seed: 6, playerHp: 1 });
+      for (let i = 0; i < 60 * 200 && f.state.phase !== 'playerdown'; i++) f.step(DT, { distance: .6 }); return f; }],
+    ['npcdown', () => { const f = new Fight({ seed: 6, npcHp: 1 });
+      for (let i = 0; i < 60 * 200 && f.state.phase !== 'npcdown'; i++)
+        f.step(DT, { punches: [{ kind: 'jab', side: 'left', power: 1 }], distance: .5 }); return f; }],
+  ]) {
+    const f = mk();
+    if (f.state.phase !== ph) { err = `${ph}: setup landed in '${f.state.phase}'`; break; }
+    const d0 = fightDig(f);
+    holdSpam(f);
+    if (fightDig(f) !== d0) { err = `${ph}: held frames mutated state`; break; }
+    if (f.corner() !== false) { err = `${ph}: corner() accepted mid-${ph}`; break; }
+    if (f.state.events.length && !d0.includes('"corner"')) { /* events during hold leak */ }
+  }
+  for (const [o, punch] of [[{ seed: 6, npcHp: 1 }, true], [{ seed: 6, playerHp: 1 }, false]]) {
+    const f = new Fight(o);
+    for (let i = 0; i < 60 * 300 && !['win', 'lose'].includes(f.state.phase); i++)
+      f.step(DT, { punches: punch && f.state.phase === 'fighting'
+        ? [{ kind: 'jab', side: 'left', power: 1 }] : [], distance: .6 });
+    if (!['win', 'lose'].includes(f.state.phase)) { err = `terminal setup: ${f.state.phase}`; break; }
+    const term = f.state.phase, d0 = fightDig(f);
+    holdSpam(f);
+    if (fightDig(f) !== d0) { err = `${term}: held frames mutated terminal state`; break; }
+    if (f.corner()) { err = `${term}: corner() accepted`; break; }
+  }
+  check('cornerHold: hold ignored in countdown/playerdown/npcdown/win/lose', !err, err);
+}
+{
+  // get-up QTE is part of the freeze: rings hold their fade, tag attempts drop
+  const f = new Fight({ seed: 9, playerHp: 1 });
+  for (let i = 0; i < 60 * 200 && f.state.phase !== 'playerdown'; i++) f.step(DT, { distance: .6 });
+  const r0 = JSON.stringify(f.state.rise), got0 = f.state.rise.got;
+  for (let i = 0; i < 120; i++)
+    f.step(0, { punches: [{ kind: 'jab', x: .5, y: .5 }], riseAspect: 1 });
+  const frozen = JSON.stringify(f.state.rise) === r0 && f.state.phase === 'playerdown';
+  const t01a = f.state.rise.t01;
+  for (let i = 0; i < 12; i++) f.step(DT, {});               // release — count resumes
+  check('cornerHold: rise QTE frozen mid-hold, resumes on release',
+    frozen && f.state.rise.t01 < t01a && f.state.rise.got === got0,
+    `${r0} → ${JSON.stringify(f.state.rise)}`);
+}
+{
+  // toggle spam: alternating held/real frames ≡ the uninterrupted run —
+  // no wedge, no stamina/hp drift sourced by the toggling itself
+  const ref = new Fight({ seed: 8 }), spam = new Fight({ seed: 8 });
+  for (let i = 0; i < 700 && ref.state.phase !== 'fighting'; i++) { ref.step(DT, {}); spam.step(DT, {}); }
+  const inp = i => ({ distance: .7, sway: Math.sin(i / 9) * .3,       // sub-dodgeT —
+    guard: { left: .3, right: .3 },                                   // dodge edges stay aligned
+    punches: i % 31 === 0 ? [{ kind: 'jab', side: 'left', power: .7 }] : [] });
+  for (let i = 0; i < 3000; i++) {
+    ref.step(DT, inp(i));
+    spam.step(0, { punches: [{ kind: 'hook', power: 1 }], dodge: 1, duck: 0, sway: 0 });
+    spam.step(DT, inp(i));
+  }
+  check('cornerHold: 3000 toggle-spam pairs ≡ uninterrupted run',
+    fightDig(ref) === fightDig(spam), `${fightDig(ref)}\n${fightDig(spam)}`);
+}
+
+/* ============ 21. module singleton contamination (wave 5) ============ */
+reseed(0x51E7);
+{
+  // two co-live fights stepped alternately must replay their own solo runs —
+  // the strongest possible isolation check: any shared mutable state
+  // (events, tuning snapshots, telegraphs, rng, input buffers) diverges the digest
+  const stream = []; reseed(0xB07);
+  for (let i = 0; i < 6000; i++) stream.push(chaosFightInputs());
+  const dg = f => { const s = f.state; return [s.phase, s.round, s.timeLeft,
+    s.player.hp, s.player.stamina, s.player.score, s.npc.hp, s.npc.stamina,
+    s.npc.action, s.player.dodge.dir].join('|'); };
+  const solo = new Fight({ seed: 77 }), soloSig = [];
+  for (const inp of stream) { solo.step(DT, inp); soloSig.push(dg(solo)); }
+  const f1 = new Fight({ seed: 77 }), f2 = new Fight({ seed: 78 });
+  const interSig = [], f2Sig = [];
+  for (const inp of stream) { f1.step(DT, inp); f2.step(DT, inp); interSig.push(dg(f1)); f2Sig.push(dg(f2)); }
+  check('contamination: co-live fight ≡ its own solo run (6000 interleaved steps)',
+    interSig.every((d, i) => d === soloSig[i]),
+    `first drift @${interSig.findIndex((d, i) => d !== soloSig[i])}`);
+  const solo78 = new Fight({ seed: 78 }), solo78Sig = [];
+  for (const inp of stream) { solo78.step(DT, inp); solo78Sig.push(dg(solo78)); }
+  check('contamination: co-live partner ≡ its own solo run too',
+    f2Sig.every((d, i) => d === solo78Sig[i]),
+    `first drift @${f2Sig.findIndex((d, i) => d !== solo78Sig[i])}`);
+  check('contamination: state/events/tuning/input buffers are distinct objects',
+    f1.state !== f2.state && f1.state.events !== f2.state.events
+    && f1._T !== f2._T && f1._inp !== f2._inp && f1._inp.guard !== f2._inp.guard
+    && f1.state.player.dodge !== f2.state.player.dodge);
+  const j0 = f2._T.dmg.jab;
+  f1._T.dmg.jab = 999;
+  check('contamination: tuning snapshot writes stay inside the instance',
+    f2._T.dmg.jab === j0 && FT.dmg.jab !== 999, `f2.jab=${f2._T.dmg.jab} FT.jab=${FT.dmg.jab}`);
+  f1._T.dmg.jab = j0;
+}
+{
+  // fists trackers: no shared punch buffer / guard / per-side state / tuning
+  const t1 = new FistTracker(), t2 = new FistTracker();
+  const refs = [t1.punches !== t2.punches, t1.guard !== t2.guard, t1.reach !== t2.reach,
+    t1.T !== t2.T, t1._s.left !== t2._s.left, t1._pick !== t2._pick];
+  for (let i = 0; i < 60; i++) t1.update(hs(hand('left', .4, .55, 1.4 + Math.sin(i / 4))), fc(), DT);
+  for (const s of [1.8, 2.2, 2.6, 2.3, 2.0]) t1.update(hs(hand('left', .4, .55, s)), fc(), DT);
+  for (let i = 0; i < 40; i++) t1.update(null, fc(.3, .4), DT);        // face stream on t1 only
+  check('contamination: tracker buffers/state independent — no cross-talk',
+    refs.every(Boolean) && t2.punches.length === 0 && t2.guard.left === 0
+      && t2.reach.left === 1 && t2.sway === 0 && t2.pitch === 0,
+    `t2 polluted: punches=${t2.punches.length} guard=${t2.guard.left} sway=${t2.sway}`);
+}
+{
+  // ring sims: independent tuning, bodies, input buffer, rng
+  const s1 = new RingSim({ seed: 4 }), s2 = new RingSim({ seed: 4 });
+  s1.step(DT, {}); s2.step(DT, {});                       // lazily init _inp
+  const home2 = JSON.stringify([s2.player.pos, s2.npc.pos]);
+  const refs = [s1.t !== s2.t, s1.player !== s2.player, s1.npc !== s2.npc,
+    s1._inp !== s2._inp, s1.player.pos !== s2.player.pos,
+    s1.player.vel !== s2.player.vel, s1._home !== s2._home, s1._rng !== s2._rng];
+  s1.t.radius = 1.9;
+  for (let i = 0; i < 300; i++) s1.step(DT, { npcDir: 'press', playerStep: .8 });
+  check('contamination: ring sims independent — mutation + trajectory',
+    refs.every(Boolean) && s2.t.radius === RT.radius
+      && JSON.stringify([s2.player.pos, s2.npc.pos]) === home2,
+    `s2: radius=${s2.t.radius} pos=${JSON.stringify(s2.player.pos)}`);
+}
+{
+  // protoBoxers: pose on one never moves the other; warn budget is per-instance
+  const b1 = buildBoxer(THREE, {}), b2 = buildBoxer(THREE, {});
+  for (let i = 0; i < 80; i++) { b1.pose('jab', .6); b1.tick(DT); }
+  const z0 = b2.parts.gloveL.position.z, y0 = b2.parts.head.position.y;
+  check('contamination: pose/tick on one boxer never moves the other',
+    b2.parts.gloveL.position.z === z0 && b2.parts.head.position.y === y0,
+    `z ${z0}→${b2.parts.gloveL.position.z}`);
+  let w = 0; const ow = console.warn; console.warn = () => w++;
+  for (let i = 0; i < 200; i++) b1.pose('zz' + i, 0);
+  const w1 = w;
+  b2.pose('zzz-unique', 0);
+  console.warn = ow;
+  check('contamination: warn-dedup budget is per-instance',
+    w1 > 0 && w > w1, `b1 warns=${w1} b2 warn delta=${w - w1}`);
+}
+{
+  // two audios on one ctx: separate masters, separate crowd beds, mute is local
+  const ctx = strictCtx();
+  const a1 = new BoxingAudio(), a2 = new BoxingAudio();
+  a1.unlock(ctx); a2.unlock(ctx);
+  const ok = a1.master !== a2.master && a1._buf !== a2._buf;
+  a1.muted = true;
+  check('contamination: two audios — separate graphs, muting one leaves the other live',
+    ok && a2.play('bell', {}) === true && a1.play('bell', {}) === false,
+    `master shared=${a1.master === a2.master} a2 played=${a2.play('bell', {})}`);
+}
+{
+  // two tutorials on the same fight: finishing one never finishes the other
+  const fight = new Fight({ seed: 3, ai: false, practice: true });
+  const sim = new RingSim({ seed: 3 });
+  const ta = new Tutorial({ fight, sim }), tb = new Tutorial({ fight, sim });
+  fight.startNow();
+  for (let i = 0; i < 60 * (TOTAL + 8) && !ta.done; i++) {   // countdown eats ~4s before TOTAL starts
+    fight.step(DT, { distance: sim.distance() });
+    ta.update({ events: fight.state.events, state: fight.state }, i / 60);
+  }
+  check('contamination: a finished tutor never finishes its sibling',
+    ta.done && !tb.done && tb.i === 0, `tb.i=${tb.i} done=${tb.done}`);
+}
+
+/* ============ 22. adversarial structural inputs (wave 5) ============ */
+reseed(0xBAD5);
+/* Proxy can only wrap objects — prox(n) = a hostile OBJECT that stands in
+   for whatever the call site suggests (number/string/name slot). */
+const prox = (o = {}) => new Proxy(
+  (typeof o === 'object' && o !== null) ? o : {},
+  { get() { throw new Error('proxy get'); } });
+const boomGet = k => { const o = {}; Object.defineProperty(o, k, { get() { throw new Error('boom getter'); } }); return o; };
+{
+  // fight.step / fight.step(0) vs throwing Proxies, throwing getters,
+  // Symbol values, sparse + hostile punches, cyclic inputs
+  let err = null;
+  try {
+    const f = new Fight({ seed: 1 });
+    for (let i = 0; i < 700 && f.state.phase !== 'fighting'; i++) f.step(DT, {});
+    for (const bad of [prox(), boomGet('punches'), boomGet('guard'), boomGet('sway'),
+        boomGet('distance'), boomGet('dodge'), prox({ punches: [] }),
+        null, undefined, 5, 'x', Symbol('s'), Object.create(null)]) {
+      f.step(DT, bad); f.step(0, bad);
+    }
+    for (const bad of [
+      { punches: prox([]) },
+      { punches: [prox({}), prox(), boomGet('kind'), null, undefined, 5, Symbol('p')] },
+      { punches: new Array(4) },                        // sparse — holes
+      { punches: { length: 1e9 } },
+      { punches: Object.assign([{ kind: 'jab' }], { 0: prox({}) }) },
+      { guard: prox({ left: .8 }) }, { guard: boomGet('left') },
+      { sway: Symbol('s') }, { distance: Symbol('d') }, { duck: Symbol('u') },
+      { riseAspect: prox(1) }, { riseAspect: Symbol('a') },
+    ]) { f.step(DT, bad); f.step(0, bad); }
+    const cyc = { sway: .2 }; cyc.self = cyc; cyc.punches = [cyc];
+    f.step(DT, cyc);
+    const cyc2 = {}; cyc2.guard = cyc2; f.step(DT, cyc2);
+    err = fightInvariant(f, 'hostile');
+  } catch (e) { err = `threw: ${e.message}`; }
+  check('fight: Proxy/getter/Symbol/sparse/cyclic inputs — no throw, invariants hold', !err, err);
+}
+{
+  // a caller that froze or replaced the public drain queue can't kill step
+  let err = null;
+  try {
+    const f = new Fight({ seed: 1 });
+    for (let i = 0; i < 700 && f.state.phase !== 'fighting'; i++) f.step(DT, {});
+    Object.freeze(f.state.events);                      // seal the drain
+    for (let i = 0; i < 60; i++) f.step(DT, { punches: [{ kind: 'jab', power: .5 }], distance: .6 });
+    f.state.events = 'not-an-array';
+    for (let i = 0; i < 60; i++) f.step(DT, { distance: .6 });
+    err = fightInvariant(f, 'poisoned-drain');
+  } catch (e) { err = `threw: ${e.message}`; }
+  check('fight: frozen/replaced events queue — step survives', !err, err);
+}
+{
+  // fists.update vs hostile handsState/faceState/dt
+  let err = null;
+  const ft = new FistTracker();
+  try {
+    for (let i = 0; i < 400; i++) {
+      ft.update(pick([prox(), boomGet('hands'), null, 5, Symbol('s'),
+        { hands: prox([]) }, { hands: new Array(3) },
+        { hands: [prox(), boomGet('palm'), boomGet('lm'), 5, 'x', null, Symbol('h')] },
+        { hands: [{ side: 'left', palm: prox({}), lm: prox([]) }] }]),
+        pick([prox(), boomGet('nose'), boomGet('found'), null, 5,
+          { found: true, nose: prox({}) }, { found: Symbol('f') }]),
+        pick([DT, Symbol('d'), null, 'x', NaN, DT]));
+      if (!Number.isFinite(ft.sway + ft.duck + ft.guard.left + ft.reach.left))
+        { err = `non-finite @${i}`; break; }
+    }
+  } catch (e) { err = `threw: ${e.message}`; }
+  check('fists: hostile hands/face/dt — never throws, outputs finite', !err, err);
+}
+{
+  // ring.step vs hostile input + externally poisoned internals
+  let err = null;
+  const sim = new RingSim({ seed: 3 });
+  try {
+    for (const bad of [prox(), boomGet('npcDir'), boomGet('playerStep'),
+        null, 5, 'x', Symbol('s')]) { sim.step(DT, bad); sim.step(0, bad); }
+    for (const bad of [{ playerStep: prox(0) }, { npcDir: Symbol('n') },
+        { npcStunned: prox(false) }]) sim.step(DT, bad);
+    for (const dt of [Symbol('d'), null, 'x', NaN, prox(0)]) sim.step(dt, {});
+    // flip-flopping getter — each read returns a different value
+    let gi = 0; const flip = {};
+    Object.defineProperty(flip, 'playerStep', { get: () => [1e9, -1e9, NaN, .5][gi++ % 4] });
+    for (let i = 0; i < 60; i++) sim.step(DT, flip);
+    err = ringLegality(sim, 'hostile');
+    sim.player = prox({});                               // poisoned internals
+    sim.step(DT, { npcDir: 'press' });
+    sim.distance(); sim.angleToNpc();
+    sim.player = { pos: { x: 0, z: .5 }, vel: { x: 0, z: 0 }, radius: .34, heading: 0 };
+    for (let i = 0; i < 30; i++) sim.step(DT, {});
+    err = err || ringLegality(sim, 'post-poison');
+  } catch (e) { err = `threw: ${e.message}`; }
+  check('ring: hostile input + poisoned internals — never throws, stays legal', !err, err);
+}
+{
+  // tutorial/proto/audio vs hostile objects on every public entry point
+  let err = null;
+  const b = buildBoxer(THREE, {});
+  const fight = new Fight({ seed: 2, ai: false, practice: true });
+  const sim = new RingSim({ seed: 2 });
+  const tut = new Tutorial({ fight, sim });
+  const au = new BoxingAudio(); au.unlock(strictCtx());
+  try {
+    for (const bad of [prox(), boomGet('state'), boomGet('events'), null, 5]) tut.update(bad, 1);
+    tut.update({ state: prox({}), events: prox([]) }, 2);
+    b.pose('jab', .5, prox({})); b.pose('jab', Symbol('t'), boomGet('reach'));
+    b.snap('down', Symbol('t')); b.snap(prox('x'), .5);
+    b.tick(DT, prox({}), DT); b.tick(DT, boomGet('gassed'));
+    b.trackHands(prox()); b.trackHands(boomGet('hands'));
+    b.trackHands({ hands: [prox(), boomGet('palm'), 5] });
+    b.setDamage(Symbol('d')); b.setDamage(prox(.5));
+    const cyc = {}; cyc.me = cyc; b.tick(DT, cyc); tut.update(cyc, 3);
+    au.handleEvent(prox({}), prox({}));
+    au.handleEvent(boomGet('type'), { lastBlow: prox({}) });
+    au.update(DT, prox({})); au.update(Symbol('d'), fight.state);
+    au.play('bell', prox({})); au.play(Symbol('x'), {});
+    err = boxerFinite(b, 'hostile');
+  } catch (e) { err = `threw: ${e.message}`; }
+  check('tutorial/proto/audio: hostile objects — never throws, rig finite', !err, err);
+}
+{
+  // hostile constructor opts — Proxy / throwing getter / Symbol / null-proto
+  let err = null;
+  try {
+    new Fight(prox()).step(DT, {});
+    new Fight(boomGet('seed')).step(DT, {});
+    new Fight(Symbol('o')).step(DT, {});
+    new RingSim(prox()).step(DT, {});
+    new RingSim(boomGet('seed')).step(DT, {});
+    new RingSim(Symbol('o')).step(DT, {});
+    new FistTracker(prox()).update(hs(), fc(), DT);
+    new FistTracker(Symbol('o')).update(hs(), fc(), DT);
+    new Tutorial(prox()).update({}, 1);
+    new Tutorial(Symbol('o')).update({}, 1);
+    buildBoxer(THREE, prox({})).tick(DT);
+    buildBoxer(THREE, Symbol('o')).tick(DT);
+    const f = new Fight(Object.create(null)); f.step(DT, {});
+  } catch (e) { err = `threw: ${e.message}`; }
+  check('ctors: hostile opts objects — never throws', !err, err);
+}
+{
+  // hostile injected ctx: unlock fails clean → stays silent → recovers
+  let err = null, ok = true;
+  try {
+    const a = new BoxingAudio();
+    ok = a.unlock(prox({})) === null && a.ctx === null;
+    ok = ok && a.unlock(boomGet('createGain')) === null && a.ctx === null;
+    ok = ok && a.play('bell') === false;
+    ok = ok && !!a.unlock(strictCtx());                  // recovers with a good ctx
+    ok = ok && a.play('bell', {}) === true;
+  } catch (e) { err = e.message; }
+  check('audio: hostile ctx → unlock null + silent, then recovers', !err && ok, err);
+}
+
+/* ============ 23. three-bout replay determinism (wave 5) ============ */
+reseed(0x3B07);
+{
+  // same seed + same input stream across 3 full bouts: identical event
+  // stream AND state digest at EVERY step, through verdict
+  const stream = [];
+  for (let i = 0; i < 60 * 400; i++) stream.push({
+    punches: i % 17 === 0 ? [{ kind: ['jab', 'cross', 'hook', 'uppercut'][(i / 17 | 0) % 4],
+      side: i % 2 ? 'right' : 'left', power: .4 + (i % 7) / 10 }] : [],
+    guard: { left: (i % 5) / 5, right: ((i + 2) % 5) / 5 },
+    sway: Math.sin(i / 23) * .8, duck: i % 11 === 0 ? .7 : 0,
+    dodge: i % 97 === 0 ? (i % 2 ? 1 : -1) : 0,
+    distance: .5 + Math.abs(Math.sin(i / 31)) * 1.5 });
+  const dg = s => [s.phase, s.round, s.timeLeft.toFixed(5), s.countdown,
+    s.player.hp, s.player.stamina.toFixed(5), s.player.score, s.player.gassed,
+    s.player.dodge.dir, s.npc.hp, s.npc.stamina.toFixed(5), s.npc.action,
+    s.npc.actionT.toFixed(5), s.npc.gassed, s.rise.active, s.rise.got,
+    s.events.join(',')].join('|');
+  const run = () => {
+    const f = new Fight({ seed: 0xF00D }), sig = [];
+    for (const inp of stream) {
+      f.step(DT, inp);
+      sig.push(dg(f.state));
+      if (['win', 'lose'].includes(f.state.phase)) break;
+    }
+    sig.push('END:' + f.state.phase);
+    return sig;
+  };
+  const r1 = run(), r2 = run(), r3 = run();
+  let drift = -1;
+  for (let i = 0; i < Math.max(r1.length, r2.length, r3.length); i++)
+    if (r1[i] !== r2[i] || r2[i] !== r3[i]) { drift = i; break; }
+  check('replay: 3 bouts same seed+stream — identical events+digest every step',
+    drift === -1 && r1.length === r2.length && r2.length === r3.length,
+    `drift @${drift} lens ${r1.length}/${r2.length}/${r3.length}`
+      + (drift >= 0 ? `\n  a: ${r1[drift]}\n  b: ${r2[drift]}` : ''));
+  check('replay: the bout actually reached a verdict (stream not truncated)',
+    ['END:win', 'END:lose'].includes(r1[r1.length - 1]), r1[r1.length - 1]);
+  // reset() ≡ fresh construction — rematch replay is byte-identical
+  const a = new Fight({ seed: 0xF00D });
+  for (let i = 0; i < 1500; i++) a.step(DT, stream[i]);   // burn-in
+  a.reset();
+  const b = new Fight({ seed: 0xF00D });
+  let dft = -1;
+  for (let i = 0; i < 3000; i++) {
+    a.step(DT, stream[i]); b.step(DT, stream[i]);
+    if (dg(a.state) !== dg(b.state)) { dft = i; break; }
+  }
+  check('replay: reset() ≡ fresh construction for 3000 steps', dft === -1,
+    `drift @${dft}${dft >= 0 ? `\n  a: ${dg(a.state)}\n  b: ${dg(b.state)}` : ''}`);
+}
+
+/* ============ 24. audio.js lifecycle — unlock/dispose/mute churn (wave 5) ============ */
+reseed(0xAD15);
+const mkCountCtx = () => {
+  const nodes = [];
+  const val = x => { if (!Number.isFinite(x)) throw new RangeError(`non-finite audio param ${x}`); return true; };
+  const param = v => ({ value: v,
+    setValueAtTime(x) { val(x); this.value = x; },
+    exponentialRampToValueAtTime(x) { val(x); this.value = x; },
+    linearRampToValueAtTime(x) { val(x); this.value = x; },
+    setTargetAtTime(x) { val(x); this.value = x; },
+    cancelScheduledValues() {} });
+  const mk = type => {
+    const n = { type, frequency: param(440), Q: param(1), gain: param(1),
+      buffer: null, loop: false, onended: null, conns: 0, discs: 0, stops: 0,
+      connect() { this.conns++; }, disconnect() { this.discs++; },
+      start() {}, stop() { this.stops++; } };
+    nodes.push(n); return n;
+  };
+  return { nodes, currentTime: 0, sampleRate: 44100, closed: false,
+    destination: mk('dest'), resume() {}, close() { this.closed = true; },
+    createOscillator: () => mk('osc'), createGain: () => mk('gain'),
+    createBiquadFilter: () => mk('filter'), createDynamicsCompressor: () => mk('comp'),
+    createBufferSource: () => mk('src'),
+    createBuffer: (ch, len) => ({ getChannelData: () => new Float32Array(len) }) };
+};
+{
+  // unlock idempotence, dispose mid-swell, re-unlock recovery, crowd single-bed
+  const c1 = mkCountCtx(), c2 = mkCountCtx();
+  const a = new BoxingAudio();
+  check('audio: unlock returns the ctx it adopted', a.unlock(c1) === c1);
+  const mg = a.master;
+  check('audio: second unlock is a no-op (no doubled master)',
+    a.unlock(c2) === c1 && a.master === mg && c2.closed === false);
+  a.update(DT, { phase: 'fighting', player: { stamina: 1 } });
+  a.handleEvent('ko', {});                              // _crowdLevel = 1 — swell armed
+  a.update(DT, { phase: 'fighting', player: { stamina: 1 } });
+  const crowd = a._crowd;
+  check('audio: crowd bed live + swelled before dispose',
+    !!crowd && a._crowdLevel > 0, `crowd=${!!crowd} level=${a._crowdLevel}`);
+  a.dispose();
+  check('audio: dispose mid-swell — bed stopped+disconnected, ctx closed, meters reset',
+    a._crowd === null && a.ctx === null && a.master === null && c1.closed === true
+      && crowd.src.stops === 1 && crowd.lfo.stops === 1
+      && [crowd.src, crowd.lfo, crowd.lg, crowd.filter, crowd.gain].every(n => n.discs >= 1)
+      && mg.discs >= 1 && a._crowdLevel === 0,
+    JSON.stringify({ crowd: !!a._crowd, ctx: !!a.ctx, closed: c1.closed,
+      stops: [crowd.src.stops, crowd.lfo.stops],
+      discs: [crowd.src.discs, crowd.lfo.discs, crowd.lg.discs, crowd.filter.discs, crowd.gain.discs],
+      masterDiscs: mg.discs, level: a._crowdLevel }));
+  check('audio: post-dispose API is inert — no voices on a dead ctx',
+    a.play('bell', {}) === false && a.handleEvent('win', {}) === false);
+  a.update(DT, { phase: 'fighting' }); a.muted = true; a.muted = false;   // silent no-ops
+  const c3 = mkCountCtx();
+  check('audio: unlock after dispose rebuilds the graph', a.unlock(c3) === c3);
+  for (let i = 0; i < 30; i++) a.update(DT, { phase: 'fighting', player: { stamina: 1 } });
+  const beds1 = c3.nodes.filter(n => n.type === 'src').length;
+  a._crowdOn(); a._crowdOn();                           // direct hammer — no doubling
+  const beds2 = c3.nodes.filter(n => n.type === 'src').length;
+  check('audio: crowd bed never doubles under hammered _crowdOn', beds1 === 1 && beds2 === 1,
+    `src nodes=${beds2}`);
+  a.dispose();
+}
+{
+  // 200 rapid unlock→sfx→dispose cycles with mute flips — never throws
+  let err = null;
+  try {
+    const evts = Object.keys(EVENT_SFX);
+    for (let i = 0; i < 200; i++) {
+      const cx = mkCountCtx();
+      const x = new BoxingAudio();
+      x.unlock(cx);
+      x.muted = i % 2 === 0;
+      if (i % 3 === 0) x.muted = !(i % 6);
+      x.handleEvent(evts[i % evts.length],
+        { lastBlow: { kind: 'jab', dmg: 9 }, phase: 'fighting' });
+      x.update(DT, { phase: i % 2 ? 'fighting' : 'win', player: { stamina: i % 5 ? 1 : .2 } });
+      if (i % 4 === 0) x.update(DT, { phase: 'fighting' });
+      x.dispose();
+    }
+  } catch (e) { err = e.message; }
+  check('audio: 200 unlock→sfx→dispose churn cycles — never throws', !err, err);
+}
+{
+  // dispose while muted + double dispose + post-dispose update — all no-ops
+  const a = new BoxingAudio(); a.unlock(mkCountCtx());
+  a.update(DT, { phase: 'fighting' });
+  a.muted = true;
+  let err = null;
+  try { a.dispose(); a.dispose(); a.muted = false; a.update(DT, { phase: 'fighting' }); a.play('ko', {}); }
+  catch (e) { err = e.message; }
+  check('audio: dispose×2 while muted + post-dispose update — never throws', !err, err);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

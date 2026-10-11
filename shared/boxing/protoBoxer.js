@@ -79,6 +79,12 @@ export const PALETTES = VPAL;
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp = (a, b, t) => a + (b - a) * t;
 const TAU = Math.PI * 2;
+/* hostile-input guards — a strike/state/hands object that is a Proxy, has
+   throwing getters, or carries Symbol fields must degrade like a no-op,
+   not kill the frame loop */
+const sget = (o, k) => { try { return o?.[k] } catch { return undefined; } };
+// +coercion throws on Symbol — keep the coercion inside the guard
+const fin0 = (v, d = 0) => { try { const n = +v; return Number.isFinite(n) ? n : d; } catch { return d; } };
 // smoothstep between edges
 const ss = (a, b, t) => { const u = clamp((t - a) / (b - a), 0, 1); return u * u * (3 - 2 * u); };
 // punch envelope: snap out (~.25), hold (~.47), ease back — one 0..1 phase
@@ -124,14 +130,19 @@ const CFG = {
 export function buildBoxer(THREE, opts = {}) {
   if (!THREE || !THREE.Group || !THREE.Mesh)
     throw new Error('buildBoxer(THREE, opts): pass the THREE namespace in');
-  // destructure inside so buildBoxer(THREE, null) / (THREE, 5) can't throw
-  let { variant = 'bubble', palette = {}, playerLook = false } = opts || {};
+  // destructure inside so buildBoxer(THREE, null) / (THREE, 5) can't throw;
+  // hostile opts (Proxy / throwing getters / Symbol opts) get read via safe
+  // getters instead — a Symbol opts used to kill construction outright
+  let variant = sget(opts, 'variant') ?? 'bubble';
+  const palette = sget(opts, 'palette'), playerLook = !!sget(opts, 'playerLook');
   if (!VARIANTS.includes(variant)) {
     if (typeof console !== 'undefined') console.warn('protoBoxer: unknown variant', variant, '— using bubble');
     variant = 'bubble';
   }
   const C = CFG[variant];
-  const P = { ...VPAL[variant], ink: HOUSE.ink, paper: HOUSE.paper, ...palette };
+  let P;
+  try { P = { ...VPAL[variant], ink: HOUSE.ink, paper: HOUSE.paper, ...palette }; }
+  catch { P = { ...VPAL[variant], ink: HOUSE.ink, paper: HOUSE.paper }; }
   const Toon = THREE.MeshToonMaterial || THREE.MeshLambertMaterial || THREE.MeshBasicMaterial;
   const Basic = THREE.MeshBasicMaterial || Toon;
   const BACK = THREE.BackSide !== undefined ? THREE.BackSide : 1;
@@ -925,24 +936,33 @@ export function buildBoxer(THREE, opts = {}) {
   function pose(name, t01 = 0, strike = null) {
     // a non-finite phase used to bake NaN into every target — and once a
     // node's transform went NaN, lerp could never pull it back
-    if (!Number.isFinite(+t01)) t01 = 0; else t01 = +t01;
-    SK = strike?.kind ?? null;
+    t01 = fin0(t01, 0);
+    SK = sget(strike, 'kind') ?? null;
     // garbage reach/y clamps: a NaN or ±huge target once dragged the glove
     // off the rig — strikes live within a few body units by design
-    SZ = Number.isFinite(strike?.reach) ? clamp(strike.reach, 0, 2.5) : null;
-    SY = SZ !== null && Number.isFinite(strike?.y) ? clamp(strike.y, 0, 2) : null;
+    const sreach = fin0(sget(strike, 'reach'), NaN);
+    SZ = Number.isFinite(sreach) ? clamp(sreach, 0, 2.5) : null;
+    const sy = fin0(sget(strike, 'y'), NaN);
+    SY = SZ !== null && Number.isFinite(sy) ? clamp(sy, 0, 2) : null;
+    // a Proxy/Symbol name used as a table KEY runs ToPropertyKey → toString —
+    // a throwing getter escapes right through hasOwnProperty; coerce safely
+    // first so a hostile name degrades to 'idle' instead of killing the call
+    let nm;
+    try { nm = typeof name === 'string' ? name : String(name); }
+    catch { nm = ''; }
     // own-property test, not truthiness: '__proto__'/'constructor'/'toString'
     // resolve through the prototype chain — POSES['__proto__'] is Object.
     // prototype, truthy but not a function → POSES[cur](...) threw TypeError
-    if (!Object.prototype.hasOwnProperty.call(POSES, name)) {
+    if (!Object.prototype.hasOwnProperty.call(POSES, nm)) {
       // cap the dedupe set — a hostile/buggy caller streaming unique garbage
       // names once grew `warned` (and the console) without bound
-      if (!warned.has(name) && warned.size < 64) {
-        warned.add(name);
-        if (typeof console !== 'undefined') console.warn('protoBoxer: unknown pose', name, '— using idle');
+      if (!warned.has(nm) && warned.size < 64) {
+        warned.add(nm);
+        if (typeof console !== 'undefined') console.warn('protoBoxer: unknown pose', nm, '— using idle');
       }
-      name = 'idle';
+      nm = 'idle';
     }
+    name = nm;
     cur = name; curK = clamp(t01 || 0, 0, 1);
     if (cur !== 'down') downT = 0;
     resetTargets();
@@ -972,14 +992,18 @@ export function buildBoxer(THREE, opts = {}) {
     for (const n in T) {
       const nd = parts[n], tg = T[n];
       if (!nd) continue;
-      nd.position.set(tg.p[0], tg.p[1], tg.p[2]);
-      nd.rotation.set(tg.r[0], tg.r[1], tg.r[2]);
-      nd.scale.set(tg.s[0], tg.s[1], tg.s[2]);
+      try {   // a caller-injected hostile part can't break the whole snap
+        nd.position.set(tg.p[0], tg.p[1], tg.p[2]);
+        nd.rotation.set(tg.r[0], tg.r[1], tg.r[2]);
+        nd.scale.set(tg.s[0], tg.s[1], tg.s[2]);
+      } catch { /* skip this node */ }
     }
   }
   const snap = (name, t01) => {
-    if (name === 'down' && (t01 === undefined || t01 >= 1)) downT = 1; // thumbnail = fallen
-    pose(name, t01); applyNow();
+    const k = t01 === undefined ? 1 : fin0(t01, NaN);
+    if (name === 'down' && (t01 === undefined || k >= 1)) downT = 1; // thumbnail = fallen
+    pose(name, t01 === undefined ? undefined : (Number.isFinite(k) ? k : 0));
+    applyNow();
   };
 
   // aim a rubber limb pivot (+Z local) from its own position at an effector
@@ -1025,8 +1049,11 @@ export function buildBoxer(THREE, opts = {}) {
       ? HAND_SPACES[space] : HAND_SPACES.close;
     // non-array hands used to throw; a NaN palm used to poison the glove's
     // blend target FOREVER (lerp(NaN→x) stays NaN even after tracking returns)
-    const list = Array.isArray(handsState?.hands) ? handsState.hands : [];
+    let list = [];
+    try { list = Array.isArray(sget(handsState, 'hands')) ? sget(handsState, 'hands') : []; }
+    catch { list = []; }
     for (const h of list) {
+      try {
       if (!h?.palm || (h.side !== 'left' && h.side !== 'right')) continue;
       if (!Number.isFinite(h.palm.x) || !Number.isFinite(h.palm.y)) continue;
       const left = h.side === 'left';
@@ -1056,13 +1083,16 @@ export function buildBoxer(THREE, opts = {}) {
       glove.position.y = lerp(glove.position.y, y, .62);
       glove.position.z = lerp(glove.position.z, z, .62);
       solveLimb(arm, glove);
+      } catch { continue; }   // hostile hand entry → drop it, keep the rest
     }
   }
 
   function tick(dt, state, moveSpeed = 0) {
     // a non-finite dt once turned `time` NaN and every transform NaN forever —
     // dt must be a positive finite number or the frame is skipped entirely
+    // (Number.isFinite never coerces: Symbol/BigInt dt returns false safely)
     if (!Number.isFinite(dt) || dt <= 0) return;
+    try {
     time += dt;
     if (cur === 'down' && downT < 1) downT = Math.min(1, downT + dt * 2.2);
     // exponential blend toward targets — gloves snappier than the body
@@ -1116,7 +1146,7 @@ export function buildBoxer(THREE, opts = {}) {
       }
     }
     // gassed → sweat beads slide off the temples on a loop
-    const gas = !!state?.gassed && cur !== 'down';
+    const gas = !!sget(state, 'gassed') && cur !== 'down';
     for (let i = 0; i < sweat.length; i++) {
       const d = sweat[i], h = d.userData.home;
       d.visible = gas;
@@ -1143,17 +1173,21 @@ export function buildBoxer(THREE, opts = {}) {
     if (state && typeof state === 'object') {
       try { state.pose = cur; state.k = effK; state.time = time; } catch { /* sealed */ }
     }
+    } catch {
+      /* externally poisoned parts table / hostile state threw mid-blend —
+         skip the rest of the frame; the next clean tick resynchronizes */
+    }
   }
 
   function dispose() {
-    for (const g of geos) g.dispose && g.dispose();
-    for (const m of mats) m.dispose && m.dispose();
+    for (const g of geos) try { g.dispose && g.dispose(); } catch { /* keep going */ }
+    for (const m of mats) try { m.dispose && m.dispose(); } catch { /* keep going */ }
     geos.clear(); mats.clear();
   }
 
   // wounds accumulate (monotone) — 0..1 fraction of hp lost
   function setDamage(frac) {
-    dmg = Math.max(dmg, clamp(+frac || 0, 0, 1));
+    dmg = Math.max(dmg, clamp(fin0(frac, 0), 0, 1));
     const [shiner, lump, bandage] = wounds;
     if (shiner) shiner.visible = dmg >= .3;
     if (lump) lump.visible = dmg >= .5;
