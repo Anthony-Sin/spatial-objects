@@ -1,0 +1,142 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>02 · blueprint — roster isolation</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{ "imports": { "three": "../../vendor/three/three.module.js" } }
+</script>
+<style>
+  body { margin: 0; background: #16344e; overflow: hidden;
+    font-family: "IBM Plex Mono","SF Mono",ui-monospace,monospace; }
+  #hud { position: fixed; top: 18px; left: 18px; z-index: 5;
+    background: rgba(16,42,66,.88); border: 1px solid rgba(140,200,240,.5);
+    padding: 0; font-size: 11px; color: #bfe0f5; user-select: none;
+    width: 228px; }
+  #hud .hd { padding: 9px 13px; border-bottom: 1px solid rgba(140,200,240,.35);
+    display: flex; justify-content: space-between; align-items: baseline; }
+  #hud h1 { font-size: 11px; margin: 0; letter-spacing: .18em;
+    text-transform: uppercase; font-weight: 600; }
+  #hud .rev { font-size: 9px; color: #6fa3c8; }
+  #hud .bd { padding: 10px 13px; }
+  #hud .keys { color: #6fa3c8; font-size: 9.5px; line-height: 1.7;
+    margin-bottom: 9px; }
+  #hud .keys b { color: #dff1ff; font-weight: 600; }
+  #hud button { display: block; width: 100%; text-align: left; margin: 2px 0;
+    padding: 5px 9px; border: 1px solid rgba(140,200,240,.4); border-radius: 0;
+    background: transparent; font: inherit; font-size: 10px;
+    letter-spacing: .1em; cursor: pointer; color: #bfe0f5; }
+  #hud button:hover { background: rgba(140,200,240,.14); }
+  #hud select { width: 100%; margin-top: 8px; font: inherit; font-size: 10px;
+    padding: 4px; border: 1px solid rgba(140,200,240,.4); border-radius: 0;
+    background: #102a42; color: #bfe0f5; }
+  .tag { position: fixed; z-index: 4; transform: translate(-50%, -100%);
+    pointer-events: none; text-align: center; color: #dff1ff; }
+  .tag .n { font-weight: 600; font-size: 11px; letter-spacing: .2em; }
+  .tag .s { font-size: 9px; color: #8fb9d9; letter-spacing: .08em;
+    margin-top: 3px; font-variant-numeric: tabular-nums; }
+  /* drawing frame */
+  .frame { position: fixed; z-index: 3; pointer-events: none;
+    border: 1px solid rgba(140,200,240,.4); inset: 14px; }
+  .frame::before, .frame::after { content: '+'; position: absolute;
+    color: rgba(140,200,240,.8); font-size: 14px; }
+  .frame::before { top: -8px; left: -5px; }
+  .frame::after { bottom: -10px; right: -5px; }
+  .sheet { position: fixed; right: 20px; bottom: 14px; z-index: 5;
+    font-size: 9px; letter-spacing: .2em; color: #6fa3c8; }
+</style>
+<div class="frame"></div>
+<div id="hud">
+  <div class="hd"><h1>Roster Iso</h1><span class="rev">SHEET 02</span></div>
+  <div class="bd">
+    <div class="keys">
+      <b>DRAG</b> ORBIT · <b>WHEEL</b> ZOOM · <b>SHIFT-DRAG</b> PAN<br>
+      <b>CLICK / 1-4</b> FOCUS · <b>0</b> ALL · <b>B</b> BOUNDS
+    </div>
+    <div id="list"></div>
+    <select id="pose"></select>
+  </div>
+</div>
+<div class="sheet">SCALE 1:1 · UNITS u · ALL DIMS ARE BBOX</div>
+<script type="module">
+import * as THREE from 'three';
+import { initIso, ROSTER, POSES } from '../shared/core.js';
+
+const LN = 0xbfe0f5;
+function dimV(T, x, h, z = 0) {           // vertical height dimension line
+  const g = new T.Group(), mat = new T.LineBasicMaterial({ color: LN });
+  const seg = (a, b) => new T.Line(new T.BufferGeometry().setFromPoints(
+    [new T.Vector3(...a), new T.Vector3(...b)]), mat);
+  g.add(seg([x, 0, z], [x, h, z]));
+  g.add(seg([x - .05, 0, z], [x + .05, 0, z]));          // ticks
+  g.add(seg([x - .05, h, z], [x + .05, h, z]));
+  for (const [y, s] of [[0, 1], [h, -1]]) {              // arrowheads
+    const c = new T.Mesh(new T.ConeGeometry(.016, .05, 8),
+      new T.MeshBasicMaterial({ color: LN }));
+    c.position.set(x, y + s * .025, z); if (s < 0) c.rotation.x = Math.PI;
+    g.add(c);
+  }
+  return g;
+}
+function dimH(T, x, w, z = .62) {         // horizontal width dimension on floor
+  const g = new T.Group(), mat = new T.LineBasicMaterial({ color: 0x6fa3c8 });
+  const seg = (a, b) => new T.Line(new T.BufferGeometry().setFromPoints(
+    [new T.Vector3(...a), new T.Vector3(...b)]), mat);
+  const hw = w / 2;
+  g.add(seg([x - hw, .004, z], [x + hw, .004, z]));
+  g.add(seg([x - hw, .004, z - .04], [x - hw, .004, z + .04]));
+  g.add(seg([x + hw, .004, z - .04], [x + hw, .004, z + .04]));
+  return g;
+}
+
+const iso = initIso({
+  bg: 0x16344e, floor: 0x1a3a58,
+  fog: { color: 0x16344e, near: 10, far: 30 },
+  cam: { theta: .28, phi: 1.22, tgt: [0, .7, 0] },
+  tagLift: .2,
+  tagFmt: (i, m) => [`FIG. 0${i + 1} — ${m.r.label}`,
+    `H ${m.h.toFixed(3)} · W ${m.w.toFixed(3)}`],
+  grid: (() => {
+    const g = new THREE.Group();
+    const fine = new THREE.GridHelper(40, 160, 0x2c557e, 0x2c557e);
+    fine.position.y = .0012;
+    const major = new THREE.GridHelper(40, 32, 0x5794c4, 0x5794c4);
+    major.position.y = .0015;
+    g.add(fine, major);
+    return g;
+  })(),
+  lights(scene, T) {
+    scene.add(new T.HemisphereLight(0xd8ecff, 0x24384e, 1.9));
+    const k = new T.DirectionalLight(0xeaf4ff, .8);
+    k.position.set(2, 4, 3); scene.add(k);
+  },
+  dress(scene, x, i, m, T) {
+    scene.add(dimV(T, x - .62, m.top));
+    scene.add(dimH(T, x, m.w));
+    // center cross on the floor
+    const mat = new T.LineBasicMaterial({ color: 0x3d6890 });
+    const mk = (a, b) => new T.Line(new T.BufferGeometry().setFromPoints(
+      [new T.Vector3(...a), new T.Vector3(...b)]), mat);
+    scene.add(mk([x - .08, .003, 0], [x + .08, .003, 0]));
+    scene.add(mk([x, .003, -.08], [x, .003, .08]));
+  },
+});
+
+const list = document.getElementById('list');
+ROSTER.forEach((r, i) => {
+  const b = document.createElement('button');
+  b.textContent = `FIG.0${i + 1} ${r.label}`;
+  b.onclick = () => iso.focus(i);
+  list.appendChild(b);
+});
+const all = document.createElement('button');
+all.textContent = 'FIG.00 SHEET VIEW';
+all.onclick = () => iso.fitAll();
+list.appendChild(all);
+
+const sel = document.getElementById('pose');
+for (const p of POSES) {
+  const o = document.createElement('option'); o.value = o.textContent = p;
+  sel.appendChild(o);
+}
+sel.onchange = () => iso.setPose(sel.value);
+</script>

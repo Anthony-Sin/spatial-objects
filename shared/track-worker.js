@@ -29,6 +29,9 @@ self.onmessage = async (e) => {
   const m = e.data || {};
   if (m.type === 'init') {
     kind = m.kind;
+    // re-init must not leak the previous graph or carry a half-spent failN
+    try { landmarker?.close?.(); } catch {}
+    landmarker = null; lastTs = -1; failN = 0;
     try {
       const { FilesetResolver, HandLandmarker, FaceLandmarker, FaceDetector } =
         await import(`${m.vendorUrl}/vision_bundle.mjs`);

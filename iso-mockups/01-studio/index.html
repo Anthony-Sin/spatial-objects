@@ -1,0 +1,114 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>01 · studio sweep — roster isolation</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{ "imports": { "three": "../../vendor/three/three.module.js" } }
+</script>
+<style>
+  body { margin: 0; background: #f2f1ee; overflow: hidden;
+    font-family: "Avenir Next","Helvetica Neue",system-ui,sans-serif; }
+  #hud { position: fixed; top: 20px; left: 20px; z-index: 5;
+    background: rgba(255,255,255,.82); backdrop-filter: blur(8px);
+    border: 1px solid rgba(30,28,25,.12); border-radius: 4px;
+    padding: 14px 16px; font-size: 11px; color: #3a3733;
+    user-select: none; width: 200px;
+    box-shadow: 0 8px 30px rgba(40,35,30,.08); }
+  #hud h1 { font-size: 10px; margin: 0 0 3px; letter-spacing: .22em;
+    text-transform: uppercase; font-weight: 600; }
+  #hud .sub { font-size: 9.5px; color: #a09a90; letter-spacing: .12em;
+    margin-bottom: 10px; }
+  #hud .keys { color: #8d877d; font-size: 9.5px; line-height: 1.6;
+    margin-bottom: 10px; }
+  #hud .keys b { color: #3a3733; font-weight: 600; }
+  #hud button { display: block; width: 100%; text-align: left; margin: 2px 0;
+    padding: 6px 10px; border: 1px solid rgba(30,28,25,.14); border-radius: 3px;
+    background: transparent; font: inherit; font-size: 10.5px;
+    letter-spacing: .08em; cursor: pointer; color: #3a3733;
+    transition: background .15s; }
+  #hud button:hover { background: rgba(30,28,25,.05); }
+  #hud select { width: 100%; margin-top: 8px; font: inherit; font-size: 10.5px;
+    padding: 5px; border: 1px solid rgba(30,28,25,.14); border-radius: 3px;
+    background: transparent; color: #3a3733; }
+  #hud label.t { display: flex; gap: 7px; align-items: center;
+    font-size: 9.5px; letter-spacing: .1em; margin-top: 8px; color: #8d877d; }
+  .tag { position: fixed; z-index: 4; transform: translate(-50%, -100%);
+    pointer-events: none; text-align: center; color: #3a3733; }
+  .tag .n { font-weight: 600; font-size: 10px; letter-spacing: .3em;
+    text-transform: uppercase; }
+  .tag .s { font-size: 9px; color: #a09a90; letter-spacing: .1em;
+    margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .num { position: fixed; left: 20px; bottom: 16px; z-index: 5;
+    font-size: 9px; letter-spacing: .28em; color: #b5afa5;
+    text-transform: uppercase; }
+</style>
+<div id="hud">
+  <h1>Studio Sweep</h1>
+  <div class="sub">roster isolation · 01</div>
+  <div class="keys">
+    <b>drag</b> orbit · <b>wheel</b> zoom · <b>shift-drag</b> pan<br>
+    <b>click / 1–4</b> focus · <b>0</b> all · <b>b</b> bounds · <b>dbl-click</b> reset
+  </div>
+  <div id="list"></div>
+  <select id="pose"></select>
+</div>
+<div class="num">cyclorama · 1.3u reference bars · soft key 45°</div>
+<script type="module">
+import { initIso, ROSTER, POSES } from '../shared/core.js';
+
+const iso = initIso({
+  bg: 0xf2f1ee, floor: 0xf7f6f3, shadows: true,
+  fog: { color: 0xf2f1ee, near: 9, far: 26 },   // melt the floor edge away
+  grid: null,
+  cam: { theta: .3, phi: 1.22, tgt: [0, .72, 0] },
+  tagLift: .18,
+  tagFmt: (i, m) => [`${m.r.label}`,
+    `h ${m.h.toFixed(3)}u · w ${m.w.toFixed(3)}u`],
+  lights(scene, T) {
+    scene.add(new T.HemisphereLight(0xffffff, 0xd9d4cc, .85));
+    const k = new T.DirectionalLight(0xfff6e8, 2.1);
+    k.position.set(3.5, 5.5, 3.5);
+    k.castShadow = true;
+    k.shadow.mapSize.set(2048, 2048);
+    k.shadow.camera.left = k.shadow.camera.bottom = -5;
+    k.shadow.camera.right = k.shadow.camera.top = 5;
+    k.shadow.camera.far = 20;
+    k.shadow.radius = 7; k.shadow.bias = -.0006;
+    scene.add(k);
+    const fill = new T.DirectionalLight(0xdce8f5, .55);
+    fill.position.set(-4, 2.5, 1.5); scene.add(fill);
+  },
+  dress(scene, x, i, m, T) {
+    // slate 1.3u height bar + cap, quiet gray
+    const mat = new T.MeshBasicMaterial({ color: 0xb0aba2 });
+    const bar = new T.Mesh(new T.BoxGeometry(.008, 1.3, .008), mat);
+    bar.position.set(x - .58, .65, 0); scene.add(bar);
+    const cap = new T.Mesh(new T.BoxGeometry(.07, .008, .008), mat);
+    cap.position.set(x - .58, 1.3, 0); scene.add(cap);
+    // faint contact ring so feet read on the seamless floor
+    const ring = new T.Mesh(new T.RingGeometry(.52, .535, 48),
+      new T.MeshBasicMaterial({ color: 0xd8d4cc }));
+    ring.rotation.x = -Math.PI / 2; ring.position.set(x, .002, 0);
+    scene.add(ring);
+  },
+});
+
+const list = document.getElementById('list');
+ROSTER.forEach((r, i) => {
+  const b = document.createElement('button');
+  b.textContent = `${String(i + 1).padStart(2, '0')} — ${r.label}`;
+  b.onclick = () => iso.focus(i);
+  list.appendChild(b);
+});
+const all = document.createElement('button');
+all.textContent = '00 — ALL';
+all.onclick = () => iso.fitAll();
+list.appendChild(all);
+
+const sel = document.getElementById('pose');
+for (const p of POSES) {
+  const o = document.createElement('option'); o.value = o.textContent = p;
+  sel.appendChild(o);
+}
+sel.onchange = () => iso.setPose(sel.value);
+</script>

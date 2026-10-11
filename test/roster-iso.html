@@ -1,0 +1,235 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>roster isolation — size check</title>
+<script type="importmap">
+{ "imports": { "three": "../vendor/three/three.module.js" } }
+</script>
+<style>
+  body { margin: 0; background: #e8e6e1; overflow: hidden;
+    font-family: "Avenir Next","Trebuchet MS",system-ui,sans-serif; }
+  #hud { position: fixed; top: 12px; left: 12px; z-index: 5;
+    background: rgba(255,255,255,.92); border: 2px solid #2b2118;
+    border-radius: 12px; padding: 10px 14px; font-size: 12px;
+    color: #2b2118; user-select: none; max-width: 230px; }
+  #hud h1 { font-size: 13px; margin: 0 0 6px; letter-spacing: .06em;
+    text-transform: uppercase; }
+  #hud .keys { color: rgba(43,33,24,.6); font-size: 10.5px;
+    line-height: 1.55; margin-bottom: 8px; }
+  #hud .keys b { color: #2b2118; }
+  #hud button { display: block; width: 100%; text-align: left; margin: 3px 0;
+    padding: 5px 9px; border: 1.5px solid #2b2118; border-radius: 8px;
+    background: #fff; font: inherit; font-size: 11.5px; cursor: pointer; }
+  #hud button:hover { background: #ffe9b8; }
+  #hud button.on { background: #ffc53d; }
+  #hud select { width: 100%; margin-top: 6px; font: inherit; font-size: 11.5px;
+    padding: 4px; border: 1.5px solid #2b2118; border-radius: 8px;
+    background: #fff; }
+  #hud label.t { display: flex; gap: 6px; align-items: center;
+    font-size: 11px; margin-top: 6px; }
+  .tag { position: fixed; z-index: 4; transform: translate(-50%, -100%);
+    pointer-events: none; text-align: center; color: #2b2118;
+    text-shadow: 0 1px 0 #fff, 0 -1px 0 #fff, 1px 0 0 #fff, -1px 0 0 #fff; }
+  .tag .n { font-weight: 800; font-size: 14px; letter-spacing: .08em; }
+  .tag .s { font-size: 10.5px; opacity: .75; }
+</style>
+<div id="hud">
+  <h1>Roster isolation</h1>
+  <div class="keys">
+    <b>drag</b> orbit · <b>wheel</b> zoom · <b>shift-drag / right-drag</b> pan<br>
+    <b>click a fighter</b> or <b>1–9</b> to focus · <b>0</b> all · <b>g</b> grid
+  </div>
+  <div id="list"></div>
+  <select id="pose"></select>
+  <label class="t"><input type="checkbox" id="grid" checked> scale grid (0.25u)</label>
+  <label class="t"><input type="checkbox" id="ruler" checked> 1.3u height bar</label>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { buildBoxer, VARIANTS, VARIANT_INFO } from '../shared/boxing/protoBoxer.js';
+
+const W = innerWidth, H = innerHeight;
+const ren = new THREE.WebGLRenderer({ antialias: true });
+ren.setSize(W, H); ren.setPixelRatio(devicePixelRatio);
+document.body.appendChild(ren.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xe8e6e1);
+const cam = new THREE.PerspectiveCamera(42, W / H, .02, 80);
+scene.add(new THREE.HemisphereLight(0xfff3d8, 0x6a6258, 1.45));
+const key = new THREE.DirectionalLight(0xfff0d0, 1.5);
+key.position.set(2.5, 4, 3); scene.add(key);
+
+/* blank plane — flat, featureless, just enough to catch the feet */
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200),
+  new THREE.MeshLambertMaterial({ color: 0xdcd9d2 }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+const grid = new THREE.GridHelper(40, 160, 0xbfbab0, 0xcfccc4);
+grid.position.y = .001; scene.add(grid);
+
+/* the roster: every proto variant + the player avatar (playerLook build) */
+const ROSTER = [
+  ...VARIANTS.map(v => ({ id: v, label: VARIANT_INFO[v]?.label || v,
+    opts: { variant: v } })),
+  { id: 'you', label: 'YOU (player)', opts: { variant: 'bubble', playerLook: true,
+    palette: { skin: 0xeebd91, skinShade: 0xce9673, skinLight: 0xf5cba3,
+      shorts: 0x354d7a, trim: 0xffe9b8, leaf: 0xffc53d,
+      glove: 0xff6b57, gloveDeep: 0xb43f39, gloveShine: 0xffa18c } } },
+];
+const GAP = 1.6, X0 = -(ROSTER.length - 1) * GAP / 2;
+
+const tags = [], chars = [];
+const box = new THREE.Box3();
+for (let i = 0; i < ROSTER.length; i++) {
+  const r = ROSTER[i], x = X0 + i * GAP;
+  const b = buildBoxer(THREE, r.opts);
+  b.group.position.set(x, 0, 0);
+  b.snap('idle', 0);
+  scene.add(b.group);
+  /* 1.3u declared-height bar behind each fighter — instant size tell */
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(.012, b.height, .012),
+    new THREE.MeshBasicMaterial({ color: 0xff6b57 }));
+  bar.position.set(x - .62, b.height / 2, 0);
+  bar.userData.ruler = true; scene.add(bar);
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(.09, .012, .012),
+    new THREE.MeshBasicMaterial({ color: 0xff6b57 }));
+  cap.position.set(x - .62, b.height, 0); cap.userData.ruler = true; scene.add(cap);
+
+  b.group.updateMatrixWorld(true);
+  box.setFromObject(b.group);
+  const hReal = box.max.y - box.min.y;
+  const tag = document.createElement('div');
+  tag.className = 'tag';
+  tag.innerHTML = `<div class="n">${i + 1} · ${r.label}</div>
+    <div class="s">bbox ${hReal.toFixed(3)}u · top ${box.max.y.toFixed(3)}</div>`;
+  document.body.appendChild(tag);
+  tags.push({ el: tag, obj: b.group, lift: box.max.y + .14 });
+  chars.push(b);
+}
+
+/* ---- camera: orbit / zoom / pan ---- */
+const ctl = { theta: .35, phi: 1.25, rad: 4.2, tgt: new THREE.Vector3(0, .7, 0) };
+const home = { theta: .35, phi: 1.25, rad: Math.max(3.6, ROSTER.length * GAP * .8),
+  tgt: new THREE.Vector3(0, .75, 0) };
+Object.assign(ctl, home, { tgt: home.tgt.clone() });
+function applyCam() {
+  ctl.phi = Math.max(.06, Math.min(1.54, ctl.phi));
+  ctl.rad = Math.max(.25, Math.min(30, ctl.rad));
+  const sp = Math.sin(ctl.phi);
+  cam.position.set(
+    ctl.tgt.x + ctl.rad * sp * Math.sin(ctl.theta),
+    ctl.tgt.y + ctl.rad * Math.cos(ctl.phi),
+    ctl.tgt.z + ctl.rad * sp * Math.cos(ctl.theta));
+  cam.lookAt(ctl.tgt);
+}
+const cv = ren.domElement;
+let drag = null, moved = 0;
+cv.addEventListener('pointerdown', e => {
+  moved = 0;
+  drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey };
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  moved += Math.abs(dx) + Math.abs(dy);
+  drag.x = e.clientX; drag.y = e.clientY;
+  if (drag.pan) {
+    const k = ctl.rad * .0016;
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
+    ctl.tgt.addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
+  } else { ctl.theta -= dx * .0055; ctl.phi -= dy * .0055; }
+  applyCam();
+});
+addEventListener('pointerup', () => drag = null);
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  ctl.rad *= Math.pow(1.0015, e.deltaY);
+  applyCam();
+}, { passive: false });
+cv.addEventListener('contextmenu', e => e.preventDefault());
+cv.addEventListener('dblclick', () => Object.assign(ctl, home, { tgt: home.tgt.clone() }));
+
+/* click a fighter to focus it */
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
+cv.addEventListener('click', e => {
+  if (moved > 6) return;
+  ptr.set(e.clientX / W * 2 - 1, -(e.clientY / H) * 2 + 1);
+  ray.setFromCamera(ptr, cam);
+  for (let i = 0; i < chars.length; i++)
+    if (ray.intersectObject(chars[i].group, true).length) return focus(i);
+});
+function focus(i) {
+  const b = chars[i];
+  box.setFromObject(b.group);
+  const c = box.getCenter(new THREE.Vector3());
+  ctl.tgt.copy(c);
+  ctl.rad = Math.max(1.1, (box.max.y - box.min.y) * 1.9);
+  mark(i); applyCam();
+}
+function mark(i) {
+  document.querySelectorAll('#list button').forEach((b, j) =>
+    b.classList.toggle('on', j === i));
+}
+
+/* hud buttons + keys */
+const list = document.getElementById('list');
+ROSTER.forEach((r, i) => {
+  const b = document.createElement('button');
+  b.textContent = `${i + 1} — ${r.label}`;
+  b.onclick = () => focus(i);
+  list.appendChild(b);
+});
+const all = document.createElement('button');
+all.textContent = '0 — everyone';
+all.onclick = () => { Object.assign(ctl, home, { tgt: home.tgt.clone() }); mark(-1); applyCam(); };
+list.appendChild(all);
+addEventListener('keydown', e => {
+  if (e.key === 'g') document.getElementById('grid').click();
+  else if (e.key === '0') all.onclick();
+  else if (e.key >= '1' && e.key <= String(ROSTER.length)) focus(+e.key - 1);
+});
+document.getElementById('grid').onchange = e => grid.visible = e.target.checked;
+document.getElementById('ruler').onchange = e =>
+  scene.traverse(o => { if (o.userData.ruler) o.visible = e.target.checked; });
+
+/* pose picker — sizes change per pose, so check them all */
+const POSES = ['idle', 'windup', 'jab', 'cross', 'hook', 'upper', 'block',
+  'hurt', 'down', 'celebrate', 'stunned', 'whiff'];
+const sel = document.getElementById('pose');
+for (const p of POSES) {
+  const o = document.createElement('option'); o.value = o.textContent = p;
+  sel.appendChild(o);
+}
+sel.onchange = () => { for (const b of chars) b.pose(sel.value, 0); };
+
+/* measured heights → console, for the record */
+for (let i = 0; i < chars.length; i++) {
+  box.setFromObject(chars[i].group);
+  console.log(`[roster] ${ROSTER[i].label}: height ${(box.max.y - box.min.y).toFixed(3)}u, ` +
+    `top ${box.max.y.toFixed(3)}, width ${(box.max.x - box.min.x).toFixed(3)}`);
+}
+
+/* ---- loop: breathe, project the name tags ---- */
+const v = new THREE.Vector3();
+let last = performance.now();
+(function loop() {
+  requestAnimationFrame(loop);
+  const now = performance.now(), dt = Math.min(.1, (now - last) / 1000); last = now;
+  for (const b of chars) b.tick(dt, {});
+  for (const t of tags) {
+    v.setFromMatrixPosition(t.obj.matrixWorld); v.y = t.lift;
+    v.project(cam);
+    const vis = v.z > -1 && v.z < 1;
+    t.el.style.display = vis ? '' : 'none';
+    if (vis) {
+      t.el.style.left = (v.x + 1) * W * .5 + 'px';
+      t.el.style.top = (1 - v.y) * H * .5 + 'px';
+    }
+  }
+  ren.render(scene, cam);
+})();
+applyCam();
+window.__chars = chars; window.__cam = cam; window.__ctl = ctl;
+window.__apply = applyCam; window.__focus = focus;
+</script>

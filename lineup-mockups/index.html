@@ -38,8 +38,8 @@
   .card:nth-child(5) .num{background:var(--berry)}
   .shot { position:relative; aspect-ratio:16/10; border:3px solid var(--ink); border-radius:14px;
     overflow:hidden; background:#111; margin-bottom:15px; }
-  .shot iframe { position:absolute; top:0; left:0; width:1280px; height:800px; border:0;
-    transform:scale(.335); transform-origin:0 0; pointer-events:none; background:#FFF8EC; }
+  .shot img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    object-position:top center; background:#FFF8EC; }
   .shot .open { position:absolute; inset:0; display:grid; place-items:center;
     background:rgba(43,33,24,0); transition:background .15s; }
   .shot .open span { opacity:0; font-family:'Fredoka'; font-weight:700; font-size:18px;
@@ -55,6 +55,15 @@
   .desc { font-size:14.5px; line-height:1.45; color:#5c4d3a; }
   .go { margin-top:12px; display:inline-block; font-family:'Fredoka'; font-weight:600;
     font-size:14px; color:var(--coral); }
+  .wavelbl { display:flex; align-items:center; gap:16px; margin:56px 0 30px; }
+  .wavelbl::before, .wavelbl::after { content:''; flex:1; height:3px;
+    background:var(--ink); border-radius:2px; opacity:.55; }
+  .wavelbl span { font-family:'Fredoka'; font-weight:700; font-size:19px;
+    letter-spacing:.14em; text-transform:uppercase; background:var(--ink);
+    color:var(--cream); padding:7px 22px; border-radius:999px;
+    box-shadow:4px 4px 0 rgba(43,33,24,.3); }
+  .wavelbl em { font-family:'Patrick Hand'; font-size:16px; color:#8a7457;
+    font-style:normal; letter-spacing:.04em; }
   footer { text-align:center; margin-top:52px; font-family:'Patrick Hand'; font-size:17px; color:#8a7457; }
   footer code { font-family:ui-monospace,monospace; font-size:14px; background:#f3e9d4; padding:1px 7px; border-radius:6px; }
 </style>
@@ -64,12 +73,12 @@
   <header>
     <span class="badge">rival-lineup bake-off · 5 backdrops</span>
     <h1>Pick the new <span class="amp">page background</span></h1>
-    <p class="sub">Each card is the <b>real lineup.html</b> with only the backdrop restyled — click it to open full size.</p>
+    <p class="sub">Each preview is the <b>real lineup.html</b> with only the backdrop restyled — click a card to open it live.</p>
   </header>
   <div class="grid">
     <a class="card" href="01-fight-poster/" target="_blank">
       <span class="num">1</span>
-      <div class="shot"><iframe src="01-fight-poster/index.html" loading="lazy" tabindex="-1" title="Fight poster backdrop"></iframe>
+      <div class="shot"><img src="01-fight-poster/shot.png" alt="Fight poster backdrop">
         <span class="open"><span>Open full size →</span></span></div>
       <div class="vibe">vintage · fight-night bill</div>
       <div class="name">FIGHT POSTER</div>
@@ -79,7 +88,7 @@
     </a>
     <a class="card" href="02-ringside/" target="_blank">
       <span class="num">2</span>
-      <div class="shot"><iframe src="02-ringside/index.html" loading="lazy" tabindex="-1" title="Ringside backdrop"></iframe>
+      <div class="shot"><img src="02-ringside/shot.png" alt="Ringside backdrop">
         <span class="open"><span>Open full size →</span></span></div>
       <div class="vibe">arena · front row</div>
       <div class="name">RINGSIDE</div>
@@ -89,7 +98,7 @@
     </a>
     <a class="card" href="03-old-gym/" target="_blank">
       <span class="num">3</span>
-      <div class="shot"><iframe src="03-old-gym/index.html" loading="lazy" tabindex="-1" title="Old gym backdrop"></iframe>
+      <div class="shot"><img src="03-old-gym/shot.png" alt="Old gym backdrop">
         <span class="open"><span>Open full size →</span></span></div>
       <div class="vibe">dusty · boxing gym</div>
       <div class="name">OLD GYM</div>
@@ -99,7 +108,7 @@
     </a>
     <a class="card" href="04-corkboard/" target="_blank">
       <span class="num">4</span>
-      <div class="shot"><iframe src="04-corkboard/index.html" loading="lazy" tabindex="-1" title="Corkboard backdrop"></iframe>
+      <div class="shot"><img src="04-corkboard/shot.png" alt="Corkboard backdrop">
         <span class="open"><span>Open full size →</span></span></div>
       <div class="vibe">craft · notice board</div>
       <div class="name">CORKBOARD</div>
@@ -109,12 +118,130 @@
     </a>
     <a class="card" href="05-arcade-vs/" target="_blank">
       <span class="num">5</span>
-      <div class="shot"><iframe src="05-arcade-vs/index.html" loading="lazy" tabindex="-1" title="Arcade VS backdrop"></iframe>
+      <div class="shot"><img src="05-arcade-vs/shot.png" alt="Arcade VS backdrop">
         <span class="open"><span>Open full size →</span></span></div>
       <div class="vibe">80s · character select</div>
       <div class="name">ARCADE VS</div>
       <div class="tag">CHOOSE YOUR CHALLENGER</div>
       <p class="desc">Cabinet select screen — scanlines, a coral-to-berry neon horizon, light bars and a sprinkle of pixel stars.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+  </div>
+
+  <div class="wavelbl"><span>wave 2</span><em>golden-age fight environments — layered, lit &amp; moving</em></div>
+  <div class="grid">
+    <a class="card" href="06-smoke-hall/" target="_blank">
+      <span class="num">6</span>
+      <div class="shot"><img src="06-smoke-hall/shot.png" alt="Smoke hall backdrop">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">1920s · hazy tungsten</div>
+      <div class="name">SMOKE HALL</div>
+      <div class="tag">tonight's card, chalked up on the board</div>
+      <p class="desc">Illegal-era smoker club — hanging bulbs that sway and flicker, drifting cigar haze, chalk odds board, crowd silhouettes.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="07-big-top/" target="_blank">
+      <span class="num">7</span>
+      <div class="shot"><img src="07-big-top/shot.png" alt="Big top backdrop">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">1890s · carnival dusk</div>
+      <div class="name">BIG TOP</div>
+      <div class="tag">beat the champ, win a dollar</div>
+      <p class="desc">Traveling boxing booth — converging tent stripes, twinkling festoon bulbs, fluttering pennants, sawdust ring floor.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="08-tv-arena/" target="_blank">
+      <span class="num">8</span>
+      <div class="shot"><img src="08-tv-arena/shot.png" alt="TV arena backdrop">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">1950s · broadcast night</div>
+      <div class="name">TV ARENA</div>
+      <div class="tag">live on the air — smile for the camera</div>
+      <p class="desc">Golden-age broadcast bout — one hard key light, sweeping camera boom with tally light, press row, flashbulbs popping.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="09-county-fair/" target="_blank">
+      <span class="num">9</span>
+      <div class="shot"><img src="09-county-fair/shot.png" alt="County fair backdrop">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">c.1900 · sunny fairground</div>
+      <div class="name">COUNTY FAIR</div>
+      <div class="tag">the afternoon card, under canvas</div>
+      <p class="desc">Outdoor booth at high noon — scalloped red-and-cream awning, pennant strings, hay bales, a slow Ferris wheel on the horizon.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="10-dock-fight/" target="_blank">
+      <span class="num">10</span>
+      <div class="shot"><img src="10-dock-fight/shot.png" alt="Dock fight backdrop">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">1890s · rainy midnight</div>
+      <div class="name">DOCK FIGHT</div>
+      <div class="tag">bareknuckle rules — no questions asked</div>
+      <p class="desc">Wharf bout in the rain — warehouse brick, ship masts in the fog, two dock lamps, wet planks catching the lantern light.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+  </div>
+
+  <div class="wavelbl"><span>wave 3</span><em>inside the ring — seconds before the bell · pick a rival and they get the spotlight</em></div>
+  <div class="grid">
+    <a class="card" href="11-prime-time/" target="_blank">
+      <span class="num">11</span>
+      <div class="shot"><img src="11-prime-time/shot.png" alt="Prime Time ring backdrop">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">arena · golden hour</div>
+      <div class="name">PRIME TIME</div>
+      <div class="tag">main event — the whole building's humming</div>
+      <p class="desc">Packed-bowl arena — three warm spots converge, crowd heads bob behind the cards, sweat mist in the beams, coral/cream/sky ropes.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="12-blue-room/" target="_blank">
+      <span class="num">12</span>
+      <div class="shot"><img src="12-blue-room/shot.png" alt="Blue Room ring backdrop">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">underground · cold teal</div>
+      <div class="name">BLUE ROOM</div>
+      <div class="tag">no cameras down here — just the ring</div>
+      <p class="desc">Basement club — one hard blue cone, a humming neon sign, two sheets of smoke, wet slate canvas, cyan-tinted selection spot.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="13-title-night/" target="_blank">
+      <span class="num">13</span>
+      <div class="shot"><img src="13-title-night/shot.png" alt="Title Night ring backdrop">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">championship · gold</div>
+      <div class="name">TITLE NIGHT</div>
+      <div class="tag">and the new… champion of the world</div>
+      <p class="desc">Belt on the line — four crossing beams, hanging title banners, confetti already falling, phone lights and flashbulbs in the crowd.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="14-dusk-yard/" target="_blank">
+      <span class="num">14</span>
+      <div class="shot"><img src="14-dusk-yard/shot.png" alt="Dusk Yard ring backdrop">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">rooftop · sundown</div>
+      <div class="name">DUSK YARD</div>
+      <div class="tag">last fight of the day — winner buys dinner</div>
+      <p class="desc">Outdoor rooftop bout — purple-orange sky behind a slab skyline, a sagging string of bare bulbs, embers drifting up, weathered canvas.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="15-prison-yard/" target="_blank">
+      <span class="num">15</span>
+      <div class="shot"><img src="15-prison-yard/shot.png" alt="Prison Yard ring backdrop">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">yard · floodlight</div>
+      <div class="name">PRISON YARD</div>
+      <div class="tag">the tower's watching — fight anyway</div>
+      <p class="desc">Coldest of the set — angled white floodlight, chain-link over the crowd, guard-tower silhouette, long hard shadows on the canvas.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="16-bandage-board/" target="_blank">
+      <span class="num">16</span>
+      <div class="shot"><img src="16-bandage-board/shot.png" alt="Bandage board backdrop">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">medical tent · paper-bright</div>
+      <div class="name">BANDAGES &amp; BLOOD</div>
+      <div class="tag">everyone's typed, taped, and cleared to fight</div>
+      <p class="desc">Corkboard's rougher cousin — gauze weave, blood-type rubber stamps (A−/O+/AB+), tape corners, castoff speckle, an EKG trace still ticking.</p>
       <span class="go">Open mockup →</span>
     </a>
   </div>

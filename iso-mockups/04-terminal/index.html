@@ -1,0 +1,122 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>04 · terminal — roster isolation</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{ "imports": { "three": "../../vendor/three/three.module.js" } }
+</script>
+<style>
+  body { margin: 0; background: #050a05; overflow: hidden;
+    font-family: "IBM Plex Mono","SF Mono",ui-monospace,Menlo,monospace; }
+  /* CRT dressing */
+  #scan { position: fixed; inset: 0; z-index: 6; pointer-events: none;
+    background: repeating-linear-gradient(0deg,
+      rgba(0,0,0,.16) 0 1px, transparent 1px 3px);
+    mix-blend-mode: multiply; }
+  #vig { position: fixed; inset: 0; z-index: 6; pointer-events: none;
+    background: radial-gradient(ellipse at center,
+      transparent 55%, rgba(0,0,0,.55) 100%);
+    animation: flick 4.2s infinite steps(1); }
+  @keyframes flick { 0%,97% { opacity: 1 } 98% { opacity: .85 } 99% { opacity: .95 } }
+  #hud { position: fixed; top: 16px; left: 16px; z-index: 7;
+    background: rgba(4,12,4,.92); border: 1px solid #1f4d1f;
+    padding: 0; font-size: 11px; color: #46d465; user-select: none;
+    width: 252px; text-shadow: 0 0 6px rgba(70,212,101,.45); }
+  #hud .hd { padding: 8px 12px; border-bottom: 1px solid #1f4d1f;
+    font-size: 10px; letter-spacing: .12em; display: flex;
+    justify-content: space-between; }
+  #hud .hd .dot { color: #ff5544; }
+  #hud .bd { padding: 9px 12px; }
+  #hud .keys { color: #2e8a45; font-size: 9.5px; line-height: 1.7;
+    margin-bottom: 8px; white-space: pre; }
+  #hud .keys b { color: #46d465; }
+  #hud button { display: block; width: 100%; text-align: left; margin: 1px 0;
+    padding: 4px 8px; border: none; border-left: 2px solid #1f4d1f;
+    background: transparent; font: inherit; font-size: 10.5px;
+    letter-spacing: .05em; cursor: pointer; color: #46d465; }
+  #hud button:hover { background: rgba(70,212,101,.12); border-left-color: #46d465; }
+  #hud select { width: 100%; margin-top: 7px; font: inherit; font-size: 10.5px;
+    padding: 4px; border: 1px solid #1f4d1f; border-radius: 0;
+    background: #041004; color: #46d465; }
+  #hud label.t { display: flex; gap: 7px; align-items: center;
+    font-size: 10px; margin-top: 8px; color: #2e8a45; }
+  .tag { position: fixed; z-index: 5; transform: translate(-50%, -100%);
+    pointer-events: none; text-align: left; color: #46d465;
+    text-shadow: 0 0 7px rgba(70,212,101,.6); }
+  .tag .n { font-weight: 700; font-size: 11px; letter-spacing: .06em; }
+  .tag .s { font-size: 9px; color: #2e8a45; letter-spacing: .05em;
+    font-variant-numeric: tabular-nums; }
+  #log { position: fixed; left: 16px; bottom: 14px; z-index: 7;
+    font-size: 9.5px; color: #2e8a45; letter-spacing: .05em;
+    text-shadow: 0 0 6px rgba(70,212,101,.4); white-space: pre; }
+</style>
+<div id="scan"></div><div id="vig"></div>
+<div id="hud">
+  <div class="hd"><span>ROSTER-ISO.SYS</span><span class="dot">● REC</span></div>
+  <div class="bd">
+    <div class="keys"><b>DRAG</b> ORBIT   <b>WHEEL</b> ZOOM
+<b>S-DRAG</b> PAN    <b>1-4</b> FOCUS
+<b>0</b> ALL        <b>B</b> BOUNDS</div>
+    <div id="list"></div>
+    <select id="pose"></select>
+    <label class="t"><input type="checkbox" id="bx" checked> bbox wireframe</label>
+  </div>
+</div>
+<div id="log"></div>
+<script type="module">
+import { initIso, ROSTER, POSES } from '../shared/core.js';
+
+const iso = initIso({
+  bg: 0x050a05, floor: 0x060d06,
+  fog: { color: 0x050a05, near: 8, far: 24 },
+  boxColor: 0x46d465,
+  cam: { theta: .32, phi: 1.24, tgt: [0, .68, 0] },
+  tagLift: .22,
+  tagFmt: (i, m) => [`[${i}] ${m.r.label}`,
+    `h=${m.h.toFixed(3)} w=${m.w.toFixed(3)} top=${m.top.toFixed(3)}`],
+  lights(scene, T) {
+    // cold flat inspection light — no mood, just coverage
+    scene.add(new T.HemisphereLight(0xcfe8cf, 0x1c2a1c, 2.0));
+    const k = new T.DirectionalLight(0xe8ffe8, 1.1);
+    k.position.set(2, 4, 3); scene.add(k);
+  },
+  dress(scene, x, i, m, T) {
+    // axis cross + unit tick marks at each station
+    const mat = new T.LineBasicMaterial({ color: 0x1f4d1f });
+    const seg = (a, b) => new T.Line(new T.BufferGeometry().setFromPoints(
+      [new T.Vector3(...a), new T.Vector3(...b)]), mat);
+    scene.add(seg([x - .1, .003, 0], [x + .1, .003, 0]));
+    scene.add(seg([x, .003, -.1], [x, .003, .1]));
+    for (let u = .25; u <= 1.25; u += .25)   // green height ticks, 0.25u
+      scene.add(seg([x - .55, u, 0], [x - .51, u, 0]));
+    scene.add(seg([x - .58, 0, 0], [x - .58, m.top, 0]));
+  },
+});
+iso.toggleBoxes(true);
+
+const list = document.getElementById('list');
+ROSTER.forEach((r, i) => {
+  const b = document.createElement('button');
+  b.textContent = `> CH_${i}: ${r.label}`;
+  b.onclick = () => { iso.focus(i); log(`FOCUS → CH_${i} "${r.label}"`); };
+  list.appendChild(b);
+});
+const all = document.createElement('button');
+all.textContent = '> CH_ALL: SHEET';
+all.onclick = () => { iso.fitAll(); log('FOCUS → ALL'); };
+list.appendChild(all);
+
+const sel = document.getElementById('pose');
+for (const p of POSES) {
+  const o = document.createElement('option'); o.value = o.textContent = p;
+  sel.appendChild(o);
+}
+sel.onchange = () => { iso.setPose(sel.value); log(`POSE → ${sel.value}`); };
+document.getElementById('bx').onchange = e => iso.toggleBoxes(e.target.checked);
+
+const logEl = document.getElementById('log');
+const lines = ['BOOT OK · 4 UNITS ONLINE', 'BBOX TRACKING: LIVE'];
+function log(s) { lines.push(s); while (lines.length > 4) lines.shift();
+  logEl.textContent = lines.join('\n'); }
+logEl.textContent = lines.join('\n');
+</script>

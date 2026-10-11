@@ -724,6 +724,11 @@
     const canvas = document.getElementById('ring-canvas');
     if (!canvas) return;
 
+    // probe first — THREE's ctor logs a console error when the context
+    // request fails; a machine without WebGL should stay fully quiet
+    if (!(document.createElement('canvas').getContext('webgl2')
+      || document.createElement('canvas').getContext('webgl'))) return;
+
     const renderer = new THREE.WebGLRenderer({
       canvas,
       alpha: true,

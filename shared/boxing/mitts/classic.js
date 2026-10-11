@@ -28,6 +28,15 @@ const FIST = [[0, 1.15], [.55, .78], [.8, .5], [1.0, .32], [1.12, .18],
   [-.34, -.12], [-.38, -.36], [-.4, -.55], [-.42, -.68],
   [-.6, -.05], [-.66, -.26], [-.7, -.42], [-.72, -.52]];
 
+/* arm-anchored variant: same mitten but every digit chain is already folded
+   in — a hand-less pose has no fingers to articulate, so the chains stay
+   short knuckle bumps on the fist edge instead of splaying into stubs. */
+const ARM_FIST = [[0, 1.15], [.55, .78], [.6, .62], [.64, .48], [.68, .34],
+  [.36, -.12], [.37, -.18], [.38, -.24], [.4, -.3],
+  [0, -.2], [0, -.27], [0, -.33], [0, -.38],
+  [-.34, -.12], [-.35, -.18], [-.36, -.24], [-.36, -.3],
+  [-.6, -.05], [-.62, -.1], [-.64, -.14], [-.65, -.17]];
+
 /* module scratch — refilled every draw, never retained by the caller */
 const SCR_FIST = FIST.map(() => ({ x: 0, y: 0 }));
 const SCR_P = FIST.map(() => ({ x: 0, y: 0 }));
@@ -70,15 +79,43 @@ export function draw(ctx, pos, o = {}) {
   if (!pos) return;
   const reach = Math.max(0, Math.min(2.4, o.reach ?? 1));
   // Landmarks determine the shape, while this cap prevents a close hand from
-  // swallowing the whole opponent on small screens.
-  const size = Math.min(96, Math.max(28, pos.size * (0.55 + 0.45 * Math.min(reach, 1.8))));
+  // swallowing the whole opponent on small screens. (o.cap raises it for
+  // overlays that dress a world-space glove, e.g. the outro avatar.)
+  const size = Math.min(o.cap ?? 96, Math.max(28, pos.size * (0.55 + 0.45 * Math.min(reach, 1.8))));
   const dim = o.dim ?? 1;
   const sq = o.squash ?? 0;
 
   /* landmarks: real ones when handed in, else the fist cloud at pos.
      Everything is re-anchored on pos.x/y so manual poses still work. */
   let P;
-  if (o.lm && o.lm.length >= 21) P = o.lm;
+  if (o.arm) {
+    /* o.arm = {x,y} px anchor up the arm: the same fist mitt, rotated so its
+       wrist rides down the arm — drawn over a sleeve that runs the glove's
+       forearm back onto the stub arm so the hand can't float off it. */
+    const adx = pos.x - o.arm.x, ady = pos.y - o.arm.y;
+    const ad = Math.hypot(adx, ady) || 1, ux = adx / ad, uy = ady / ad;
+    const a = Math.atan2(uy, ux) + Math.PI / 2;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const x0 = pos.x - ux * size * 1.02, y0 = pos.y - uy * size * 1.02;
+    const x1 = pos.x - ux * size * .1, y1 = pos.y - uy * size * .1;
+    ctx.save();
+    ctx.globalAlpha = dim; ctx.lineCap = 'round';
+    ctx.save(); ctx.translate(0, 5);
+    ctx.strokeStyle = SHADOW; ctx.lineWidth = size * .5;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    ctx.restore();
+    ctx.strokeStyle = INK; ctx.lineWidth = size * .5 + 8;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    ctx.strokeStyle = RED; ctx.lineWidth = size * .5;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    ctx.restore();
+    P = SCR_FIST;
+    for (let i = 0; i < 21; i++) {
+      const u = ARM_FIST[i];
+      P[i].x = pos.x + (u[0] * ca - u[1] * sa) * size;
+      P[i].y = pos.y + (u[0] * sa + u[1] * ca) * size;
+    }
+  } else if (o.lm && o.lm.length >= 21) P = o.lm;
   else {
     P = SCR_FIST;
     for (let i = 0; i < 21; i++) { P[i].x = pos.x + FIST[i][0] * size; P[i].y = pos.y + FIST[i][1] * size; }
@@ -141,12 +178,15 @@ export function draw(ctx, pos, o = {}) {
   }
 
   // A thumb pad and short knuckle highlight give the silhouette a glove
-  // surface while leaving the landmark-driven outline intact.
+  // surface while leaving the landmark-driven outline intact. (The arm-
+  // anchored mitt skips the pad — a bare tip ellipse reads as a stalk.)
   const thumb = P[4], palm = P[1];
-  ctx.beginPath();
-  ctx.ellipse(thumb.x, thumb.y, fw * .72, fw * .52, ang, 0, Math.PI * 2);
-  ctx.fillStyle = RED_D; ctx.fill();
-  ctx.strokeStyle = INK; ctx.lineWidth = Math.max(2, fw * .13); ctx.stroke();
+  if (!o.arm) {
+    ctx.beginPath();
+    ctx.ellipse(thumb.x, thumb.y, fw * .72, fw * .52, ang, 0, Math.PI * 2);
+    ctx.fillStyle = RED_D; ctx.fill();
+    ctx.strokeStyle = INK; ctx.lineWidth = Math.max(2, fw * .13); ctx.stroke();
+  }
   ctx.beginPath();
   ctx.moveTo(palm.x - fw * .7, palm.y - fw * .5);
   ctx.quadraticCurveTo(P[9].x, P[9].y - fw * 1.15, P[13].x + fw * .35, P[13].y - fw * .35);

@@ -401,6 +401,7 @@
     try {
       const { createGame } = await gameModP;
       game = await createGame({ THREE, renderer: ren, cam, world, hands, face,
+        getHands: () => hands, getFace: () => face,   // trackers resolve async — keep game.hands/face live
         skipIntro: true,
         fightOpts: { practice, ai: !tutorialMode } });   // tutorial scripts PIP itself
       game.skipIntro();                     // straight to the fight countdown (no walk-on intro / fighting pose)
@@ -516,7 +517,10 @@
       el.end.classList.add('on');
     }
 
-    const clock = (t) => `${Math.floor(t / 60)}:${String(Math.max(0, Math.ceil(t % 60))).padStart(2, '0')}`;
+    // ceil the WHOLE remaining time first — ceil(t%60) alone hits 60 for
+    // t in (59,60) and printed "0:60" for a second at every minute boundary
+    const clock = (t) => { const s = Math.max(0, Math.ceil(t));
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
     /* HUD DOM writes are expensive — dirty-check everything: textContent only
        on change, bars via GPU-cheap scaleX (width = layout), class toggles
        behind a compare. ~15 avoided writes/frame at 60fps. */
@@ -742,11 +746,13 @@
     addEventListener('blur', () => { for (const k in moveKeys) moveKeys[k] = false; });
 
     /* ================= glove overlay =================
-       Gloves are the PLAYER'S HANDS — drawn only while a hand is actually
-       tracked. A ~0.45s holdover rides out tracking flicker (hands vanish
-       mid-punch all the time); after that the glove is gone, not parked
-       on screen. Reach grows the mitt (bigger = closer) but clamps at the
-       NPC contact plane so gloves can't punch through the world. */
+       Gloves are the PLAYER'S HANDS — always on screen, every frame. A ~0.45s
+       holdover rides out tracking flicker (hands vanish mid-punch all the
+       time); past that the mitt dims to ~60% and drifts home to a neutral
+       guard pose (bottom quarter, fists up) until tracking returns — same
+       for the mouse fallback when no button is held. Reach grows the mitt
+       (bigger = closer) but clamps at the NPC contact plane so gloves can't
+       punch through the world. */
     const hc = $('#hands'), hx = hc.getContext('2d');
     const mkGlove = (x, y) => ({ x, y, size: 60, ang: 0, dim: 0, reach: 1,
       seenT: 9, lastP: null,
@@ -756,7 +762,25 @@
       tx: x, ty: y, tsize: 60, tang: 0, tT: -9,
       vx: 0, vy: 0, vsize: 0, vang: 0, hasT: false });
     const gloves = { left: mkGlove(.3, .68), right: mkGlove(.7, .68) };
-    const HOLD = .45;                        // seconds a glove survives a dropout
+    const HOLD = .45;                        // seconds a dropout takes to settle dim
+    const LOST_DIM = .6;                     // "lost" mitts hold ~60% opacity
+    const GUARD_PT = { left: { x: .30, y: .76 }, right: { x: .70, y: .76 } };   // bottom quarter, fists up
+    const GUARD_SPAN = .052;                 // normalized wrist→mcp span at guard
+    const guardLM = { left: Array.from({ length: 21 }, () => ({ x: 0, y: 0 })),
+      right: Array.from({ length: 21 }, () => ({ x: 0, y: 0 })) };
+    // neutral-guard target for a lost/never-seen glove: SH fist cloud parked
+    // at the guard spot, px-space, plus the same centroid/span/angle scalars
+    // the tracked path measures. Rebuilt per call — canvas size can change.
+    const guardPose = (side) => {
+      const P = guardLM[side], gp = GUARD_PT[side];
+      const cx = gp.x * hc.width, cy = gp.y * hc.height, s = hc.width * GUARD_SPAN;
+      for (let i = 0; i < 21; i++) { P[i].x = cx + SH[i][0] * s; P[i].y = cy + SH[i][1] * s; }
+      let mx = 0, my = 0;
+      for (const i of MCP) { mx += P[i].x; my += P[i].y; }
+      return { lm: P, x: mx / 5, y: my / 5,
+        span: Math.max(26, Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y)),
+        ang: Math.atan2(P[9].y - P[0].y, P[9].x - P[0].x) };
+    };
     const GLOVE_SIDES = ['left', 'right'];
     const MCP = [0, 5, 9, 13, 17];
     // persistent landmark pixel buffers + mitt args — nothing allocates per frame
@@ -808,7 +832,10 @@
       const reach = game?.tracker?.reach;                 // live view — debug() allocates
       found.left = found.right = null;
       for (const hnd of (hs.hands || []))
-        if (hnd?.lm?.length >= 21 && hnd.side && found[hnd.side] == null) found[hnd.side] = hnd;
+        // NaN-safe: a malformed landmark set must never poison the glove pose —
+        // the mitt draws all 21 points, so every one must be finite
+        if (hnd?.lm?.length >= 21 && hnd.side && found[hnd.side] == null
+          && hnd.lm.every(p => Number.isFinite(p?.x) && Number.isFinite(p?.y))) found[hnd.side] = hnd;
       for (const side of GLOVE_SIDES) {
         const g = gloves[side], hnd = found[side];
         if (hnd) {
@@ -857,12 +884,33 @@
           g.dim += (1 - g.dim) * .35;
         } else {
           g.seenT += dt;
-          g.dim = Math.max(0, 1 - g.seenT / HOLD);        // fade out over the holdover
-          if (!g.dim) { g.lastP = null; g.hasT = false; continue; }   // fully faded — stop drawing, re-snap on return
-          const dk = Math.exp(-dt * 5);                   // bleed velocity on dropout
+          /* A7 — gloves never disappear: past the holdover the mitt dims to
+             ~60% and drifts home to the neutral guard pose (bottom quarter,
+             fists up) until the tracker finds the hand again — or its first
+             sight, when it simply appears there. Same idle look for the
+             mouse fallback with no button held. */
+          g.dim = Math.max(LOST_DIM, 1 - g.seenT / HOLD);
+          const gp = guardPose(side), D = dispLM[side];
+          if (!g.lastP) {                      // never tracked — appear AT guard
+            for (let i = 0; i < 21; i++) { D[i].x = gp.lm[i].x; D[i].y = gp.lm[i].y; }
+            g.tx = gp.x; g.ty = gp.y; g.tsize = gp.span; g.tang = gp.ang;
+            g.lastP = D;
+          } else {
+            const nk = 1 - Math.exp(-dt * 4.5);              // drift home, don't snap
+            for (let i = 0; i < 21; i++) {
+              D[i].x += (gp.lm[i].x - D[i].x) * nk;
+              D[i].y += (gp.lm[i].y - D[i].y) * nk;
+            }
+            g.tx += (gp.x - g.tx) * nk; g.ty += (gp.y - g.ty) * nk;
+            g.tsize += (gp.span - g.tsize) * nk;
+            g.tang += wrapAng(gp.ang - g.tang) * nk;
+          }
+          g.hasT = false;                      // next tracked result snaps fresh
+          const dk = Math.exp(-dt * 5);        // bleed velocity on dropout
           g.vx *= dk; g.vy *= dk; g.vsize *= dk; g.vang *= dk;
         }
-        if (!g.lastP) continue;                            // never seen — don't draw
+        if (!g.lastP) continue;                            // unreachable after a
+        // dropout frame — kept as a belt for a first-call guard
         // Draw the latest measured pose. Extrapolation made the glove move at
         // a different speed from the camera hand during stops and reversals.
         g.x = g.tx;
@@ -892,12 +940,14 @@
           mittOpts.side = side; mittOpts.kind = hnd?.kind || 'fist';
           mittOpts.reach = g.reach; mittOpts.squash = squash;
           mittOpts.dim = g.dim * .22; mittOpts.lm = g.lastP;
+          mittOpts.cap = 96; mittOpts.arm = null;
           mitt?.draw(hx, mittPos, mittOpts);
         }
         mittPos.x = g.x; mittPos.y = g.y; mittPos.size = g.size; mittPos.ang = g.ang;
         mittOpts.side = side; mittOpts.kind = hnd?.kind || 'fist';
         mittOpts.reach = g.reach; mittOpts.squash = squash;
         mittOpts.dim = g.dim; mittOpts.lm = g.lastP;
+        mittOpts.cap = 96; mittOpts.arm = null;
         mitt?.draw(hx, mittPos, mittOpts);
       }
       /* ---- fight-read cues ------------------------------------------------
@@ -974,7 +1024,9 @@
     // at the end of the stub arm at any camera distance.
     const entrancePoint = new THREE.Vector3();
     const entranceEdge = new THREE.Vector3();
+    const entranceArm = new THREE.Vector3();
     const entranceRight = new THREE.Vector3();
+    const armAnchor = { x: 0, y: 0 };
     const drawEntranceGloves = hs => {
       hx.clearRect(0, 0, hc.width, hc.height);
       const avatar = game?.playerAvatar;
@@ -984,44 +1036,42 @@
       entranceRight.setFromMatrixColumn(cam.matrixWorld, 0);   // camera +X in world
       const gRad = avatar.parts.gloveL.children[0]?.geometry?.boundingSphere?.radius || .2;
       for (const side of GLOVE_SIDES) {
-        const node = avatar.parts[side === 'left' ? 'gloveL' : 'gloveR'];
-        node.getWorldPosition(entrancePoint);
-        entranceEdge.copy(entrancePoint).addScaledVector(entranceRight, gRad);
-        entrancePoint.project(cam);
+        const left = side === 'left';
+        const node = avatar.parts[left ? 'gloveL' : 'gloveR'];
+        node.getWorldPosition(entrancePoint);                 // glove ball centre
+        avatar.parts[left ? 'armL' : 'armR'].getWorldPosition(entranceArm);  // shoulder
+        const wsc = Math.hypot(node.matrixWorld.elements[0],
+          node.matrixWorld.elements[1], node.matrixWorld.elements[2]) || 1;   // pose swells gloves
+        entranceEdge.copy(entrancePoint).addScaledVector(entranceRight, gRad * wsc);
+        entrancePoint.project(cam); entranceArm.project(cam);
         if (entrancePoint.z < -1 || entrancePoint.z > 1) continue;
         entranceEdge.project(cam);
         mittPos.x = (entrancePoint.x + 1) * hc.width * .5;
         mittPos.y = (1 - entrancePoint.y) * hc.height * .5;
-        mittPos.size = Math.min(96, Math.max(30, Math.hypot(
+        // the mitt swallows the whole 3D ball: palm centred on the anchor,
+        // span ≈ ball diameter (an NDC delta × width is 2× px — ÷2, then ×1.56)
+        mittPos.size = Math.max(30, Math.hypot(
           (entranceEdge.x - entrancePoint.x) * hc.width,
-          (entranceEdge.y - entrancePoint.y) * hc.height) * .55));
+          (entranceEdge.y - entrancePoint.y) * hc.height) * .78);
         mittPos.ang = 0;
         const hnd = (hs.hands || []).find(h => h?.side === side && h.lm?.length >= 21);
         mittOpts.side = side; mittOpts.kind = hnd?.kind || 'fist';
-        mittOpts.reach = 1; mittOpts.squash = 0; mittOpts.dim = 1;
+        mittOpts.reach = 1; mittOpts.squash = 0; mittOpts.dim = 1; mittOpts.cap = 240;
+        const P = gloveLM[side];
         if (hnd) {
-          const P = gloveLM[side];
           for (let i = 0; i < 21; i++) {
             P[i].x = hnd.lm[i].x * hc.width;
             P[i].y = hnd.lm[i].y * hc.height;
           }
-          mittOpts.lm = P;
-          // seat the mitt's WRIST on the anchor — the cuff lands exactly on
-          // the stub arm's tip instead of the arm poking into the palm's core.
-          // Mirrors the renderer's own rescale: k = size*1.35 / lm0→lm9 span
-          let cx = 0, cy = 0;
-          for (const i of [0, 1, 5, 9, 13, 17]) { cx += P[i].x; cy += P[i].y; }
-          cx /= 6; cy /= 6;
-          const k = mittPos.size * 1.35
-            / (Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y) || 1);
-          mittPos.x += (cx - P[0].x) * k;
-          mittPos.y += (cy - P[0].y) * k;
+          mittOpts.lm = P; mittOpts.arm = null;
         } else {
+          // no live hand — the arm-anchored glove: sleeve runs back onto the
+          // stub arm so the mitt can't float off the wrist with a gap
           mittOpts.lm = null;
-          // same wrist-seat for the fallback fist cloud (unit space:
-          // wrist (0,1.15), palm centroid ≈ (.12,.29))
-          mittPos.x += .12 * mittPos.size;
-          mittPos.y += (.29 - 1.15) * mittPos.size;
+          const dx = mittPos.x - (entranceArm.x + 1) * hc.width * .5;
+          const dy = mittPos.y - (1 - entranceArm.y) * hc.height * .5;
+          mittOpts.arm = Math.hypot(dx, dy) > 6 ? armAnchor : null;
+          armAnchor.x = mittPos.x - dx; armAnchor.y = mittPos.y - dy;
         }
         mitt.draw(hx, mittPos, mittOpts);
       }
@@ -1053,6 +1103,7 @@
       ren.setSize(innerWidth, innerHeight);
       cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix();
       hc.width = Math.round(innerWidth * OVSC); hc.height = Math.round(innerHeight * OVSC);
+      ncW = ncH = 0;   // peep canvas is CSS-sized (media query) — re-measure next frame
     }
     addEventListener('resize', resize); resize();
 

@@ -52,6 +52,11 @@ export async function createGame(opts = {}) {
     if (!face) try { face = await (await import('../face.js')).Face.create(opts.video, vend); } catch {}
     if (!hands) try { hands = (await import('../hands.js')).default.create(opts.video, vend); } catch {}
   }
+  // pages that boot trackers async can hand in thunks — they always read
+  // the latest instance, so late-resolving creates aren't lost to a stale
+  // null captured here at createGame() time
+  const readHands = opts.getHands || (() => hands);
+  const readFace = opts.getFace || (() => face);
 
   /* camera sits low — chin/chest height — so the fighter's face rides the
      upper frame and its gloves own the center. NPC punches thrown at glove
@@ -374,6 +379,6 @@ export async function createGame(opts = {}) {
     skipIntro() { if (fight.state.phase === 'intro') { tNow = FIGHT_TUNING.introT; skipRequested = true; } },
     calibrate() { tracker.calibrate?.(); if (lastFaceSize) neutralFaceSize = lastFaceSize; depthStep = 0; },
     reset() { sim.reset(); fight.reset(); neutralFaceSize = lastFaceSize || 0; depthStep = 0; tNow = 0; skipRequested = false; hitStopT = 0; slowT = 0; holdT = 0; swingRes = null; outroT = 0; lookX = null; introStartedAt = typeof performance !== 'undefined' ? performance.now() : 0; },
-    get hands() { return hands; }, get face() { return face; },
+    get hands() { return readHands(); }, get face() { return readFace(); },
   };
 }

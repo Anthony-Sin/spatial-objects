@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>roster isolation mockups — pick a look</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Patrick+Hand&family=Nunito:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#FFF8EC; --cream:#FFFDF6; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--paper); color:var(--ink); min-height:100vh; padding:44px 22px 80px;
+    font-family:'Nunito',system-ui,sans-serif;
+    background-image:radial-gradient(#F3E4C8 1.4px, transparent 1.4px); background-size:26px 26px; }
+  .wrap { max-width:1280px; margin:0 auto; }
+  header { text-align:center; margin-bottom:44px; }
+  .badge { display:inline-block; background:var(--sun); border:3px solid var(--ink); border-radius:999px;
+    padding:6px 18px; font-family:'Patrick Hand',cursive; font-size:18px; transform:rotate(-2deg);
+    box-shadow:3px 3px 0 var(--ink); margin-bottom:20px; }
+  h1 { font-family:'Fredoka',sans-serif; font-weight:700; font-size:clamp(34px,5.5vw,56px); line-height:1.05; }
+  h1 .amp { color:var(--coral); }
+  .sub { font-family:'Patrick Hand',cursive; font-size:21px; margin-top:12px; color:#6d5c49; }
+  .sub b { color:var(--coral); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(400px,1fr)); gap:30px; }
+  @media (max-width:480px){ .grid{grid-template-columns:1fr} }
+  .card { position:relative; display:block; text-decoration:none; color:var(--ink);
+    background:var(--cream); border:3px solid var(--ink); border-radius:22px; padding:18px;
+    box-shadow:6px 6px 0 var(--ink); transition:transform .18s cubic-bezier(.34,1.56,.64,1), box-shadow .18s; }
+  .card:hover { transform:translate(-2px,-4px) rotate(-.6deg); box-shadow:9px 10px 0 var(--ink); }
+  .num { position:absolute; top:-15px; left:-11px; width:40px; height:40px; border-radius:50%;
+    border:3px solid var(--ink); display:grid; place-items:center; z-index:3;
+    font-family:'Fredoka'; font-weight:700; font-size:18px; background:var(--coral); color:var(--cream); }
+  .card:nth-child(2) .num{background:var(--sun);color:var(--ink)}
+  .card:nth-child(3) .num{background:var(--leaf)}
+  .card:nth-child(4) .num{background:var(--sky)}
+  .card:nth-child(5) .num{background:var(--berry)}
+  .shot { position:relative; aspect-ratio:16/10; border:3px solid var(--ink); border-radius:14px;
+    overflow:hidden; background:#111; margin-bottom:15px; }
+  .shot img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    object-position:center; background:#FFF8EC; }
+  .shot .open { position:absolute; inset:0; display:grid; place-items:center;
+    background:rgba(43,33,24,0); transition:background .15s; }
+  .shot .open span { opacity:0; font-family:'Fredoka'; font-weight:700; font-size:18px;
+    background:var(--cream); border:3px solid var(--ink); border-radius:14px; padding:10px 22px;
+    box-shadow:4px 4px 0 var(--ink); transition:opacity .15s, transform .18s cubic-bezier(.34,1.56,.64,1);
+    transform:scale(.85); }
+  .card:hover .shot .open { background:rgba(43,33,24,.28); }
+  .card:hover .shot .open span { opacity:1; transform:scale(1); }
+  .vibe { font-family:'Patrick Hand',cursive; font-size:14px; letter-spacing:.06em;
+    text-transform:uppercase; color:#8a7457; }
+  .name { font-family:'Fredoka'; font-weight:700; font-size:26px; margin:1px 0 4px; }
+  .tag { font-family:'Patrick Hand',cursive; font-size:16.5px; color:var(--coral); margin-bottom:6px; }
+  .desc { font-size:14.5px; line-height:1.45; color:#5c4d3a; }
+  .go { margin-top:12px; display:inline-block; font-family:'Fredoka'; font-weight:600;
+    font-size:14px; color:var(--coral); }
+  footer { text-align:center; margin-top:52px; font-family:'Patrick Hand'; font-size:17px; color:#8a7457; }
+  footer code { font-family:ui-monospace,monospace; font-size:14px; background:#f3e9d4; padding:1px 7px; border-radius:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="badge">roster isolation · 5 looks</span>
+    <h1>Same fighters, <span class="amp">five inspection booths</span></h1>
+    <p class="sub">All four characters alone on a blank plane — <b>orbit / zoom / pan</b>, click a fighter to inspect, <b>b</b> shows live bounding boxes.</p>
+  </header>
+  <div class="grid">
+    <a class="card" href="01-studio/" target="_blank">
+      <span class="num">1</span>
+      <div class="shot"><img src="01-studio/shot.png" alt="Studio sweep">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">clean · product shoot</div>
+      <div class="name">STUDIO SWEEP</div>
+      <div class="tag">"seamless paper, soft shadow, no noise"</div>
+      <p class="desc">Infinite white cyclorama with a soft key light and real cast shadows — the fighter is the only thing in the room.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="02-blueprint/" target="_blank">
+      <span class="num">2</span>
+      <div class="shot"><img src="02-blueprint/shot.png" alt="Blueprint">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">technical · engineering</div>
+      <div class="name">BLUEPRINT</div>
+      <div class="tag">"FIG. 02 — every dimension called out"</div>
+      <p class="desc">Drafting-sheet cyanotype: fine+major grid, true dimension lines with arrowheads, height and width measured in scene.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="03-diorama/" target="_blank">
+      <span class="num">3</span>
+      <div class="shot"><img src="03-diorama/shot.png" alt="Diorama">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">museum · collector case</div>
+      <div class="name">DIORAMA</div>
+      <div class="tag">"№ 3 — acquired, catalogued, spotlighted"</div>
+      <p class="desc">Each fighter on an ivory plinth under its own warm track light, accent glow underneath. Optional turntable spin.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="04-terminal/" target="_blank">
+      <span class="num">4</span>
+      <div class="shot"><img src="04-terminal/shot.png" alt="Terminal">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">crt · debug console</div>
+      <div class="name">TERMINAL</div>
+      <div class="tag">"ROSTER-ISO.SYS · bbox tracking: live"</div>
+      <p class="desc">Green-phosphor debug rig: scanlines, live bounding-box wireframes per fighter, unit tick marks every 0.25u.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="05-paper/" target="_blank">
+      <span class="num">5</span>
+      <div class="shot"><img src="05-paper/shot.png" alt="Craft paper">
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">house · scrapbook</div>
+      <div class="name">CRAFT PAPER</div>
+      <div class="tag">"weigh-in wall · scrap! QA dept"</div>
+      <p class="desc">The game's own paper palette — accent discs and plinths straight from the lineup page, ink-bordered card UI.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+  </div>
+  <footer>original harness: <code>test/roster-iso.html</code> · controls identical across all five</footer>
+</div>
+</body>
+</html>

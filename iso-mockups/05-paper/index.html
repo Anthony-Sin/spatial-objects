@@ -1,0 +1,120 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>05 · craft paper — roster isolation</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{ "imports": { "three": "../../vendor/three/three.module.js" } }
+</script>
+<style>
+  :root { --paper:#FFF8EC; --paper2:#FDF3E3; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  body { margin: 0; background: var(--paper2); overflow: hidden;
+    font-family: "Fredoka","Baloo 2","Avenir Next","Trebuchet MS",system-ui,sans-serif; }
+  #hud { position: fixed; top: 16px; left: 16px; z-index: 5;
+    background: var(--paper); border: 3px solid var(--ink); border-radius: 18px;
+    padding: 12px 15px; font-size: 12px; color: var(--ink); user-select: none;
+    width: 216px; box-shadow: 0 5px 0 rgba(43,33,24,.35);
+    transform: rotate(-.7deg); }
+  #hud h1 { font-size: 15px; margin: 0; letter-spacing: .06em;
+    font-weight: 700; }
+  #hud .sub { font-size: 9.5px; color: rgba(43,33,24,.55); letter-spacing: .2em;
+    text-transform: uppercase; margin: 2px 0 9px; }
+  #hud .keys { color: rgba(43,33,24,.6); font-size: 9.5px; line-height: 1.65;
+    margin-bottom: 9px; }
+  #hud .keys b { color: var(--ink); }
+  #hud button { display: block; width: 100%; text-align: left; margin: 3px 0;
+    padding: 6px 10px; border: 2.5px solid var(--ink); border-radius: 10px;
+    background: var(--paper); font: inherit; font-size: 11px; font-weight: 600;
+    letter-spacing: .06em; cursor: pointer; color: var(--ink);
+    box-shadow: 0 3px 0 rgba(43,33,24,.35);
+    transition: transform .12s, background .12s; }
+  #hud button:hover { background: var(--sun); transform: translateY(-1px); }
+  #hud button:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(43,33,24,.35); }
+  #hud select { width: 100%; margin-top: 8px; font: inherit; font-size: 11px;
+    font-weight: 600; padding: 5px; border: 2.5px solid var(--ink);
+    border-radius: 10px; background: var(--paper); color: var(--ink); }
+  #hud label.t { display: flex; gap: 7px; align-items: center;
+    font-size: 10.5px; font-weight: 600; margin-top: 9px; }
+  .tag { position: fixed; z-index: 4; transform: translate(-50%, -100%);
+    pointer-events: none; text-align: center; color: var(--ink); }
+  .tag .n { font-weight: 700; font-size: 14px; letter-spacing: .08em;
+    text-shadow: 0 2px 0 rgba(253,243,227,.9); }
+  .tag .s { display: inline-block; font-size: 9.5px; font-weight: 700;
+    letter-spacing: .1em; color: var(--ink); background: var(--sun);
+    border: 2px solid var(--ink); border-radius: 999px; padding: 2px 9px;
+    margin-top: 4px; box-shadow: 0 2px 0 rgba(43,33,24,.3); }
+  .stamp { position: fixed; right: 22px; bottom: 18px; z-index: 5;
+    font-size: 10px; font-weight: 700; letter-spacing: .18em;
+    text-transform: uppercase; color: rgba(43,33,24,.5);
+    border: 2.5px dashed rgba(43,33,24,.4); border-radius: 10px;
+    padding: 7px 13px; transform: rotate(2deg); }
+</style>
+<div id="hud">
+  <h1>Weigh-In Wall</h1>
+  <div class="sub">paper inspection · 05</div>
+  <div class="keys">
+    <b>drag</b> orbit · <b>wheel</b> zoom · <b>shift-drag</b> pan<br>
+    <b>click / 1–4</b> focus · <b>0</b> all · <b>b</b> bounds · <b>g</b> dots
+  </div>
+  <div id="list"></div>
+  <select id="pose"></select>
+</div>
+<div class="stamp">scrap! QA dept</div>
+<script type="module">
+import * as THREE from 'three';
+import { initIso, ROSTER, POSES } from '../shared/core.js';
+
+const ACC = [0xff6b57, 0xffc53d, 0xb565d8, 0x4fb06d];
+const iso = initIso({
+  bg: 0xfdf3e3, floor: 0xfdf3e3,
+  fog: { color: 0xfdf3e3, near: 12, far: 30 },
+  cam: { theta: .3, phi: 1.23, tgt: [0, .72, 0] },
+  tagLift: .3,
+  tagFmt: (i, m) => [`${m.r.label}`,
+    `${m.h.toFixed(2)}u tall × ${m.w.toFixed(2)}u wide`],
+  grid: (() => {                          // faint ink dot grid
+    const g = new THREE.GridHelper(40, 160, 0xe6d6ba, 0xead9be);
+    return g;
+  })(),
+  lights(scene, T) {
+    scene.add(new T.HemisphereLight(0xfff2dd, 0x8a7f6c, 1.35));
+    const k = new T.DirectionalLight(0xffe6bd, 1.5);
+    k.position.set(3, 6, 4); scene.add(k);
+  },
+  dress(scene, x, i, m, T) {
+    // same dressing as the lineup thumbnails: accent disc + paper plinth
+    const disc = new T.Mesh(new T.CircleGeometry(.95, 40),
+      new T.MeshBasicMaterial({ color: ACC[i % 4] }));
+    disc.position.set(x, .78, -.8); scene.add(disc);
+    const ped = new T.Mesh(new T.CylinderGeometry(.8, .9, .12, 28),
+      new T.MeshStandardMaterial({ color: 0xfff8ec, roughness: .9 }));
+    ped.position.set(x, -.06, 0); scene.add(ped);
+    const trim = new T.Mesh(new T.TorusGeometry(.85, .035, 10, 40).rotateX(Math.PI / 2),
+      new T.MeshStandardMaterial({ color: 0x2b2118, roughness: .9 }));
+    trim.position.set(x, .01, 0); scene.add(trim);
+    // red string height marker — the carnival-measuring-stick vibe
+    const str = new T.Mesh(new T.CylinderGeometry(.008, .008, 1.3, 6),
+      new T.MeshBasicMaterial({ color: 0xff6b57 }));
+    str.position.set(x - .62, .65, 0); scene.add(str);
+  },
+});
+
+const list = document.getElementById('list');
+ROSTER.forEach((r, i) => {
+  const b = document.createElement('button');
+  b.textContent = `${i + 1} — ${r.label}`;
+  b.onclick = () => iso.focus(i);
+  list.appendChild(b);
+});
+const all = document.createElement('button');
+all.textContent = '0 — the whole wall';
+all.onclick = () => iso.fitAll();
+list.appendChild(all);
+
+const sel = document.getElementById('pose');
+for (const p of POSES) {
+  const o = document.createElement('option'); o.value = o.textContent = p;
+  sel.appendChild(o);
+}
+sel.onchange = () => iso.setPose(sel.value);
+</script>
