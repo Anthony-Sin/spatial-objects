@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lineup mock 01 — fight poster</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#f2e3c3; }
+  iframe { width:100vw; height:100vh; border:0; display:block; }
+</style>
+</head>
+<body>
+<iframe id="f" src="../../lineup.html" title="lineup mock — fight poster"></iframe>
+<script>
+/* MOCK 01 · FIGHT POSTER — aged bill-poster paper: sunburst rays, halftone
+   grain and a big watermark headline behind the (real, untouched) cards */
+document.getElementById('f').addEventListener('load', (e) => {
+  const s = e.target.contentDocument.createElement('style');
+  s.textContent = `
+    html { background:#ead9b5; }
+    body { color:#3a2c1d; background:#f2e3c3;
+      background-image:
+        repeating-conic-gradient(from 0deg at 50% 44%,
+          rgba(255,107,87,.07) 0deg 4deg, transparent 4deg 8deg),
+        radial-gradient(58% 44% at 50% 44%, rgba(255,197,61,.20), transparent 72%),
+        radial-gradient(rgba(43,33,24,.055) 1.2px, transparent 1.3px);
+      background-size:auto, auto, 21px 21px; }
+    body::before { content:"FIGHT NIGHT"; position:fixed; left:50%; top:20%;
+      transform:translateX(-50%) rotate(-3deg); z-index:0; pointer-events:none;
+      font:700 9.5vw Fredoka,sans-serif; letter-spacing:.02em; white-space:nowrap;
+      color:rgba(43,33,24,.09); }
+    body::after { content:"MAIN EVENT · THREE ROUNDS · WINNER TAKES THE CROWN · MAIN EVENT · THREE ROUNDS · WINNER TAKES THE CROWN";
+      position:fixed; left:-4%; right:-4%; bottom:11%; z-index:0; pointer-events:none;
+      font:700 2.1vh Fredoka,sans-serif; letter-spacing:.5em; text-align:center;
+      color:rgba(43,33,24,.12); }
+    body > * { position:relative; z-index:1; }
+    .wm span, .note { color:rgba(58,44,29,.65); }
+    .back { color:#3a2c1d; border-color:rgba(58,44,29,.4); }
+  `;
+  e.target.contentDocument.head.appendChild(s);
+});
+</script>
+</body>
+</html>

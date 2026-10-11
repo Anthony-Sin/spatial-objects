@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lineup mock 03 — old gym</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#9dbba9; }
+  iframe { width:100vw; height:100vh; border:0; display:block; }
+</style>
+</head>
+<body>
+<iframe id="f" src="../../lineup.html" title="lineup mock — old gym"></iframe>
+<script>
+/* MOCK 03 · OLD GYM — sage wall over wood floor, two heavy bags hanging
+   on chains at the edges of the room behind the cards */
+document.getElementById('f').addEventListener('load', (e) => {
+  const s = e.target.contentDocument.createElement('style');
+  s.textContent = `
+    html { background:#92b09e; }
+    body { color:#2B2118; background:#9dbba9;
+      background:
+        linear-gradient(rgba(43,33,24,.45),rgba(43,33,24,.45)) 4.5% 0/3px 15.5% no-repeat,
+        linear-gradient(rgba(43,33,24,.45),rgba(43,33,24,.45)) 95.5% 0/3px 15.5% no-repeat,
+        radial-gradient(78px 150px at 4.5% 25%, #473729 96%, transparent 100%),
+        radial-gradient(78px 150px at 95.5% 25%, #473729 96%, transparent 100%),
+        radial-gradient(rgba(255,248,236,.20) 1.3px, transparent 1.4px) 0 0/24px 24px,
+        linear-gradient(#9dbba9 0 62%, #6e8b78 62% 63.2%, #a98f6f 63.2%); }
+    body::before { content:""; position:fixed; left:0; right:0; bottom:0; height:37.5%;
+      z-index:0; pointer-events:none;
+      background:
+        repeating-linear-gradient(90deg, rgba(43,33,24,.14) 0 2px, transparent 2px 140px),
+        linear-gradient(rgba(43,33,24,.10), transparent 26%);
+    }
+    body > * { position:relative; z-index:1; }
+    .wm span, .note { color:rgba(43,33,24,.6); }
+  `;
+  e.target.contentDocument.head.appendChild(s);
+});
+</script>
+</body>
+</html>

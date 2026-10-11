@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scrap — webcam boxing comic</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#FFF8EC; --paper2:#FDF3E3; --card:#FFFDF6;
+    --ink:#2B2118;
+    --coral:#FF6B57; --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8;
+    --spring:cubic-bezier(.34,1.56,.64,1);
+    --springier:cubic-bezier(.3,1.9,.5,1);
+  }
+  *{box-sizing:border-box;margin:0}
+  html{overflow-x:hidden}
+  body{
+    min-height:100svh;display:flex;align-items:center;justify-content:center;
+    padding:clamp(10px,2.4vw,30px);
+    background:var(--paper);color:var(--ink);
+    font-family:"Fredoka","Baloo 2","Avenir Next","Trebuchet MS",system-ui,sans-serif;
+    background-image:
+      radial-gradient(rgba(43,33,24,.07) 1.6px, transparent 1.7px),
+      radial-gradient(rgba(43,33,24,.045) 1.3px, transparent 1.4px),
+      radial-gradient(ellipse at 50% 30%, transparent 55%, rgba(43,33,24,.10) 100%);
+    background-size:22px 22px, 34px 34px, 100% 100%;
+    background-position:0 0, 11px 17px, 0 0;
+  }
+
+  /* ============ THE COVER ============ */
+  .cover{
+    position:relative;width:min(1140px,100%);
+    background:var(--card);
+    border:5px solid var(--ink);border-radius:clamp(18px,3vw,34px);
+    box-shadow:9px 11px 0 var(--ink), 0 30px 60px rgba(43,33,24,.18);
+    padding:clamp(18px,3.6vw,44px);
+    overflow:hidden;
+  }
+  /* inner ink frame — comic cover gutter */
+  .cover::before{
+    content:"";position:absolute;inset:clamp(7px,1.1vw,13px);
+    border:2.5px solid var(--ink);border-radius:clamp(12px,2.3vw,25px);
+    pointer-events:none;z-index:0;
+  }
+  .cover > *{position:relative;z-index:1}
+
+  /* corner screentone patches on the cover itself */
+  .tone{position:absolute;z-index:0;pointer-events:none;
+    background-image:radial-gradient(rgba(255,107,87,.30) 2.4px, transparent 2.5px);
+    background-size:11px 11px;
+    -webkit-mask-image:radial-gradient(circle at 100% 0%, #000 0%, transparent 68%);
+            mask-image:radial-gradient(circle at 100% 0%, #000 0%, transparent 68%);}
+  .tone.tr{top:0;right:0;width:min(34%,330px);height:min(30%,250px)}
+  .tone.bl{bottom:0;left:0;width:min(30%,290px);height:min(26%,220px);
+    background-image:radial-gradient(rgba(93,169,233,.30) 2.4px, transparent 2.5px);
+    -webkit-mask-image:radial-gradient(circle at 0% 100%, #000 0%, transparent 68%);
+            mask-image:radial-gradient(circle at 0% 100%, #000 0%, transparent 68%);}
+
+  /* ============ ISSUE STRIP ============ */
+  .mast{
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    font-size:clamp(9px,1.2vw,11.5px);font-weight:700;letter-spacing:.22em;
+    text-transform:uppercase;padding-bottom:clamp(10px,1.6vw,16px);
+    border-bottom:3.5px solid var(--ink);
+  }
+  .mast .brand{white-space:nowrap}
+  .mast .issue{
+    margin-inline:auto;background:var(--sun);border:2.5px solid var(--ink);
+    border-radius:8px;padding:4px 12px;transform:rotate(-1.6deg);
+    box-shadow:2.5px 2.5px 0 var(--ink);letter-spacing:.18em;white-space:nowrap;
+  }
+  .mast .rated{color:rgba(43,33,24,.6);white-space:nowrap}
+
+  /* ============ HERO ============ */
+  .hero{position:relative;text-align:center;padding:clamp(26px,5vw,54px) 0 clamp(16px,2.6vw,26px)}
+
+  /* rotating sunburst rays behind the masthead */
+  .rays{
+    position:absolute;left:50%;top:46%;translate:-50% -50%;
+    width:min(150%,880px);aspect-ratio:1;border-radius:50%;
+    background:repeating-conic-gradient(from 0deg,
+      rgba(255,197,61,.42) 0deg 7deg, transparent 7deg 15deg);
+    -webkit-mask-image:radial-gradient(circle,#000 22%,transparent 63%);
+            mask-image:radial-gradient(circle,#000 22%,transparent 63%);
+    animation:spin 90s linear infinite;pointer-events:none;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  h1{position:relative;display:inline-block;line-height:.9}
+  h1 .t2{
+    display:block;font-family:"Baloo 2","Fredoka","Avenir Next",system-ui,sans-serif;
+    font-weight:800;font-size:clamp(66px,14.5vw,150px);letter-spacing:.015em;
+    color:var(--coral);transform:rotate(-2.4deg);margin-top:.02em;
+    text-shadow:
+      2.6px 0 0 var(--ink), -2.6px 0 0 var(--ink),
+      0 2.6px 0 var(--ink), 0 -2.6px 0 var(--ink),
+      2.4px 2.4px 0 var(--ink), -2.4px 2.4px 0 var(--ink),
+      2.4px -2.4px 0 var(--ink), -2.4px -2.4px 0 var(--ink),
+      8px 8px 0 var(--sun), 16px 16px 0 rgba(43,33,24,.16);
+  }
+  @supports (-webkit-text-stroke:1px black){
+    h1 .t2{-webkit-text-stroke:.05em var(--ink);paint-order:stroke fill}
+  }
+  h1 .t2 i{font-style:normal;color:var(--sun);
+    text-shadow:
+      2.6px 0 0 var(--ink), -2.6px 0 0 var(--ink),
+      0 2.6px 0 var(--ink), 0 -2.6px 0 var(--ink),
+      2.4px 2.4px 0 var(--ink), -2.4px 2.4px 0 var(--ink),
+      2.4px -2.4px 0 var(--ink), -2.4px -2.4px 0 var(--ink),
+      8px 8px 0 var(--coral), 16px 16px 0 rgba(43,33,24,.16);}
+
+  /* floating gloves flanking the title */
+  .glove{position:absolute;top:38%;width:clamp(56px,8vw,104px);pointer-events:none;z-index:0}
+  .glove.gl{left:clamp(-6px,2vw,26px);animation:bobA 2.6s ease-in-out infinite}
+  .glove.gr{right:clamp(-6px,2vw,26px);animation:bobB 2.6s ease-in-out infinite .4s}
+  .glove svg{display:block;width:100%;filter:drop-shadow(0 4px 0 rgba(43,33,24,.9))}
+  @keyframes bobA{0%,100%{transform:rotate(-14deg) translateY(0)}50%{transform:rotate(-9deg) translateY(-12px)}}
+  @keyframes bobB{0%,100%{transform:rotate(14deg) scaleX(-1) translateY(0)}50%{transform:rotate(9deg) scaleX(-1) translateY(-12px)}}
+
+  /* ============ ACTION BURSTS ============ */
+  .burst{position:absolute;pointer-events:none;filter:drop-shadow(3.5px 3.5px 0 var(--ink))}
+  .burst svg{display:block;width:100%;height:100%;overflow:visible}
+  .burst text{font-family:"Baloo 2","Fredoka",system-ui,sans-serif;font-weight:800}
+  .burst.pow{width:clamp(96px,13vw,158px);top:4%;right:clamp(0px,4%,60px);
+    animation:jig 2.8s ease-in-out infinite}
+  .burst.biff{width:clamp(80px,10.5vw,128px);bottom:2%;left:clamp(0px,4.5%,70px);
+    animation:jig 3.1s ease-in-out infinite .5s}
+  .burst.wham{width:clamp(62px,8vw,96px);top:-3%;left:clamp(2px,9%,130px);
+    animation:jig 2.5s ease-in-out infinite .9s}
+  @keyframes jig{0%,100%{transform:rotate(8deg) scale(1)}50%{transform:rotate(4deg) scale(1.045)}}
+  .burst.biff{animation-name:jigB}
+  @keyframes jigB{0%,100%{transform:rotate(-9deg) scale(1)}50%{transform:rotate(-5deg) scale(1.05)}}
+  .burst.wham{animation-name:jigC}
+  @keyframes jigC{0%,100%{transform:rotate(-4deg) scale(1)}50%{transform:rotate(-8deg) scale(1.06)}}
+
+  /* ============ MENU PANELS ============ */
+  .menu{
+    display:grid;gap:clamp(16px,2.6vw,24px);grid-template-columns:1fr;
+    max-width:860px;margin:clamp(20px,3.4vw,36px) auto 0;
+  }
+  @media(min-width:620px){.menu{grid-template-columns:1fr 1fr}}
+
+  .panel{
+    --tilt:-1.6deg;
+    position:relative;display:block;text-decoration:none;color:var(--paper);
+    border:4px solid var(--ink);border-radius:22px;
+    padding:clamp(22px,3.4vw,32px) clamp(18px,3vw,28px) clamp(24px,3.6vw,34px);
+    box-shadow:0 7px 0 var(--ink), inset 0 2px 0 rgba(255,255,255,.4);
+    transform:rotate(var(--tilt));
+    transition:transform .22s var(--spring), box-shadow .22s var(--spring);
+    outline:none;
+  }
+  .panel--fight{background:var(--coral);--tilt:-1.6deg}
+  .panel--lineup{background:var(--sky);--tilt:1.4deg}
+  /* halftone corner inside the panel */
+  .panel::before{
+    content:"";position:absolute;right:0;bottom:0;width:52%;height:56%;
+    border-radius:0 0 17px 0;pointer-events:none;
+    background-image:radial-gradient(rgba(43,33,24,.28) 2.2px, transparent 2.3px);
+    background-size:10px 10px;
+    -webkit-mask-image:radial-gradient(circle at 100% 100%, #000 0%, transparent 70%);
+            mask-image:radial-gradient(circle at 100% 100%, #000 0%, transparent 70%);
+  }
+  .panel:hover,.panel:focus-visible{
+    transform:rotate(0deg) translateY(-6px) scale(1.02);
+    box-shadow:0 13px 0 var(--ink), inset 0 2px 0 rgba(255,255,255,.4);
+  }
+  .panel:active{transform:rotate(0deg) translateY(4px) scale(.99);box-shadow:0 2px 0 var(--ink)}
+  .panel:focus-visible{outline:3.5px dashed var(--ink);outline-offset:5px}
+
+  .pnum{
+    display:inline-block;background:var(--ink);color:var(--paper);
+    font-size:9.5px;font-weight:700;letter-spacing:.24em;text-transform:uppercase;
+    padding:4px 10px;border-radius:7px;margin-bottom:10px;
+  }
+  .kick{display:block;font-size:clamp(10px,1.4vw,12px);font-weight:700;
+    letter-spacing:.26em;text-transform:uppercase;opacity:.85;margin-bottom:4px}
+  .ptitle{display:block;font-family:"Baloo 2","Fredoka",system-ui,sans-serif;
+    font-weight:800;font-size:clamp(28px,4vw,42px);line-height:.95;
+    letter-spacing:.02em;text-shadow:3px 3px 0 var(--ink)}
+  .psub{display:block;margin-top:8px;font-size:clamp(12px,1.6vw,14px);
+    font-weight:500;opacity:.92;max-width:24em}
+
+  .badge{
+    position:absolute;top:-20px;right:-14px;width:clamp(76px,9vw,98px);
+    transform:rotate(10deg);filter:drop-shadow(3px 3px 0 var(--ink));
+    transition:transform .25s var(--springier);
+  }
+  .panel:hover .badge,.panel:focus-visible .badge{transform:rotate(2deg) scale(1.14)}
+  .badge svg{display:block;width:100%;overflow:visible}
+  .badge text{font-family:"Baloo 2","Fredoka",system-ui,sans-serif;font-weight:800}
+
+  /* ============ HOW TO BRAWL ============ */
+  .how{max-width:920px;margin:clamp(28px,4.6vw,46px) auto 0}
+  .how-head{display:flex;align-items:center;gap:14px;margin-bottom:clamp(14px,2.2vw,20px)}
+  .how-head .cap{
+    background:var(--sun);border:3px solid var(--ink);border-radius:10px;
+    padding:7px 16px;transform:rotate(-2deg);box-shadow:3.5px 3.5px 0 var(--ink);
+    font-weight:800;font-family:"Baloo 2","Fredoka",system-ui,sans-serif;
+    font-size:clamp(15px,2.2vw,20px);letter-spacing:.08em;text-transform:uppercase;
+    white-space:nowrap;
+  }
+  .how-head .rule{flex:1;border-top:3px dashed rgba(43,33,24,.4)}
+  .tips{display:grid;grid-template-columns:repeat(2,1fr);gap:clamp(10px,1.8vw,16px)}
+  @media(min-width:760px){.tips{grid-template-columns:repeat(4,1fr)}}
+  .tip{
+    background:var(--card);border:3px solid var(--ink);border-radius:16px;
+    padding:clamp(12px,1.8vw,16px) clamp(10px,1.6vw,14px);
+    box-shadow:0 4px 0 var(--ink);text-align:center;
+    transition:transform .2s var(--spring), box-shadow .2s var(--spring);
+  }
+  .tip:nth-child(1){transform:rotate(-1.6deg)}
+  .tip:nth-child(2){transform:rotate(1.2deg)}
+  .tip:nth-child(3){transform:rotate(-1deg)}
+  .tip:nth-child(4){transform:rotate(1.6deg)}
+  .tip:hover{transform:rotate(0deg) translateY(-4px);box-shadow:0 8px 0 var(--ink)}
+  .tip svg{width:clamp(44px,6vw,58px);height:auto;display:block;margin:0 auto 8px}
+  .tip b{display:block;font-size:clamp(11px,1.5vw,13px);font-weight:700;
+    letter-spacing:.12em;text-transform:uppercase;margin-bottom:3px}
+  .tip b em{font-style:normal;color:var(--coral)}
+  .tip p{font-size:clamp(10.5px,1.4vw,12px);line-height:1.35;color:rgba(43,33,24,.72)}
+
+  /* ============ FOOTER ============ */
+  .foot{max-width:920px;margin:clamp(26px,4vw,40px) auto 0}
+  .coupon{
+    display:flex;align-items:center;gap:clamp(10px,2vw,18px);flex-wrap:wrap;
+    border:3px dashed var(--ink);border-radius:16px;background:var(--paper2);
+    padding:clamp(10px,1.8vw,16px) clamp(14px,2.4vw,22px);
+    transform:rotate(.5deg);
+  }
+  .coupon .lbl{background:var(--leaf);color:var(--paper);border:2.5px solid var(--ink);
+    border-radius:8px;padding:4px 10px;font-size:9.5px;font-weight:700;
+    letter-spacing:.22em;text-transform:uppercase;transform:rotate(-1.6deg);
+    box-shadow:2.5px 2.5px 0 var(--ink);white-space:nowrap}
+  .coupon .keys{font-size:clamp(11px,1.5vw,13px);font-weight:600;letter-spacing:.04em}
+  .coupon .keys b{display:inline-block;background:var(--card);border:2px solid var(--ink);
+    border-radius:6px;padding:1px 7px;margin-right:3px;font-weight:700;
+    box-shadow:1.5px 1.5px 0 var(--ink);letter-spacing:.08em}
+  .barcode{margin-left:auto;text-align:center}
+  .barcode .bars{width:clamp(52px,7vw,72px);height:clamp(18px,2.6vw,26px);
+    background:repeating-linear-gradient(90deg,
+      var(--ink) 0 2px, transparent 2px 4px,
+      var(--ink) 4px 5px, transparent 5px 9px,
+      var(--ink) 9px 12px, transparent 12px 14px);}
+  .barcode span{display:block;font-size:7.5px;font-weight:700;letter-spacing:.3em;
+    text-transform:uppercase;margin-top:3px;color:rgba(43,33,24,.55)}
+  .credit{text-align:center;margin-top:clamp(12px,2vw,18px);
+    font-size:clamp(8.5px,1.2vw,10px);font-weight:600;letter-spacing:.26em;
+    text-transform:uppercase;color:rgba(43,33,24,.42)}
+
+  /* ============ CLICK-POP BURSTS (JS) ============ */
+  .boom{position:fixed;z-index:80;pointer-events:none;width:150px;
+    margin:-75px 0 0 -75px;filter:drop-shadow(4px 4px 0 rgba(43,33,24,.9))}
+  .boom svg{display:block;width:100%;overflow:visible}
+  .boom text{font-family:"Baloo 2","Fredoka",system-ui,sans-serif;font-weight:800}
+  .boom.pop{animation:boom .82s var(--spring) forwards}
+  @keyframes boom{
+    0%{transform:scale(.15) rotate(var(--rot,0deg));opacity:0}
+    22%{transform:scale(1.18) rotate(var(--rot,0deg));opacity:1}
+    38%{transform:scale(.96) rotate(var(--rot,0deg))}
+    52%{transform:scale(1.04) rotate(var(--rot,0deg))}
+    72%{transform:scale(1) rotate(var(--rot,0deg));opacity:1}
+    100%{transform:scale(.9) rotate(var(--rot,0deg)) translateY(-18px);opacity:0}
+  }
+
+  /* ============ ENTRANCE ============ */
+  .pop{opacity:0;animation:pop .65s var(--spring) forwards}
+  @keyframes pop{0%{opacity:0;transform:translateY(22px) scale(.94)}
+    100%{opacity:1;transform:translateY(0) scale(1)}}
+  .d1{animation-delay:.05s}.d2{animation-delay:.14s}.d3{animation-delay:.24s}
+  .d4{animation-delay:.34s}.d5{animation-delay:.44s}.d6{animation-delay:.54s}
+
+  /* ============ SMALL SCREENS ============ */
+  @media(max-width:560px){
+    .glove{display:none}
+    .burst.wham{display:none}
+    .burst.pow{top:2%}
+    .burst.biff{top:-8px;bottom:auto;left:-20px;width:64px}
+    .mast{justify-content:center;text-align:center}
+    .mast .issue{margin-inline:0}
+    .barcode{display:none}
+  }
+  @media(min-width:1900px){.cover{width:min(1400px,90vw)}}
+
+  @media(prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    .pop{opacity:1}
+  }
+</style>
+</head>
+<body>
+
+<!-- shared 12-point starburst used by every burst + badge on the page -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <polygon id="burst12"
+      points="50,2 58,20.1 74,8.4 71.9,28.1 91.6,26 80,42 98,50 80,58 91.6,74 71.9,71.9 74,91.6 58,79.9 50,98 42,79.9 26,91.6 28.1,71.9 8.4,74 20.1,58 2,50 20.1,42 8.4,26 28.1,28.1 26,8.4 42,20.1"
+      stroke="#2B2118" stroke-width="3.5" stroke-linejoin="round"/>
+  </defs>
+</svg>
+
+<div class="cover">
+  <i class="tone tr" aria-hidden="true"></i>
+  <i class="tone bl" aria-hidden="true"></i>
+
+  <!-- issue strip -->
+  <div class="mast pop d1">
+    <span class="brand">Scrap Comics Co.</span>
+    <span class="issue">Issue Nº 1 · The Pilot Bout</span>
+    <span class="rated">Rated E — every-fist welcome</span>
+  </div>
+
+  <!-- hero -->
+  <header class="hero">
+    <div class="rays" aria-hidden="true"></div>
+
+    <div class="glove gl" aria-hidden="true">
+      <svg viewBox="0 0 96 96"><path d="M30 40 C18 40 12 52 14 64 C16 78 28 88 46 88 C64 88 80 78 82 60 C84 44 76 30 62 28 L58 22 C56 16 48 14 42 18 C40 10 30 8 26 14 C22 20 26 28 30 32 Z" fill="#FF6B57" stroke="#2B2118" stroke-width="4" stroke-linejoin="round"/><rect x="26" y="70" width="44" height="18" rx="8" fill="#FFFDF6" stroke="#2B2118" stroke-width="4"/><path d="M34 74 v10 M44 74 v10 M54 74 v10" stroke="#2B2118" stroke-width="3" stroke-linecap="round"/></svg>
+    </div>
+    <div class="glove gr" aria-hidden="true">
+      <svg viewBox="0 0 96 96"><path d="M30 40 C18 40 12 52 14 64 C16 78 28 88 46 88 C64 88 80 78 82 60 C84 44 76 30 62 28 L58 22 C56 16 48 14 42 18 C40 10 30 8 26 14 C22 20 26 28 30 32 Z" fill="#5DA9E9" stroke="#2B2118" stroke-width="4" stroke-linejoin="round"/><rect x="26" y="70" width="44" height="18" rx="8" fill="#FFFDF6" stroke="#2B2118" stroke-width="4"/><path d="M34 74 v10 M44 74 v10 M54 74 v10" stroke="#2B2118" stroke-width="3" stroke-linecap="round"/></svg>
+    </div>
+
+    <div class="burst pow" aria-hidden="true">
+      <svg viewBox="0 0 100 100"><use href="#burst12" fill="#FFC53D"/><text x="50" y="59" text-anchor="middle" font-size="25" fill="#FF6B57" stroke="#2B2118" stroke-width="1" transform="rotate(-7 50 50)">POW!</text></svg>
+    </div>
+    <div class="burst biff" aria-hidden="true">
+      <svg viewBox="0 0 100 100"><use href="#burst12" fill="#FF6B57"/><text x="50" y="59" text-anchor="middle" font-size="24" fill="#FFF8EC" stroke="#2B2118" stroke-width="1" transform="rotate(6 50 50)">BIFF!</text></svg>
+    </div>
+    <div class="burst wham" aria-hidden="true">
+      <svg viewBox="0 0 100 100"><use href="#burst12" fill="#5DA9E9"/><text x="50" y="58" text-anchor="middle" font-size="19" fill="#FFF8EC" stroke="#2B2118" stroke-width="1" transform="rotate(-5 50 50)">WHAM!</text></svg>
+    </div>
+
+    <h1 class="pop d2">
+      <span class="t2">SCRAP<i>!</i></span>
+    </h1>
+  </header>
+
+  <!-- menu: two tilted comic panels -->
+  <nav class="menu" aria-label="Main menu">
+    <a class="panel panel--fight pop d4" href="../../boxing.html">
+      <span class="pnum">Panel 01 · Main Event</span>
+      <span class="kick">Lights on · gloves up</span>
+      <span class="ptitle">ENTER THE RING</span>
+      <span class="psub">Jump straight into a bout — webcam on, chin down, swing at the screen.</span>
+      <span class="badge" aria-hidden="true">
+        <svg viewBox="0 0 100 100"><use href="#burst12" fill="#FFC53D"/><text x="50" y="58" text-anchor="middle" font-size="17" fill="#2B2118" textLength="62" lengthAdjust="spacingAndGlyphs" transform="rotate(-6 50 50)">ROUND 1</text></svg>
+      </span>
+    </a>
+    <a class="panel panel--lineup pop d5" href="../../lineup.html">
+      <span class="pnum">Panel 02 · Scouting Report</span>
+      <span class="kick">Three contenders · one lens</span>
+      <span class="ptitle">PICK YOUR RIVAL</span>
+      <span class="psub">Bubble, Blocky and Bean are waiting backstage — choose who you face.</span>
+      <span class="badge" aria-hidden="true">
+        <svg viewBox="0 0 100 100"><use href="#burst12" fill="#4FB06D"/><text x="50" y="59" text-anchor="middle" font-size="22" fill="#FFF8EC" transform="rotate(5 50 50)">VS!</text></svg>
+      </span>
+    </a>
+  </nav>
+
+  <!-- how to brawl -->
+  <section class="how pop d5" aria-label="How to play">
+    <div class="how-head">
+      <span class="cap">How to brawl</span>
+      <span class="rule" aria-hidden="true"></span>
+    </div>
+    <div class="tips">
+      <div class="tip">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="4" y="12" width="18" height="16" rx="8" fill="#FF6B57" stroke="#2B2118" stroke-width="3"/>
+          <circle cx="19" cy="18" r="4.5" fill="#FF6B57" stroke="#2B2118" stroke-width="3"/>
+          <rect x="6" y="25" width="14" height="7" rx="3.5" fill="#FFFDF6" stroke="#2B2118" stroke-width="3"/>
+          <rect x="26" y="12" width="18" height="16" rx="8" fill="#5DA9E9" stroke="#2B2118" stroke-width="3"/>
+          <circle cx="29" cy="18" r="4.5" fill="#5DA9E9" stroke="#2B2118" stroke-width="3"/>
+          <rect x="28" y="25" width="14" height="7" rx="3.5" fill="#FFFDF6" stroke="#2B2118" stroke-width="3"/>
+          <path d="M10 40 h28" stroke="#2B2118" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="4 5"/>
+        </svg>
+        <b>Fists <em>up</em></b>
+        <p>Both fists on camera = your guard. The ref can't start without them.</p>
+      </div>
+      <div class="tip">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M4 18 h8 M2 26 h9 M5 34 h7" stroke="#2B2118" stroke-width="3" stroke-linecap="round"/>
+          <rect x="14" y="14" width="20" height="18" rx="9" fill="#FF6B57" stroke="#2B2118" stroke-width="3"/>
+          <circle cx="31" cy="20" r="5" fill="#FF6B57" stroke="#2B2118" stroke-width="3"/>
+          <rect x="16" y="29" width="16" height="7" rx="3.5" fill="#FFFDF6" stroke="#2B2118" stroke-width="3"/>
+          <path d="M40 10 l3 -5 M44 20 h6 M41 30 l4 4" stroke="#FFC53D" stroke-width="3.5" stroke-linecap="round"/>
+        </svg>
+        <b><em>Punch</em> the lens</b>
+        <p>Jab and cross straight at the camera — that's a hit.</p>
+      </div>
+      <div class="tip">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M11 16 l-6 4 6 4 M37 16 l6 4 -6 4" fill="none" stroke="#4FB06D" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="24" cy="19" r="9" fill="#FFC53D" stroke="#2B2118" stroke-width="3"/>
+          <path d="M16 16 a9 9 0 0 1 16 0 z" fill="#FF6B57" stroke="#2B2118" stroke-width="3"/>
+          <path d="M18 34 q6 5 12 0" fill="none" stroke="#2B2118" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="21" cy="20" r="1.4" fill="#2B2118"/><circle cx="27" cy="20" r="1.4" fill="#2B2118"/>
+        </svg>
+        <b>Lean = <em>dodge</em></b>
+        <p>Slip your head left or right to duck under a swing.</p>
+      </div>
+      <div class="tip">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <circle cx="24" cy="11" r="5.5" fill="#FFC53D" stroke="#2B2118" stroke-width="3"/>
+          <path d="M24 18 v14" stroke="#2B2118" stroke-width="3.5" stroke-linecap="round"/>
+          <path d="M24 18 l-7 6 M24 18 l7 6" stroke="#2B2118" stroke-width="3.5" stroke-linecap="round"/>
+          <path d="M9 40 h30" stroke="#2B2118" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="4 5"/>
+          <path d="M38 22 v14 M34.5 32 L38 36.5 41.5 32 M34.5 26.5 L38 22.5 41.5 26.5" fill="none" stroke="#B565D8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <b>Lean in = <em>step</em></b>
+        <p>Lean toward the camera to close in, lean back to retreat.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- keyboard corner -->
+  <footer class="foot pop d6">
+    <div class="coupon">
+      <span class="lbl">Keyboard corner</span>
+      <span class="keys"><b>C</b> recenter the view &nbsp;·&nbsp; <b>W</b>/<b>S</b> step in mouse mode</span>
+      <div class="barcode" aria-hidden="true">
+        <div class="bars"></div>
+        <span>No controller needed</span>
+      </div>
+    </div>
+    <p class="credit">Scrap · a saturday-morning webcam slugfest · knighthacks 2026</p>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) return;
+
+  var WORDS = [
+    { w:'POW!',   fill:'#FFC53D', fg:'#FF6B57' },
+    { w:'BIFF!',  fill:'#FF6B57', fg:'#FFF8EC' },
+    { w:'WHAM!',  fill:'#5DA9E9', fg:'#FFF8EC' },
+    { w:'ZONK!',  fill:'#4FB06D', fg:'#FFF8EC' },
+    { w:'KAPOW!', fill:'#FFC53D', fg:'#2B2118' },
+    { w:'SOCK!',  fill:'#B565D8', fg:'#FFF8EC' },
+    { w:'BAM!',   fill:'#FF6B57', fg:'#FFC53D' }
+  ];
+  var live = 0;
+
+  function burst(x, y){
+    if (live > 8) return;
+    var pick = WORDS[(Math.random() * WORDS.length) | 0];
+    var rot  = ((Math.random() * 30) - 15).toFixed(1);
+    var size = pick.w.length > 4 ? 19 : 24;
+    var dim  = Math.round(120 + Math.random() * 70);   /* 120–190px */
+    var el = document.createElement('div');
+    el.className = 'boom pop';
+    el.setAttribute('aria-hidden', 'true');
+    el.style.left = x + 'px';
+    el.style.top  = y + 'px';
+    el.style.width  = dim + 'px';
+    el.style.margin = (-dim / 2) + 'px 0 0 ' + (-dim / 2) + 'px';
+    el.style.setProperty('--rot', rot + 'deg');
+    el.innerHTML =
+      '<svg viewBox="0 0 100 100">' +
+        '<use href="#burst12" fill="' + pick.fill + '"/>' +
+        '<text x="50" y="59" text-anchor="middle" font-size="' + size + '" ' +
+          'fill="' + pick.fg + '" stroke="#2B2118" stroke-width="0.8" ' +
+          'transform="rotate(' + (rot / 3).toFixed(1) + ' 50 50)">' + pick.w + '</text>' +
+      '</svg>';
+    document.body.appendChild(el);
+    live++;
+    el.addEventListener('animationend', function(){ el.remove(); live--; });
+    setTimeout(function(){ if (el.parentNode){ el.remove(); live--; } }, 1400);
+  }
+
+  // punch the page anywhere → comic sound-effect burst (links still work)
+  window.addEventListener('pointerdown', function(e){
+    if (e.button !== undefined && e.button !== 0) return;
+    burst(e.clientX, e.clientY);
+  });
+})();
+</script>
+</body>
+</html>

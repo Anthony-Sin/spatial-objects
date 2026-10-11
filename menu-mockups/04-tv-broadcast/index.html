@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TITLE SHOT — webcam welterweight championship</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;0,800;1,600;1,700;1,800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#04060c;
+  --navy:#0a1120; --navy2:#101a30; --steel:#1b2a4d;
+  --gold:#d4af37; --gold-hi:#f6e27a; --gold-dk:#8a6a1f;
+  --line:rgba(212,175,55,.32);
+  --ice:#eef2fa; --mut:#93a0ba;
+  --red:#e62a3c;
+  --blue:#3b82f6;
+  --cond:"Barlow Condensed","Arial Narrow","Helvetica Neue Condensed","Franklin Gothic Medium","Franklin Gothic",system-ui,sans-serif;
+  --sans:"Barlow","Segoe UI",system-ui,Arial,sans-serif;
+  --px:0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  min-height:100svh;overflow-x:hidden;padding-bottom:44px;
+  background:var(--bg);color:var(--ice);font-family:var(--sans);
+}
+
+/* ---------- arena atmosphere ---------- */
+.arena{position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(120% 80% at 50% -8%, #16264a 0%, #0a1120 46%, #04060c 100%);
+}
+.beam{position:absolute;top:-16vh;height:135vh;width:44vw;
+  transform-origin:50% 0;
+  clip-path:polygon(44% 0,56% 0,100% 100%,0 100%);
+  background:linear-gradient(180deg,rgba(246,226,122,.22) 0%,rgba(246,226,122,.07) 52%,rgba(246,226,122,0) 88%);
+  mix-blend-mode:screen;filter:blur(7px);
+  animation:flicker 6.5s ease-in-out infinite alternate;
+  transition:transform .35s ease-out;
+}
+.beam-l{left:4vw;transform:rotate(calc(-15deg + var(--px)*5deg))}
+.beam-r{right:4vw;transform:rotate(calc(15deg + var(--px)*5deg));animation-delay:1.8s;animation-duration:7.8s}
+.beam-c{left:28vw;width:44vw;opacity:.5;transform:rotate(calc(var(--px)*-3deg));animation-duration:9.4s;animation-delay:3s}
+@keyframes flicker{0%{opacity:.55}45%{opacity:.85}70%{opacity:.65}100%{opacity:.95}}
+.floor-glow{position:absolute;left:50%;bottom:-34vh;width:150vw;height:64vh;transform:translateX(-50%);
+  background:radial-gradient(ellipse at center,rgba(212,175,55,.16) 0%,rgba(212,175,55,.05) 45%,transparent 72%);
+  animation:floorpulse 7s ease-in-out infinite alternate}
+@keyframes floorpulse{from{opacity:.7}to{opacity:1}}
+.crowd{position:absolute;top:20vh;bottom:36vh;left:0;right:0;opacity:.28;
+  background-image:
+    radial-gradient(rgba(255,216,138,.6) 1px,transparent 1.7px),
+    radial-gradient(rgba(150,178,255,.5) 1px,transparent 1.7px);
+  background-size:26px 26px,37px 37px;background-position:0 0,14px 19px;
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 14%,#000 86%,transparent);
+  mask-image:linear-gradient(90deg,transparent,#000 14%,#000 86%,transparent);
+  animation:twinkle 4.2s ease-in-out infinite alternate}
+@keyframes twinkle{from{opacity:.16}to{opacity:.34}}
+.scanlines{position:absolute;inset:0;opacity:.5;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.028) 0 1px,transparent 1px 3px)}
+.vignette{position:absolute;inset:0;
+  background:radial-gradient(115% 100% at 50% 42%,transparent 42%,rgba(0,0,0,.62) 100%)}
+
+/* ---------- top broadcast bar ---------- */
+.topbar{position:fixed;top:0;left:0;right:0;z-index:20;pointer-events:none;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:14px 18px 0}
+.bug{transform:skewX(-10deg)}
+.bug>*{display:inline-block;transform:skewX(10deg)}
+.net{background:linear-gradient(180deg,#f6e27a,#d4af37 58%,#a9832a);
+  color:#141005;padding:6px 16px 6px 12px;
+  font:800 italic 16px/1 var(--cond);letter-spacing:.1em;
+  box-shadow:0 2px 14px rgba(212,175,55,.35)}
+.net b{font-weight:800;letter-spacing:.04em}
+.net small{font-weight:600;font-style:normal;opacity:.75;margin-left:5px;letter-spacing:.22em;font-size:.72em}
+.scorebug{transform:skewX(-10deg);display:flex;align-items:stretch;
+  border:1px solid var(--line);background:linear-gradient(180deg,#16223c,#0b1322);
+  box-shadow:0 4px 18px rgba(0,0,0,.5)}
+.scorebug>*{transform:skewX(10deg);display:flex;align-items:center;gap:7px;
+  padding:6px 14px;font:700 14px/1 var(--cond);letter-spacing:.14em;color:var(--mut)}
+.scorebug b{color:var(--gold-hi);font-size:16px}
+.sb-rd{background:linear-gradient(180deg,#f6e27a,#d4af37);color:#141005;font-style:italic;font-weight:800}
+.topbar-right{display:flex;align-items:center;gap:14px}
+.clock{font:700 13px/1 var(--cond);letter-spacing:.22em;color:var(--mut)}
+.clock b{color:var(--ice);font-weight:700}
+.live{background:linear-gradient(180deg,#ff3548,#c01426);color:#fff;
+  padding:6px 15px 6px 11px;font:800 italic 15px/1 var(--cond);letter-spacing:.16em;
+  box-shadow:0 0 18px rgba(230,42,60,.55);
+  animation:liveglow 2.2s ease-in-out infinite}
+.live i{display:inline-block;width:8px;height:8px;border-radius:50%;background:#fff;
+  margin-right:8px;box-shadow:0 0 9px #fff;position:relative;vertical-align:1px}
+.live i::after{content:"";position:absolute;inset:-4px;border-radius:50%;
+  border:1.5px solid rgba(255,255,255,.85);animation:ring 1.4s ease-out infinite}
+@keyframes ring{0%{transform:scale(.5);opacity:1}100%{transform:scale(1.6);opacity:0}}
+@keyframes liveglow{0%,100%{box-shadow:0 0 14px rgba(230,42,60,.4)}50%{box-shadow:0 0 26px rgba(230,42,60,.75)}}
+
+/* ---------- stage ---------- */
+.stage{position:relative;z-index:1;min-height:calc(100svh - 44px);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;padding:104px 20px 46px;gap:clamp(14px,2.4vh,26px)}
+
+/* reveal (armed by JS so no-JS users still see content) */
+body.js .reveal{opacity:0;transform:translateY(18px);
+  transition:opacity .65s ease var(--d,0s),transform .65s cubic-bezier(.2,.7,.2,1) var(--d,0s)}
+body.js.ready .reveal{opacity:1;transform:none}
+
+/* overline */
+.overline{display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:center}
+.overline .belt-ic{width:64px;filter:drop-shadow(0 3px 10px rgba(212,175,55,.45))}
+.overline .txt{display:flex;flex-direction:column;text-align:left;gap:2px}
+.overline .txt b{font:800 italic clamp(15px,2.2vw,19px)/1 var(--cond);letter-spacing:.3em;color:var(--gold-hi)}
+.overline .txt span{font:600 11px/1 var(--cond);letter-spacing:.42em;color:var(--mut)}
+
+/* hero wordmark */
+.hero{font-family:var(--cond);font-weight:800;font-style:italic;text-transform:uppercase;
+  line-height:.84;letter-spacing:.01em;font-size:clamp(84px,16.5vw,200px);
+  transform:skewX(-5deg);user-select:none}
+.hero .line{display:block;padding:0 .1em}
+.hero .l1{color:transparent;
+  background-image:linear-gradient(180deg,#ffffff 0%,#d7def0 38%,#8fa0c4 52%,#eef3ff 60%,#aebad6 100%);
+  -webkit-background-clip:text;background-clip:text;
+  text-shadow:0 3px 0 rgba(0,0,0,.5),0 16px 40px rgba(0,0,0,.55)}
+.hero .l2{margin-top:-.05em;color:transparent;
+  background-image:
+    linear-gradient(115deg,rgba(255,255,255,0) 42%,rgba(255,255,255,.95) 50%,rgba(255,255,255,0) 58%),
+    linear-gradient(180deg,#fff6cf 0%,#f2d878 30%,#d4af37 48%,#93711f 57%,#f0d469 72%,#b8912e 100%);
+  background-size:260% 100%,100% 100%;background-position:130% 0,0 0;
+  -webkit-background-clip:text;background-clip:text;
+  text-shadow:0 3px 0 rgba(0,0,0,.5),0 16px 40px rgba(0,0,0,.55),0 0 60px rgba(212,175,55,.3);
+  animation:sheen 5.2s ease-in-out 1.4s infinite}
+@keyframes sheen{0%,52%{background-position:130% 0,0 0}82%,100%{background-position:-40% 0,0 0}}
+.hero-rule{display:flex;align-items:center;gap:12px;width:min(440px,70vw)}
+.hero-rule::before,.hero-rule::after{content:"";flex:1;height:2px;
+  background:linear-gradient(90deg,transparent,var(--gold),transparent)}
+.hero-rule i{width:9px;height:9px;background:var(--gold);transform:rotate(45deg);
+  box-shadow:0 0 12px rgba(212,175,55,.8)}
+.tagline{font-family:var(--cond);font-style:italic;font-weight:600;text-transform:uppercase;
+  letter-spacing:.2em;font-size:clamp(13px,1.9vw,17px);color:var(--mut)}
+.tagline b{color:var(--gold-hi);font-weight:700}
+
+/* CTA broadcast chips */
+.cta{display:flex;gap:18px;flex-wrap:wrap;justify-content:center;margin-top:2px}
+.chip{position:relative;display:flex;align-items:stretch;overflow:hidden;
+  transform:skewX(-10deg);text-decoration:none;min-width:290px;
+  border:1px solid var(--line);
+  transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+.chip>*{transform:skewX(10deg)}
+.chip-body{flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:3px;
+  padding:15px 20px 15px 24px;text-align:left}
+.chip-label{font:800 italic 23px/1 var(--cond);letter-spacing:.1em;text-transform:uppercase}
+.chip-sub{font:600 10px/1.2 var(--cond);letter-spacing:.3em;text-transform:uppercase;opacity:.72}
+.chip-arrow{display:grid;place-items:center;padding:0 16px;
+  border-left:1px solid rgba(0,0,0,.25)}
+.chip-arrow svg{width:20px;height:20px;transition:transform .18s ease}
+.chip::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,.55) 50%,transparent 60%);
+  transform:translateX(-130%);transition:transform .55s ease}
+.chip:hover::before{transform:translateX(130%)}
+.chip:hover .chip-arrow svg{transform:translateX(4px)}
+.chip-gold{background:linear-gradient(180deg,#f9e58c,#d4af37 55%,#a9832a);color:#161003;
+  border-color:#f7e9b0;box-shadow:0 6px 26px rgba(212,175,55,.28)}
+.chip-gold:hover{transform:skewX(-10deg) translateY(-3px);
+  box-shadow:0 12px 34px rgba(212,175,55,.45)}
+.chip-gold .chip-arrow{background:rgba(20,16,5,.22)}
+.chip-steel{background:linear-gradient(180deg,#1d2c50,#0e1830);color:var(--ice);
+  box-shadow:0 6px 22px rgba(0,0,0,.45)}
+.chip-steel .chip-label{color:var(--ice)}
+.chip-steel .chip-sub{color:var(--gold-hi)}
+.chip-steel .chip-arrow{background:rgba(212,175,55,.12);border-left-color:var(--line);color:var(--gold-hi)}
+.chip-steel:hover{transform:skewX(-10deg) translateY(-3px);border-color:var(--gold);
+  box-shadow:0 12px 30px rgba(0,0,0,.55),0 0 22px rgba(212,175,55,.22)}
+.chip:active{transform:skewX(-10deg) translateY(1px)}
+.chip:focus-visible{outline:2px solid var(--gold-hi);outline-offset:3px}
+
+/* tale of the tape */
+.tape{position:relative;width:min(760px,100%);
+  background:linear-gradient(180deg,rgba(18,28,52,.92),rgba(8,13,26,.94));
+  border:1px solid var(--line);
+  box-shadow:0 18px 50px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06);
+  padding:30px 26px 18px;margin-top:10px}
+.tape::before,.tape::after{content:"";position:absolute;width:18px;height:18px;pointer-events:none}
+.tape::before{top:-1px;left:-1px;border-top:2px solid var(--gold);border-left:2px solid var(--gold)}
+.tape::after{bottom:-1px;right:-1px;border-bottom:2px solid var(--gold);border-right:2px solid var(--gold)}
+.ribbon{position:absolute;top:-15px;left:50%;transform:translateX(-50%) skewX(-10deg);
+  background:linear-gradient(180deg,#f6e27a,#d4af37 60%,#a9832a);color:#141005;
+  font:800 italic 14px/1 var(--cond);letter-spacing:.3em;text-transform:uppercase;
+  padding:7px 24px;white-space:nowrap;box-shadow:0 4px 16px rgba(212,175,55,.4)}
+.ribbon span{display:inline-block;transform:skewX(10deg)}
+.tape-grid{display:flex;align-items:stretch;gap:18px}
+.tape-col{flex:1;min-width:0}
+.tape-name{display:flex;align-items:center;gap:9px;
+  font:800 italic 27px/1 var(--cond);letter-spacing:.06em;text-transform:uppercase;
+  padding-bottom:10px;margin-bottom:8px;border-bottom:1px solid rgba(212,175,55,.25)}
+.tape-name small{display:block;font:600 10px/1 var(--cond);letter-spacing:.3em;color:var(--mut);font-style:normal}
+.tape-name .txt{display:flex;flex-direction:column;gap:2px}
+.corner-tag{width:12px;height:12px;flex:none}
+.corner-blue{background:var(--blue);box-shadow:0 0 10px rgba(59,130,246,.7)}
+.corner-red{background:var(--red);box-shadow:0 0 10px rgba(230,42,60,.7)}
+.tape-col.r .tape-name{justify-content:flex-end;text-align:right}
+.tape-col.r .tape-name .txt{align-items:flex-end}
+.tape-col.r .tape-name{color:var(--gold-hi)}
+.trow{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:5.5px 0}
+.tape-col.r .trow{flex-direction:row-reverse}
+.trow dt{font:600 10px/1 var(--cond);letter-spacing:.26em;color:var(--mut);text-transform:uppercase;flex:none}
+.trow dd{font:700 14.5px/1.15 var(--cond);letter-spacing:.1em;text-transform:uppercase;text-align:right}
+.tape-col.r .trow dd{text-align:left}
+.trow dd a{color:var(--gold-hi);text-decoration:none;border-bottom:1px dashed rgba(246,226,122,.5)}
+.trow dd a:hover{color:#fff;border-bottom-color:#fff}
+.trow dd a:focus-visible{outline:2px solid var(--gold-hi);outline-offset:2px}
+.tape-vs{align-self:center;flex:none;width:56px;height:56px;border-radius:50%;
+  display:grid;place-items:center;
+  background:radial-gradient(circle at 32% 28%,#fbe98e,#d4af37 58%,#8a6a1f);
+  color:#141005;font:800 italic 20px/1 var(--cond);
+  box-shadow:0 0 0 3px rgba(212,175,55,.22),0 0 30px rgba(212,175,55,.4)}
+.tape-note{margin-top:12px;padding-top:9px;border-top:1px dashed rgba(212,175,55,.22);
+  font:600 10.5px/1.3 var(--cond);letter-spacing:.3em;color:var(--mut);text-transform:uppercase}
+
+/* keys to the fight (how to play) */
+.keys{width:min(960px,100%);text-align:left}
+.keys h2{display:flex;align-items:center;gap:12px;
+  font:800 italic 15px/1 var(--cond);letter-spacing:.34em;color:var(--gold-hi);
+  text-transform:uppercase;margin-bottom:12px}
+.keys h2::before{content:"";width:26px;height:3px;background:var(--gold)}
+.keys h2::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+.keys ul{list-style:none;display:grid;gap:12px;
+  grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.keys li{display:flex;gap:13px;align-items:flex-start;
+  background:linear-gradient(180deg,rgba(18,28,52,.85),rgba(9,14,27,.9));
+  border:1px solid rgba(212,175,55,.18);border-left:3px solid var(--gold);
+  padding:13px 15px}
+.keys li svg{flex:none;width:30px;height:30px;stroke:var(--gold-hi);fill:none;
+  stroke-width:2;stroke-linecap:round;stroke-linejoin:round;margin-top:1px}
+.keys b{display:block;font:800 italic 15px/1.1 var(--cond);letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ice);margin-bottom:3px}
+.keys p{font-size:12px;line-height:1.45;color:var(--mut)}
+
+/* keyboard footer */
+.hints{display:flex;align-items:center;gap:16px;flex-wrap:wrap;justify-content:center;
+  font:600 10.5px/1.5 var(--cond);letter-spacing:.3em;color:var(--mut);text-transform:uppercase}
+.hints i{width:5px;height:5px;background:var(--gold);transform:rotate(45deg);flex:none}
+.hints b{color:var(--gold-hi);border:1px solid rgba(212,175,55,.45);padding:1px 7px;
+  margin-right:6px;font-weight:700;letter-spacing:.1em}
+
+/* ---------- scrolling ticker ---------- */
+.ticker{position:fixed;left:0;right:0;bottom:0;z-index:20;height:40px;
+  display:flex;align-items:stretch;
+  background:linear-gradient(180deg,#0e1730,#070c16);
+  box-shadow:0 -1px 0 var(--gold),0 -8px 30px rgba(0,0,0,.5)}
+.ticker-label{display:flex;align-items:center;flex:none;
+  transform:skewX(-10deg);margin-left:-10px;padding:0 22px 0 26px;
+  background:linear-gradient(180deg,#f6e27a,#d4af37 58%,#a9832a);
+  color:#141005;font:800 italic 14px/1 var(--cond);letter-spacing:.18em}
+.ticker-label span{transform:skewX(10deg)}
+.ticker-viewport{flex:1;overflow:hidden;display:flex;align-items:center;
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 3%);mask-image:linear-gradient(90deg,transparent,#000 3%)}
+.ticker-move{display:flex;flex:none;width:max-content;
+  animation:tickmove 46s linear infinite}
+.ticker-viewport:hover .ticker-move{animation-play-state:paused}
+@keyframes tickmove{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.tgroup{display:flex;align-items:center}
+.ti{display:flex;align-items:center;white-space:nowrap;
+  font:600 12.5px/1 var(--cond);letter-spacing:.16em;color:#c4cde0;text-transform:uppercase}
+.ti b{color:var(--gold-hi);font-weight:700}
+.ti::after{content:"";width:6px;height:6px;background:var(--gold);flex:none;
+  transform:rotate(45deg);margin:0 20px;opacity:.85}
+
+/* ---------- ON AIR count-in ---------- */
+.onair{position:fixed;inset:0;z-index:50;display:grid;place-items:center;
+  background:radial-gradient(85% 85% at 50% 40%,#0d1730 0%,#04060c 100%);
+  transition:opacity .5s ease}
+.onair[hidden]{display:none}
+.onair.done{opacity:0;pointer-events:none}
+.onair-card{display:flex;flex-direction:column;align-items:center;gap:12px;
+  transform:skewX(-6deg)}
+.onair-net{font:800 italic 15px/1 var(--cond);letter-spacing:.42em;color:var(--gold-hi)}
+.onair-label{font:700 12px/1 var(--cond);letter-spacing:.55em;color:var(--mut)}
+.onair-num{font:800 italic 120px/1 var(--cond);color:var(--ice);
+  text-shadow:0 0 44px rgba(246,226,122,.4),0 4px 0 rgba(0,0,0,.5)}
+.onair-num.pop{animation:numpop .36s ease}
+@keyframes numpop{0%{transform:scale(1.35);opacity:.4}100%{transform:scale(1);opacity:1}}
+.onair-skip{font:600 9.5px/1 var(--cond);letter-spacing:.4em;color:var(--mut);
+  text-transform:uppercase;margin-top:14px;opacity:.7}
+
+/* ---------- responsive ---------- */
+@media (max-width:760px){
+  .scorebug{display:none}
+}
+@media (max-width:640px){
+  .tape-grid{flex-direction:column;gap:10px}
+  .tape-vs{align-self:center;width:48px;height:48px;font-size:17px}
+  .tape-col.r .tape-name{justify-content:flex-start;text-align:left}
+  .tape-col.r .tape-name .txt{align-items:flex-start}
+  .tape-col.r .trow{flex-direction:row}
+  .tape-col.r .trow dd{text-align:right}
+  .tape{padding:28px 18px 16px}
+  .chip{min-width:min(320px,88vw)}
+}
+@media (max-width:520px){
+  .clock{display:none}
+  .hero{font-size:clamp(70px,22vw,120px)}
+  .chip{min-width:min(300px,92vw)}
+  .overline .txt b{letter-spacing:.22em}
+}
+@media (min-width:1600px){
+  .tape{width:min(860px,100%)}
+  .keys{width:min(1080px,100%)}
+}
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}
+  body.js .reveal{opacity:1;transform:none}
+  .ticker-move{animation:none}
+  .ticker-viewport{overflow-x:auto}
+  .hero .l2{animation:none;background-position:0 0,0 0}
+}
+</style>
+</head>
+<body>
+
+  <!-- arena atmosphere -->
+  <div class="arena" aria-hidden="true">
+    <div class="beam beam-l"></div>
+    <div class="beam beam-r"></div>
+    <div class="beam beam-c"></div>
+    <div class="floor-glow"></div>
+    <div class="crowd"></div>
+    <div class="scanlines"></div>
+    <div class="vignette"></div>
+  </div>
+
+  <!-- ON AIR count-in slate (unhidden + driven by JS) -->
+  <div class="onair" id="onair" hidden>
+    <div class="onair-card">
+      <span class="onair-net">KHK SPORTSNET PRESENTS</span>
+      <span class="onair-label">ON AIR IN</span>
+      <span class="onair-num" id="onairNum">3</span>
+      <span class="onair-skip">Click anywhere to skip</span>
+    </div>
+  </div>
+
+  <!-- top broadcast bar -->
+  <header class="topbar">
+    <div class="bug net"><span><b>KHK</b><small>SPORTSNET</small></span></div>
+    <div class="scorebug" aria-hidden="true">
+      <span>YOU<b>0</b></span><span class="sb-rd">RD 1</span><span>CHAMP<b>0</b></span>
+    </div>
+    <div class="topbar-right">
+      <span class="clock"><b>FIGHT NIGHT</b> · <span id="clock">SAT --:--</span></span>
+      <span class="bug live"><span><i></i>LIVE</span></span>
+    </div>
+  </header>
+
+  <main class="stage">
+
+    <div class="overline reveal" style="--d:.05s">
+      <svg class="belt-ic" viewBox="0 0 72 30" aria-hidden="true">
+        <defs>
+          <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#f9e58c"/><stop offset=".55" stop-color="#d4af37"/><stop offset="1" stop-color="#8a6a1f"/>
+          </linearGradient>
+        </defs>
+        <path d="M5 8 Q5 4 9 4 H63 Q67 4 67 8 V22 Q67 26 63 26 H9 Q5 26 5 22 Z" fill="#14203c" stroke="#d4af37" stroke-width="1.5"/>
+        <circle cx="14" cy="15" r="4.5" fill="url(#gGold)" stroke="#f6e27a" stroke-width="1"/>
+        <circle cx="58" cy="15" r="4.5" fill="url(#gGold)" stroke="#f6e27a" stroke-width="1"/>
+        <ellipse cx="36" cy="15" rx="13" ry="10.5" fill="url(#gGold)" stroke="#f6e27a" stroke-width="1.5"/>
+        <path d="M36 9.5l1.8 3.7 4.1.6-3 2.9.7 4.1-3.6-1.9-3.6 1.9.7-4.1-3-2.9 4.1-.6z" fill="#141005"/>
+      </svg>
+      <span class="txt"><b>WORLD WEBCAM CHAMPIONSHIP</b><span>SATURDAY NIGHT FIGHTS</span></span>
+    </div>
+
+    <h1 class="hero reveal" style="--d:.15s">
+      <span class="line l1">TITLE</span>
+      <span class="line l2">SHOT</span>
+    </h1>
+
+    <div class="hero-rule reveal" style="--d:.25s" aria-hidden="true"><i></i></div>
+
+    <p class="tagline reveal" style="--d:.3s">Live from your webcam — <b>twelve rounds</b> for the undisputed crown</p>
+
+    <nav class="cta reveal" style="--d:.4s" aria-label="Main menu">
+      <a class="chip chip-gold" href="../../boxing.html">
+        <span class="chip-body">
+          <span class="chip-label">Enter the Ring</span>
+          <span class="chip-sub">Main event · 12 rounds · webcam required</span>
+        </span>
+        <span class="chip-arrow" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.5"/></svg>
+        </span>
+      </a>
+      <a class="chip chip-steel" href="../../lineup.html">
+        <span class="chip-body">
+          <span class="chip-label">Choose Your Fighter</span>
+          <span class="chip-sub">Scout the champs · pick your opponent</span>
+        </span>
+        <span class="chip-arrow" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.5"/></svg>
+        </span>
+      </a>
+    </nav>
+
+    <section class="tape reveal" style="--d:.5s" aria-label="Tale of the tape">
+      <div class="ribbon"><span>Tale of the Tape</span></div>
+      <div class="tape-grid">
+        <div class="tape-col">
+          <div class="tape-name"><span class="corner-tag corner-blue" aria-hidden="true"></span><span class="txt">You<small>The Challenger</small></span></div>
+          <dl>
+            <div class="trow"><dt>Record</dt><dd>0–0 · Pro Debut</dd></div>
+            <div class="trow"><dt>Corner</dt><dd>Your Living Room</dd></div>
+            <div class="trow"><dt>Stance</dt><dd>Whatever Feels Right</dd></div>
+            <div class="trow"><dt>Reach</dt><dd>Arm's Length</dd></div>
+          </dl>
+        </div>
+        <div class="tape-vs" aria-hidden="true">VS</div>
+        <div class="tape-col r">
+          <div class="tape-name"><span class="txt">???<small>The Champion</small></span><span class="corner-tag corner-red" aria-hidden="true"></span></div>
+          <dl>
+            <div class="trow"><dt>Record</dt><dd>12–0 · Undisputed</dd></div>
+            <div class="trow"><dt>Corner</dt><dd>The Ring</dd></div>
+            <div class="trow"><dt>Stance</dt><dd>Classified</dd></div>
+            <div class="trow"><dt>Reach</dt><dd><a href="../../lineup.html">Scout at Lineup</a></dd></div>
+          </dl>
+        </div>
+      </div>
+      <p class="tape-note">Bubble · Blocky · Bean — three belts, one webcam, no mercy</p>
+    </section>
+
+    <section class="keys reveal" style="--d:.6s" aria-label="How to play">
+      <h2>Keys to the Fight</h2>
+      <ul>
+        <li>
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <circle cx="16" cy="9.5" r="4.5"/>
+            <rect x="5" y="16" width="9" height="10" rx="3"/>
+            <rect x="18" y="16" width="9" height="10" rx="3"/>
+            <path d="M9.5 26v3M22.5 26v3"/>
+          </svg>
+          <div><b>Fists Up</b><p>Hold both fists by your face — that's your guard.</p></div>
+        </li>
+        <li>
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <rect x="4" y="12" width="8" height="8" rx="2.5"/>
+            <path d="M13 16h6M16.5 13l3 3-3 3"/>
+            <circle cx="25.5" cy="16" r="4.5"/><circle cx="25.5" cy="16" r="1.2" fill="currentColor"/>
+          </svg>
+          <div><b>Throw Hands</b><p>Punch straight at the camera to land your shots.</p></div>
+        </li>
+        <li>
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <circle cx="10" cy="19" r="4.5" stroke-dasharray="3 3"/>
+            <circle cx="22" cy="20" r="5"/>
+            <path d="M9 12Q16 5 23 12M20 9.5l3 2.5-3.8.8"/>
+          </svg>
+          <div><b>Slip the Shot</b><p>Lean your head left or right to dodge incoming leather.</p></div>
+        </li>
+        <li>
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M11 23V8M11 8 8 11M11 8l3 3"/>
+            <path d="M21 9v15M21 24l-3-3M21 24l3-3"/>
+            <path d="M6 28h20"/>
+          </svg>
+          <div><b>Cut the Ring</b><p>Lean in to press forward, lean back to step off.</p></div>
+        </li>
+      </ul>
+    </section>
+
+    <footer class="hints reveal" style="--d:.7s">
+      <span><b>C</b>Recenter camera</span><i aria-hidden="true"></i>
+      <span><b>W / S</b>Step · mouse mode</span>
+    </footer>
+
+  </main>
+
+  <!-- scrolling wire ticker -->
+  <div class="ticker" role="marquee" aria-label="Fight night wire">
+    <div class="ticker-label"><span>KHK&nbsp;WIRE</span></div>
+    <div class="ticker-viewport">
+      <div class="ticker-move">
+        <div class="tgroup">
+          <span class="ti"><b>MAIN EVENT SET</b> — Undisputed webcam welterweight crown on the line tonight</span>
+          <span class="ti"><b>TALE OF THE TAPE</b> — Blocky 12-0 (11 KO) · Bubble 9-0 · Bean 10-0 — all belts unified</span>
+          <span class="ti"><b>COMMISSION RULING</b> — Punching the actual monitor is a technical foul</span>
+          <span class="ti"><b>RINGSIDE REPORT</b> — Challenger's corner confirmed as "the living room"</span>
+          <span class="ti"><b>ODDS BOARD</b> — "You" listed as live underdog — guard advised up at all times</span>
+          <span class="ti"><b>ARENA FORECAST</b> — Zero percent chance of mercy</span>
+        </div>
+        <div class="tgroup" aria-hidden="true">
+          <span class="ti"><b>MAIN EVENT SET</b> — Undisputed webcam welterweight crown on the line tonight</span>
+          <span class="ti"><b>TALE OF THE TAPE</b> — Blocky 12-0 (11 KO) · Bubble 9-0 · Bean 10-0 — all belts unified</span>
+          <span class="ti"><b>COMMISSION RULING</b> — Punching the actual monitor is a technical foul</span>
+          <span class="ti"><b>RINGSIDE REPORT</b> — Challenger's corner confirmed as "the living room"</span>
+          <span class="ti"><b>ODDS BOARD</b> — "You" listed as live underdog — guard advised up at all times</span>
+          <span class="ti"><b>ARENA FORECAST</b> — Zero percent chance of mercy</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  document.body.classList.add('js');
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* --- ON AIR count-in --- */
+  var slate = document.getElementById('onair');
+  var num = document.getElementById('onairNum');
+  var finished = false;
+  function go(){
+    if (finished) return; finished = true;
+    document.body.classList.add('ready');
+    if (!slate) return;
+    slate.classList.add('done');
+    setTimeout(function(){ slate.remove(); }, 550);
+  }
+  if (reduce){
+    go();
+  } else if (slate){
+    slate.hidden = false;
+    var n = 3;
+    function show(){
+      num.textContent = n > 0 ? n : 'GO';
+      num.classList.remove('pop'); void num.offsetWidth; num.classList.add('pop');
+    }
+    show();
+    var iv = setInterval(function(){
+      n--;
+      show();
+      if (n < 0){ clearInterval(iv); setTimeout(go, 260); }
+    }, 430);
+    slate.addEventListener('pointerdown', function(){ clearInterval(iv); go(); }, {once:true});
+    addEventListener('keydown', function(){ clearInterval(iv); go(); }, {once:true});
+  } else {
+    go();
+  }
+
+  /* --- live clock in the top bar --- */
+  var clockEl = document.getElementById('clock');
+  var days = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
+  function tickClock(){
+    var d = new Date();
+    var t = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+    clockEl.textContent = days[d.getDay()] + ' ' + t.toUpperCase();
+  }
+  tickClock(); setInterval(tickClock, 1000);
+
+  /* --- subtle spotlight parallax on fine pointers --- */
+  if (!reduce && matchMedia('(pointer:fine)').matches){
+    addEventListener('pointermove', function(e){
+      document.documentElement.style.setProperty('--px', (e.clientX / innerWidth - .5).toFixed(3));
+    }, {passive:true});
+  }
+})();
+</script>
+</body>
+</html>

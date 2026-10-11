@@ -1,0 +1,114 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>avatar inspection harness</title>
+<script type="importmap">
+{ "imports": { "three": "../vendor/three/three.module.js" } }
+</script>
+<style>
+  body { margin: 0; background: #23262e; overflow: hidden; }
+  #h { position: fixed; inset: 0; width: 100%; height: 100%; }
+</style>
+<canvas id="h"></canvas>
+<script type="module">
+import * as THREE from 'three';
+import { buildBoxer } from '../shared/boxing/protoBoxer.js';
+import { loadMitt } from '../shared/boxing/mitts/index.js';
+
+const W = innerWidth, H = innerHeight;
+const ren = new THREE.WebGLRenderer({ antialias: true });
+ren.setSize(W, H); ren.setPixelRatio(1);
+document.body.prepend(ren.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x23262e);
+const cam = new THREE.PerspectiveCamera(46, W / H, .05, 50);
+scene.add(new THREE.HemisphereLight(0xfff3d8, 0x4a3a2c, 1.5));
+const key = new THREE.DirectionalLight(0xfff0d0, 1.6);
+key.position.set(1.5, 2.5, 2); scene.add(key);
+const floor = new THREE.Mesh(new THREE.CircleGeometry(6, 48),
+  new THREE.MeshLambertMaterial({ color: 0x2f3240 }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+
+/* the exact player avatar from game.js — same variant, palette, playerLook */
+const avatar = buildBoxer(THREE, { variant: 'bubble', playerLook: true,
+  palette: { skin: 0xeebd91, skinShade: 0xce9673, skinLight: 0xf5cba3,
+    shorts: 0x354d7a, trim: 0xffe9b8, leaf: 0xffc53d,
+    glove: 0xff6b57, gloveDeep: 0xb43f39, gloveShine: 0xffa18c } });
+scene.add(avatar.group);
+
+const mitt = await loadMitt('classic');
+const hc = document.getElementById('h'), hx = hc.getContext('2d');
+hc.width = W; hc.height = H;
+
+/* ---- replicas of boxing.html's drawEntranceGloves state ---- */
+const GLOVE_SIDES = ['left', 'right'];
+const gloveLM = { left: Array.from({ length: 21 }, () => ({ x: 0, y: 0 })),
+  right: Array.from({ length: 21 }, () => ({ x: 0, y: 0 })) };
+const mittPos = { x: 0, y: 0, size: 0, ang: 0 };
+const mittOpts = { side: 'left', kind: 'fist', reach: 1, squash: 0, dim: 1, lm: null };
+const entrancePoint = new THREE.Vector3(), entranceEdge = new THREE.Vector3(),
+  entranceRight = new THREE.Vector3();
+
+function drawEntranceGloves(hs) {
+  hx.clearRect(0, 0, hc.width, hc.height);
+  if (!avatar.group.visible || !mitt) return;
+  avatar.group.updateMatrixWorld(true);
+  cam.updateMatrixWorld();
+  entranceRight.setFromMatrixColumn(cam.matrixWorld, 0);
+  const gRad = avatar.parts.gloveL.children[0]?.geometry?.boundingSphere?.radius || .2;
+  for (const side of GLOVE_SIDES) {
+    const node = avatar.parts[side === 'left' ? 'gloveL' : 'gloveR'];
+    node.getWorldPosition(entrancePoint);
+    entranceEdge.copy(entrancePoint).addScaledVector(entranceRight, gRad);
+    entrancePoint.project(cam);
+    if (entrancePoint.z < -1 || entrancePoint.z > 1) continue;
+    entranceEdge.project(cam);
+    mittPos.x = (entrancePoint.x + 1) * hc.width * .5;
+    mittPos.y = (1 - entrancePoint.y) * hc.height * .5;
+    mittPos.size = Math.min(96, Math.max(30, Math.hypot(
+      (entranceEdge.x - entrancePoint.x) * hc.width,
+      (entranceEdge.y - entrancePoint.y) * hc.height) * .55));
+    mittPos.ang = 0;
+    const hnd = (hs.hands || []).find(h => h?.side === side && h.lm?.length >= 21);
+    mittOpts.side = side; mittOpts.kind = hnd?.kind || 'fist';
+    mittOpts.reach = 1; mittOpts.squash = 0; mittOpts.dim = 1;
+    if (hnd) {
+      const P = gloveLM[side];
+      for (let i = 0; i < 21; i++) {
+        P[i].x = hnd.lm[i].x * hc.width; P[i].y = hnd.lm[i].y * hc.height;
+      }
+      mittOpts.lm = P;
+      let cx = 0, cy = 0;
+      for (const i of [0, 1, 5, 9, 13, 17]) { cx += P[i].x; cy += P[i].y; }
+      cx /= 6; cy /= 6;
+      const k = mittPos.size * 1.35
+        / (Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y) || 1);
+      mittPos.x += (cx - P[0].x) * k;
+      mittPos.y += (cy - P[0].y) * k;
+    } else {
+      mittOpts.lm = null;
+      mittPos.x += .12 * mittPos.size;
+      mittPos.y += (.29 - 1.15) * mittPos.size;
+    }
+    mitt.draw(hx, mittPos, mittOpts);
+  }
+}
+
+/* ---- controls: pose, hands, camera ---- */
+let cfg = { pose: 'victory', t: 2, hands: [], space: 'wide',
+  view: [0, 1.02, 1.75], look: [0, .82, 0], rot: 0 };
+window.__set = c => { cfg = { ...cfg, ...c }; };
+window.__avatar = avatar; window.__cam = cam;
+
+let last = performance.now();
+(function loop() {
+  requestAnimationFrame(loop);
+  const now = performance.now(), dt = Math.min(.1, (now - last) / 1000); last = now;
+  cam.position.set(...cfg.view); cam.lookAt(...cfg.look);
+  avatar.group.rotation.y = cfg.rot;
+  avatar.pose(cfg.pose, cfg.t);
+  avatar.trackHands({ hands: cfg.hands }, cfg.space);
+  avatar.tick(dt);
+  ren.render(scene, cam);
+  drawEntranceGloves({ hands: cfg.hands });
+})();
+</script>

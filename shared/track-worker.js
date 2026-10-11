@@ -59,8 +59,12 @@ self.onmessage = async (e) => {
           landmarker = await Cls.createFromOptions(fileset, o);
           model = tag;
           // warm-up: the first real detect compiles shaders + inits the graph —
-          // burn a dummy frame at camera size so tensors pre-allocate too
+          // burn a dummy frame at camera size so tensors pre-allocate too.
+          // it consumed ts=1 — floor lastTs so the first real frame can't
+          // arrive with a media-time stamp below it (VIDEO mode demands
+          // strictly increasing ts across EVERY detect on this landmarker)
           try { landmarker.detectForVideo(new OffscreenCanvas(1280, 720), 1); } catch {}
+          lastTs = Math.max(lastTs, 1);
           self.postMessage({ type: 'ready', delegate: tag });
           return;
         } catch (err) { lastErr = err; }

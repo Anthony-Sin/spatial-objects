@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lineup mock 02 — ringside</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#17121f; }
+  iframe { width:100vw; height:100vh; border:0; display:block; }
+</style>
+</head>
+<body>
+<iframe id="f" src="../../lineup.html" title="lineup mock — ringside"></iframe>
+<script>
+/* MOCK 02 · RINGSIDE — arena dark: spotlight cones, vignette, the ring's
+   three ropes running behind the cards like you're in the front row */
+document.getElementById('f').addEventListener('load', (e) => {
+  const s = e.target.contentDocument.createElement('style');
+  s.textContent = `
+    html { background:#14101e; }
+    body { color:#FFF8EC; background:#1c1529;
+      background-image:
+        linear-gradient(112deg, rgba(255,229,178,.16), transparent 42%),
+        linear-gradient(-112deg, rgba(255,229,178,.16), transparent 42%),
+        radial-gradient(90% 55% at 50% 30%, rgba(255,197,61,.12), transparent 70%),
+        linear-gradient(#1c1529 62%, #241a33 62%); }
+    body::before { content:""; position:fixed; left:0; right:0; top:56%; height:26%;
+      z-index:0; pointer-events:none; opacity:.9;
+      background:linear-gradient(transparent 0 11%, rgba(255,107,87,.6) 11% calc(11% + 4px),
+        transparent calc(11% + 4px) 47%, rgba(255,248,236,.55) 47% calc(47% + 4px),
+        transparent calc(47% + 4px) 83%, rgba(93,169,233,.6) 83% calc(83% + 4px),
+        transparent calc(83% + 4px)); }
+    body::after { content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+      background:radial-gradient(115% 90% at 50% 40%, transparent 52%, rgba(8,5,14,.72)); }
+    body > * { position:relative; z-index:1; }
+    .wm, .back { color:#FFF8EC; }
+    .wm span, .note { color:rgba(255,248,236,.65); }
+    .back { border-color:rgba(255,248,236,.4); }
+    .cell, .pill, .enterbar { color:#2B2118; }
+    .cell { box-shadow:0 5px 0 rgba(0,0,0,.5), 0 0 34px rgba(255,197,61,.07); }
+    .enterbar { box-shadow:0 6px 0 rgba(0,0,0,.5), 0 14px 34px rgba(0,0,0,.45); }
+  `;
+  e.target.contentDocument.head.appendChild(s);
+});
+</script>
+</body>
+</html>

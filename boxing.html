@@ -31,8 +31,8 @@
   .card .who { font-size: 11px; letter-spacing: .3em; text-transform: uppercase;
     color: var(--coral); font-weight: 700; }
 
-  /* round + clock — one plate, top centre, like every fight broadcast */
-  .timer { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 20;
+  /* round + clock — one plate in the top-left corner, opposite the score */
+  .timer { position: fixed; top: 18px; left: 28px; z-index: 20;
     text-align: center; color: var(--ink); background: var(--paper);
     border: 2.5px solid var(--ink); border-radius: 16px; padding: 4px 18px 6px;
     box-shadow: 0 5px 0 rgba(43,33,24,.45), 0 12px 28px rgba(0,0,0,.4); }
@@ -40,27 +40,31 @@
   .timer .clock { font-size: 26px; font-weight: 800; line-height: 1; letter-spacing: .04em; }
 
   /* PIP's nameplate floats over its head (positioned every frame from 3D) —
-     name, health and the incoming-punch cue all live where you're looking */
+     a paper strip like the timer card: name, health and stamina read clean
+     against the bright ring instead of dissolving into it */
   .nameplate { position: fixed; left: 0; top: 0; z-index: 18; pointer-events: none;
-    width: 190px; transform: translate(-50%, -100%); text-align: center;
+    width: 230px; transform: translate(-50%, -100%); text-align: center;
     transition: opacity .25s; will-change: transform; }
   .nameplate.off { opacity: 0; }
-  .nameplate .nm { display: inline-block; margin-bottom: 4px; padding: 1px 10px;
-    font-size: 11px; font-weight: 800; letter-spacing: .22em; color: var(--paper);
+  .nameplate .plate { padding: 7px 12px 9px; background: var(--paper);
+    border: 2.5px solid var(--ink); border-radius: 15px;
+    box-shadow: 0 4px 0 rgba(43,33,24,.45), 0 10px 26px rgba(0,0,0,.4); }
+  .nameplate .nm { display: inline-block; margin-bottom: 5px; padding: 1px 11px;
+    font-size: 12px; font-weight: 800; letter-spacing: .22em; color: var(--paper);
     background: var(--ink); border-radius: 99px; }
   .nameplate .nm .gas { display: none; color: var(--sun); margin-left: 6px; }
   .nameplate .nm .gas.on { display: inline; }
-  .nameplate .bar { height: 12px; border: 2.5px solid var(--ink); border-radius: 8px;
+  .nameplate .bar { height: 15px; border: 2.5px solid var(--ink); border-radius: 9px;
     background: rgba(43,33,24,.35); overflow: hidden; box-shadow: 0 3px 0 rgba(43,33,24,.5);
     position: relative; }
   .nameplate .bar i { display: block; height: 100%; background: var(--sky);
     transform-origin: left; transition: transform .18s cubic-bezier(.34,1.56,.64,1); }
-  .nameplate .bar i.ghost { margin-top: -12px; background: rgba(255,248,236,.55);
+  .nameplate .bar i.ghost { margin-top: -15px; background: rgba(255,248,236,.55);
     transition: transform .6s ease .25s; }
   /* PIP's legs: the thin sliver under the hp bar. It visibly drains on the
      3-punch flurry and glows amber-hot when the next one is loaded — the
      cue to finish your guard-up before the windup. */
-  .nameplate .stam { height: 5px; margin: 3px 14px 0; border: 1.5px solid var(--ink);
+  .nameplate .stam { height: 6px; margin: 4px 8px 0; border: 1.5px solid var(--ink);
     border-radius: 5px; background: rgba(43,33,24,.35); overflow: hidden; position: relative; }
   .nameplate .stam i { display: block; height: 100%; background: var(--sun);
     transform-origin: left; transition: transform .3s ease; }
@@ -241,7 +245,7 @@
     .hp-row .lbl { width: 34px; font-size: 9px; }
     .hp-row .track { height: 12px; }
     .hp-row.stam .track { height: 7px; }
-    .timer { top: 10px; }
+    .timer { top: 10px; left: 14px; }
     .score { top: 180px; right: 14px; }
     .score .n { font-size: 24px; }
     .flash { font-size: 22px; }
@@ -262,9 +266,11 @@
   </div>
   <div class="timer"><div class="rd" data-round>RINGSIDE</div><div class="clock" data-time>1:30</div></div>
   <div class="nameplate off" data-plate>
-    <div><span class="nm"><span data-npclbl>PIP</span><span class="gas" data-npcgas>· WINDED</span></span></div>
-    <div class="bar"><i class="ghost" data-nhpghost></i><i data-nhp></i></div>
-    <div class="stam" data-nstamwrap><i data-nstam></i></div>
+    <div class="plate">
+      <div><span class="nm"><span data-npclbl>PIP</span><span class="gas" data-npcgas>· WINDED</span></span></div>
+      <div class="bar"><i class="ghost" data-nhpghost></i><i data-nhp></i></div>
+      <div class="stam" data-nstamwrap><i data-nstam></i></div>
+    </div>
     <div class="tele" data-tele></div>
   </div>
   <div class="tutor" data-tutor></div>
@@ -534,17 +540,17 @@
       plateV.set(n.group.position.x, (n.height || 1.3) + .2, n.group.position.z).project(cam);
       if (plateV.z > 1) return;
       const tx = (plateV.x + 1) * innerWidth / 2;
-      // the plate is anchored by its BOTTOM edge and grows ~87px upward
-      // (name + bar + stam sliver + tele, all always in layout) — clamp low
-      // enough that its top edge can never slide under the timer (~bottom 73px)
-      const ty = Math.max(164, (1 - plateV.y) * innerHeight / 2);
+      // the plate is anchored by its BOTTOM edge and grows ~105px upward
+      // (paper card + tele slot, all always in layout) — clamp low enough
+      // that its top edge can never slide under the top HUD strip (~75px)
+      const ty = Math.max(180, (1 - plateV.y) * innerHeight / 2);
       if (plate.x < -900) { plate.x = tx; plate.y = ty; }
       plate.x += (tx - plate.x) * .25; plate.y += (ty - plate.y) * .25;
       const pxr = Math.round(plate.x), pyr = Math.round(plate.y);
       if (hLast.plX !== pxr || hLast.plY !== pyr) {
         hLast.plX = pxr; hLast.plY = pyr;
         el.plate.style.transform = `translate(${pxr}px, ${pyr}px) translate(-50%, -100%)`;
-        el.flash.style.transform = `translate(${pxr + 110}px, ${pyr + 10}px)`;
+        el.flash.style.transform = `translate(${pxr + 125}px, ${pyr + 10}px)`;
       }
     };
     const hud = (out) => {

@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HAYMAKER — webcam boxing</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Oswald:wght@400;600;700&family=Special+Elite&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#efe1bf; --paper-dk:#e6d2a4;
+    --ink:#2a231a;
+    --red:#a8261d; --red-dk:#7e1b13;
+    --navy:#22364f;
+    --cream:#f4e8cd;
+    --wall:#131822;
+    --disp:"Anton","Arial Narrow Bold","Franklin Gothic Medium",Impact,sans-serif;
+    --cond:"Oswald","Arial Narrow","Franklin Gothic Medium",system-ui,sans-serif;
+    --type:"Special Elite","Courier Prime","Courier New",monospace;
+  }
+  *{box-sizing:border-box;margin:0}
+  html{color-scheme:dark}
+  body{
+    min-height:100vh; display:grid; background:var(--wall);
+    font-family:var(--cond); color:var(--ink);
+    padding:clamp(14px,3.5vmin,48px); overflow-x:hidden;
+  }
+  /* the gym wall: faint noise + a hanging-light glow + vignette */
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none;
+    background:
+      radial-gradient(circle,rgba(255,255,255,.035) 1px,transparent 1.3px) 0 0/6px 6px,
+      radial-gradient(1100px 620px at 50% 22%,rgba(255,218,150,.10),transparent 62%),
+      radial-gradient(120% 90% at 50% 55%,transparent 45%,rgba(0,0,0,.55));
+  }
+  .tilt{ margin:auto; perspective:1600px; }
+  .tilt-inner{ transition:transform .6s cubic-bezier(.22,1,.36,1); transform-style:preserve-3d; will-change:transform; }
+
+  /* ---------- THE POSTER ---------- */
+  .poster{
+    container-type:inline-size;
+    position:relative; width:min(94vw,860px);
+    transform-origin:50% -30px;
+    animation:sway 6.5s ease-in-out infinite;
+    background:linear-gradient(178deg,#f2e5c2,var(--paper) 40%,var(--paper-dk));
+    border:4px solid var(--ink);
+    border-radius:6px 14px 5px 18px / 16px 5px 17px 6px; /* wobbly hand-torn edge */
+    box-shadow:0 34px 70px rgba(0,0,0,.6),0 6px 16px rgba(0,0,0,.45);
+    padding:7px;
+  }
+  @keyframes sway{ 0%,100%{transform:rotate(-1.35deg)} 50%{transform:rotate(-.75deg)} }
+
+  /* aged-paper texture: halftone dots, fold creases, tea stains, edge burn */
+  .poster::before{
+    content:""; position:absolute; inset:0; z-index:1; pointer-events:none;
+    border-radius:inherit;
+    background:
+      radial-gradient(circle,rgba(42,35,26,.13) 1px,transparent 1.35px) 0 0/6px 6px,
+      radial-gradient(circle,rgba(168,38,29,.07) 1px,transparent 1.35px) 3px 3px/11px 11px,
+      linear-gradient(180deg,transparent calc(33.2% - 1px),rgba(42,35,26,.10) 33.2%,transparent calc(33.2% + 1px)),
+      linear-gradient(180deg,transparent calc(66.6% - 1px),rgba(42,35,26,.09) 66.6%,transparent calc(66.6% + 1px)),
+      linear-gradient(90deg,transparent calc(50% - 1px),rgba(42,35,26,.06) 50%,transparent calc(50% + 1px)),
+      radial-gradient(ellipse 34% 18% at 88% 7%,rgba(146,98,32,.16),transparent 68%),
+      radial-gradient(ellipse 40% 22% at 4% 93%,rgba(146,98,32,.13),transparent 68%);
+    mix-blend-mode:multiply;
+    box-shadow:inset 0 0 80px rgba(122,88,40,.35),inset 0 0 16px rgba(122,88,40,.28);
+  }
+
+  .tape{
+    position:absolute; top:-15px; width:clamp(64px,12cqw,112px); height:28px; z-index:2;
+    background:linear-gradient(180deg,rgba(240,222,175,.66),rgba(222,199,150,.62));
+    box-shadow:0 2px 4px rgba(0,0,0,.28);
+    clip-path:polygon(2% 0,98% 4%,100% 96%,1% 100%);
+    opacity:.92;
+  }
+  .tape.tl{left:9%; transform:rotate(-9deg)}
+  .tape.tr{right:9%; transform:rotate(7deg) scaleX(-1)}
+
+  .frame{
+    border:2px solid var(--ink);
+    padding:clamp(14px,4cqw,34px) clamp(12px,3.4cqw,30px);
+    text-align:center; position:relative;
+  }
+
+  .kicker{
+    font-weight:600; font-size:clamp(8px,1.9cqw,13px); letter-spacing:.34em;
+    color:var(--navy); display:flex; align-items:center; justify-content:center; gap:.8em;
+    text-transform:uppercase;
+  }
+  .kicker svg{width:1em;height:1em;fill:var(--red);flex:0 0 auto}
+
+  h1{
+    font-family:var(--disp); font-weight:400;
+    font-size:clamp(46px,13.5vw,148px);
+    font-size:clamp(46px,15.2cqw,148px); line-height:.98; letter-spacing:.015em;
+    margin:.06em 0 .04em; transform:rotate(-1deg);
+    color:var(--ink);
+    text-shadow:.045em .045em 0 var(--red), .09em .09em 0 rgba(34,54,79,.16); /* misregistered plates */
+  }
+  .tagline{
+    display:flex; align-items:center; gap:12px; justify-content:center;
+    font-weight:600; font-size:clamp(8px,2.05cqw,14px); letter-spacing:.24em;
+    color:var(--ink); text-transform:uppercase; margin:0 auto;
+  }
+  .tagline::before,.tagline::after{content:"";flex:1;max-width:120px;height:2px;background:var(--ink);opacity:.75}
+
+  /* "TONIGHT ONLY" ribbon with folded tails */
+  .ribbon{
+    position:relative; z-index:0; display:inline-block; margin:clamp(8px,2cqw,16px) auto 0;
+    background:linear-gradient(180deg,#b62d21,var(--red) 55%,#8f1f16);
+    color:var(--cream); font-family:var(--disp);
+    font-size:clamp(13px,2.7vw,22px); font-size:clamp(13px,3cqw,22px);
+    letter-spacing:.3em; text-indent:.3em;
+    padding:.34em 1.1em .3em; transform:rotate(-1.2deg);
+    box-shadow:0 3px 0 rgba(42,35,26,.45);
+  }
+  .ribbon::before,.ribbon::after{
+    content:""; position:absolute; top:22%; width:1.7em; height:100%; z-index:-1;
+    background:var(--red-dk);
+  }
+  .ribbon::before{left:-1.15em; clip-path:polygon(.62em 0,100% 0,100% 100%,.62em 100%,0 50%)}
+  .ribbon::after {right:-1.15em; clip-path:polygon(0 0,calc(100% - .62em) 0,100% 50%,calc(100% - .62em) 100%,0 100%)}
+
+  /* ---------- MAIN EVENT card ---------- */
+  .card{ margin-top:clamp(12px,2.6cqw,24px); border:3px solid var(--ink); background:rgba(255,251,238,.22) }
+  .card-head{
+    border-bottom:4px double var(--ink); padding:clamp(8px,1.6cqw,14px) 8px;
+    display:flex; align-items:center; justify-content:center; gap:.7em;
+  }
+  .card-head .hg{width:clamp(20px,4cqw,34px);height:auto;flex:0 0 auto}
+  .card-head .hg.l{transform:rotate(-22deg)}
+  .card-head .hg.r{transform:rotate(22deg) scaleX(-1)}
+  .card-title{
+    font-family:var(--disp); font-size:clamp(20px,4.8vw,44px); font-size:clamp(20px,5.4cqw,44px);
+    letter-spacing:.12em; line-height:1;
+  }
+  .card-sub{
+    font-size:clamp(7px,1.7cqw,12px); font-weight:600; letter-spacing:.3em;
+    color:var(--navy); text-transform:uppercase; margin-top:.4em;
+  }
+  .bout{
+    display:grid; grid-template-columns:1fr auto 1fr; align-items:center;
+    gap:clamp(4px,2cqw,22px); padding:clamp(12px,3cqw,28px) clamp(6px,2cqw,20px);
+  }
+  .fighter{text-align:center;min-width:0}
+  .role{display:block;font-weight:700;font-size:clamp(7px,1.8cqw,11px);letter-spacing:.3em;text-transform:uppercase}
+  .you .role{color:var(--navy)} .champ .role{color:var(--red)}
+  .fname{
+    display:inline-block; font-family:var(--disp);
+    font-size:clamp(30px,7.4vw,74px); font-size:clamp(30px,8.2cqw,74px);
+    line-height:1.02; letter-spacing:.02em;
+    margin:.08em 0 .1em;
+  }
+  .fname.slam{animation:slam .48s cubic-bezier(.2,1.5,.4,1)}
+  @keyframes slam{
+    0%{transform:scale(1.6) rotate(-7deg);opacity:0}
+    55%{transform:scale(.94) rotate(1.5deg);opacity:1}
+    100%{transform:scale(1) rotate(0);opacity:1}
+  }
+  .stat{
+    display:block; font-family:var(--type);
+    font-size:clamp(7px,1.75cqw,11.5px); color:rgba(42,35,26,.72); letter-spacing:.05em;
+  }
+  .vs{width:clamp(46px,10vw,96px);width:clamp(46px,11cqw,96px)}
+  .vs svg{display:block;width:100%;height:auto;color:var(--navy);animation:vswob 8s ease-in-out infinite}
+  @keyframes vswob{0%,100%{transform:rotate(-5deg)}50%{transform:rotate(5deg)}}
+  .vs text{font-family:var(--disp);font-size:33px;fill:var(--cream)}
+
+  .card-foot{border-top:4px double var(--ink);padding:clamp(7px,1.5cqw,12px) 8px}
+  .under{
+    display:flex;justify-content:center;gap:1.1em;flex-wrap:wrap;
+    font-weight:600;font-size:clamp(7px,1.8cqw,11.5px);letter-spacing:.22em;text-transform:uppercase;
+  }
+  .also{
+    margin-top:.55em; font-family:var(--type);
+    font-size:clamp(7px,1.7cqw,11px); letter-spacing:.12em; color:rgba(42,35,26,.78);
+  }
+
+  /* ---------- RULES ---------- */
+  .rules{margin-top:clamp(14px,3cqw,26px)}
+  .rules h2{
+    display:flex;align-items:center;gap:14px;justify-content:center;
+    font-weight:700;font-size:clamp(9px,2.1cqw,14px);letter-spacing:.34em;
+    text-transform:uppercase;color:var(--ink);
+  }
+  .rules h2::before,.rules h2::after{content:"";flex:1;height:1.5px;background:var(--ink);opacity:.6}
+  .rules ol{
+    list-style:none;padding:0;margin:clamp(8px,2cqw,16px) 0 0;
+    display:grid;grid-template-columns:repeat(4,1fr);gap:clamp(6px,1.6cqw,14px);
+  }
+  .rules li{
+    border:1.5px solid var(--ink); padding:clamp(7px,1.7cqw,13px) 6px;
+    display:flex;flex-direction:column;align-items:center;gap:.35em;
+    background:rgba(255,251,238,.25);
+  }
+  .rules .no{font-weight:700;color:var(--red);font-size:clamp(9px,2cqw,13px);letter-spacing:.2em}
+  .rules .ic{width:clamp(34px,6.4cqw,50px);height:auto;color:var(--ink);--gg:var(--red);--gc:var(--cream);--gs:var(--ink)}
+  .rules .lbl{font-weight:700;font-size:clamp(7px,1.85cqw,11.5px);letter-spacing:.14em;text-transform:uppercase}
+  .rules .txt{font-family:var(--type);font-size:clamp(6.5px,1.6cqw,10px);color:rgba(42,35,26,.7);letter-spacing:.03em}
+
+  /* ---------- TICKET STUB buttons ---------- */
+  .stubs{display:grid;gap:clamp(10px,2.4cqw,18px);margin:clamp(16px,3.4cqw,30px) auto 0;max-width:560px}
+  .stub{
+    --sb:var(--red);
+    position:relative; display:flex; align-items:stretch;
+    background:var(--sb); color:var(--cream); text-decoration:none;
+    border:3px solid var(--ink);
+    box-shadow:0 4px 0 rgba(42,35,26,.55);
+    transition:transform .16s cubic-bezier(.34,1.56,.64,1),box-shadow .16s;
+  }
+  .stub.p{transform:rotate(-1deg)}
+  .stub.s{--sb:var(--navy);transform:rotate(.8deg)}
+  .stub:hover{transform:translateY(-3px) rotate(-1.4deg);box-shadow:0 7px 0 rgba(42,35,26,.55)}
+  .stub.s:hover{transform:translateY(-3px) rotate(1.2deg)}
+  .stub:active{transform:translateY(2px);box-shadow:0 1px 0 rgba(42,35,26,.55)}
+  .stub:focus-visible{outline:3px solid var(--navy);outline-offset:4px}
+  .stub.s:focus-visible{outline-color:var(--red)}
+  /* punched notches on the perforation line */
+  .stub::before,.stub::after{
+    content:"";position:absolute;left:clamp(56px,12cqw,86px);width:15px;height:15px;
+    border-radius:50%;background:var(--paper);border:2px solid var(--ink);z-index:2;
+    transform:translateX(-50%);
+  }
+  .stub::before{top:-11px}
+  .stub::after{bottom:-11px}
+  .tab{
+    flex:0 0 clamp(56px,12cqw,86px); display:grid;place-items:center;
+    border-right:2.5px dashed rgba(244,232,205,.72);
+    writing-mode:vertical-rl; text-orientation:mixed;
+    font-family:var(--type); font-size:clamp(7px,1.7cqw,10.5px); letter-spacing:.32em;
+    padding:8px 0;
+  }
+  .stub .body{flex:1;padding:clamp(10px,2.4cqw,18px) clamp(28px,9cqw,84px) clamp(10px,2.4cqw,18px) clamp(12px,3cqw,26px);text-align:left;min-width:0}
+  .stub .lbl{display:block;font-family:var(--disp);font-size:clamp(18px,4.2vw,34px);font-size:clamp(18px,4.8cqw,34px);letter-spacing:.06em;line-height:1.05}
+  .stub .sub{display:block;font-family:var(--type);font-size:clamp(7px,1.7cqw,10.5px);letter-spacing:.18em;opacity:.85;margin-top:.35em;text-transform:uppercase}
+  .stub .bar{
+    display:block;width:clamp(52px,11cqw,88px);height:clamp(7px,1.6cqw,12px);margin-top:.5em;
+    background:repeating-linear-gradient(90deg,currentColor 0 2px,transparent 2px 4px,currentColor 4px 7px,transparent 7px 9px);
+    opacity:.8;
+  }
+  /* rubber ink stamp — slams on hover/focus */
+  .stamp{
+    position:absolute;right:-12px;top:50%;margin-top:-33px;width:66px;height:66px;
+    display:grid;place-items:center;text-align:center;border-radius:50%;
+    border:3px solid currentColor;color:var(--cream);pointer-events:none;z-index:3;
+    box-shadow:inset 0 0 0 3px var(--sb),inset 0 0 0 5.5px currentColor;
+    font-family:var(--type);font-size:8.5px;letter-spacing:.1em;line-height:1.25;
+    opacity:0;transform:scale(1.8) rotate(-32deg);
+    transition:transform .2s cubic-bezier(.2,1.5,.35,1),opacity .12s;
+  }
+  .stub:hover .stamp,.stub:focus-visible .stamp{opacity:.95;transform:scale(1) rotate(-14deg)}
+
+  /* ---------- fine print ---------- */
+  .fine{
+    margin-top:clamp(14px,3cqw,26px);padding-top:clamp(8px,1.8cqw,14px);
+    border-top:1.5px solid var(--ink);
+    display:flex;justify-content:space-between;gap:6px 18px;flex-wrap:wrap;
+    font-family:var(--type);font-size:clamp(7px,1.7cqw,10.5px);
+    letter-spacing:.14em;color:rgba(42,35,26,.78);text-transform:uppercase;
+  }
+  .fine b{color:var(--red);font-weight:700}
+
+  @media (max-width:560px){
+    .rules ol{grid-template-columns:1fr 1fr}
+    .fine{justify-content:center;text-align:center}
+    .stub .body{padding-right:clamp(30px,14cqw,58px)}
+    .stamp{width:56px;height:56px;margin-top:-28px;right:-8px;font-size:7.5px}
+  }
+  @media (min-width:2000px){
+    .poster{width:min(90vw,1400px)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    .tilt-inner{transform:none!important}
+  }
+</style>
+</head>
+<body>
+
+<!-- reusable ink drawings -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="glove" viewBox="0 0 96 96">
+      <path d="M30 40C18 40 12 52 14 64 16 78 28 88 46 88 64 88 80 78 82 60 84 44 76 30 62 28L58 22C56 16 48 14 42 18 40 10 30 8 26 14 22 20 26 28 30 32Z"
+        fill="var(--gg,#a8261d)" stroke="var(--gs,#2a231a)" stroke-width="5" stroke-linejoin="round"/>
+      <rect x="26" y="70" width="44" height="18" rx="8" fill="var(--gc,#f4e8cd)" stroke="var(--gs,#2a231a)" stroke-width="5"/>
+      <path d="M34 75V84M44 75V84M54 75V84" stroke="var(--gs,#2a231a)" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+    </symbol>
+    <symbol id="burst" viewBox="0 0 100 100">
+      <g fill="currentColor">
+        <rect x="18" y="18" width="64" height="64"/>
+        <rect x="18" y="18" width="64" height="64" transform="rotate(30 50 50)"/>
+        <rect x="18" y="18" width="64" height="64" transform="rotate(60 50 50)"/>
+      </g>
+    </symbol>
+    <symbol id="st5" viewBox="0 0 24 24">
+      <path d="M12 2l3.05 6.63 7 .78-5.22 4.85 1.43 6.96L12 17.6 5.74 21.2 7.17 14.26 1.95 9.4l7-.78Z"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="tilt">
+ <div class="tilt-inner">
+  <main class="poster" role="main" aria-label="Haymaker start menu">
+    <span class="tape tl" aria-hidden="true"></span>
+    <span class="tape tr" aria-hidden="true"></span>
+
+    <div class="frame">
+      <div class="kicker">
+        <svg aria-hidden="true"><use href="#st5"/></svg>
+        The Camera District Athletic Club presents
+        <svg aria-hidden="true"><use href="#st5"/></svg>
+      </div>
+
+      <h1>HAYMAKER</h1>
+      <p class="tagline">A webcam prizefight — your fists are the gloves</p>
+
+      <div class="ribbon">TONIGHT ONLY</div>
+
+      <!-- the fight card -->
+      <section class="card" aria-label="Main event">
+        <div class="card-head">
+          <svg class="hg l" viewBox="0 0 96 96" aria-hidden="true"><use href="#glove"/></svg>
+          <div>
+            <div class="card-title">MAIN EVENT</div>
+            <div class="card-sub">Twelve rounds · Undisputed lensweight title</div>
+          </div>
+          <svg class="hg r" viewBox="0 0 96 96" aria-hidden="true"><use href="#glove"/></svg>
+        </div>
+
+        <div class="bout">
+          <div class="fighter you">
+            <span class="role">The Challenger</span>
+            <span class="fname">YOU</span>
+            <span class="stat">webcam debut · reach: arm's length</span>
+          </div>
+          <div class="vs" aria-hidden="true">
+            <svg viewBox="0 0 100 100"><use href="#burst"/><text x="50" y="59" text-anchor="middle">VS</text></svg>
+          </div>
+          <div class="fighter champ">
+            <span class="role">The Champion</span>
+            <span class="fname" id="champName">BUBBLE</span>
+            <span class="stat" id="champStat">sprout crown · springy stance</span>
+          </div>
+        </div>
+
+        <div class="card-foot">
+          <div class="under"><span>Doors: whenever your camera's on</span><span>·</span><span>Admission: one webcam</span></div>
+          <div class="also">Also on the bill — BUBBLE · BLOCKY · BEAN, the cartoon stable</div>
+        </div>
+      </section>
+
+      <!-- how to play -->
+      <section class="rules" aria-label="How to play">
+        <h2>Queensberry Rules</h2>
+        <ol>
+          <li>
+            <span class="no">I.</span>
+            <svg class="ic" viewBox="0 0 48 48" aria-hidden="true">
+              <use href="#glove" x="1" y="4" width="22" height="22"/>
+              <g transform="translate(48 0) scale(-1 1)"><use href="#glove" x="1" y="4" width="22" height="22"/></g>
+              <path d="M6 40h36" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+            </svg>
+            <span class="lbl">Fists up = guard</span>
+            <span class="txt">hold both hands high</span>
+          </li>
+          <li>
+            <span class="no">II.</span>
+            <svg class="ic" viewBox="0 0 48 48" aria-hidden="true">
+              <g transform="rotate(-90 12 23)"><use href="#glove" x="1" y="12" width="22" height="22"/></g>
+              <path d="M26 17h6M28 23h9M26 29h6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+              <circle cx="41" cy="23" r="4.6" fill="none" stroke="currentColor" stroke-width="2.4"/>
+              <circle cx="41" cy="23" r="1.5" fill="currentColor"/>
+            </svg>
+            <span class="lbl">Punch = strike</span>
+            <span class="txt">jab straight at the camera</span>
+          </li>
+          <li>
+            <span class="no">III.</span>
+            <svg class="ic" viewBox="0 0 48 48" aria-hidden="true">
+              <circle cx="24" cy="15" r="8" fill="none" stroke="currentColor" stroke-width="2.6"/>
+              <path d="M24 23v7M13 41q11-10 22 0" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+              <path d="M11 15H3M7 11l-4 4 4 4M37 15h8M41 11l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="lbl">Lean head = dodge</span>
+            <span class="txt">slip left or right</span>
+          </li>
+          <li>
+            <span class="no">IV.</span>
+            <svg class="ic" viewBox="0 0 48 48" aria-hidden="true">
+              <path d="M24 5v38M18 11l6-6 6 6M18 37l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M8 9h5M35 9h5M8 39h5M35 39h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+            </svg>
+            <span class="lbl">Lean fwd/back = step</span>
+            <span class="txt">close in or give ground</span>
+          </li>
+        </ol>
+      </section>
+
+      <!-- ticket stub menu -->
+      <nav class="stubs" aria-label="Menu">
+        <a class="stub p" href="../../boxing.html" aria-label="Enter the Ring — fight the champion">
+          <span class="tab" aria-hidden="true">ADMIT ONE · № 001</span>
+          <span class="body">
+            <span class="lbl">Enter the Ring</span>
+            <span class="sub">Main event · fight the champ</span>
+            <i class="bar" aria-hidden="true"></i>
+          </span>
+          <span class="stamp" aria-hidden="true">PAID IN<br>PUNCHES</span>
+        </a>
+        <a class="stub s" href="../../lineup.html" aria-label="Choose Your Fighter — pick your opponent">
+          <span class="tab" aria-hidden="true">SCOUT PASS · № 002</span>
+          <span class="body">
+            <span class="lbl">Choose Your Fighter</span>
+            <span class="sub">Pick who you're up against</span>
+            <i class="bar" aria-hidden="true"></i>
+          </span>
+          <span class="stamp" aria-hidden="true">SCOUT<br>REPORT</span>
+        </a>
+      </nav>
+
+      <footer class="fine">
+        <span>Fine print — <b>C</b> recenter view · <b>W/S</b> step in mouse mode</span>
+        <span>Printed by the Knighthacks press · MMXXVI · no refunds, no rematches</span>
+      </footer>
+    </div>
+  </main>
+ </div>
+</div>
+
+<script>
+(function(){
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* The champ on the card cycles through the stable, letterpress-slam style */
+  var CHAMPS = [
+    { n:'BUBBLE', s:'sprout crown · springy stance' },
+    { n:'BLOCKY', s:'flat top · compact guard' },
+    { n:'BEAN',   s:'leaf cap · loose weave' }
+  ];
+  var nameEl = document.getElementById('champName');
+  var statEl = document.getElementById('champStat');
+  if(!reduce && nameEl){
+    var i = 0;
+    setInterval(function(){
+      i = (i+1) % CHAMPS.length;
+      nameEl.textContent = CHAMPS[i].n;
+      statEl.textContent = CHAMPS[i].s;
+      nameEl.classList.remove('slam');
+      void nameEl.offsetWidth; /* restart the stamp-in animation */
+      nameEl.classList.add('slam');
+    }, 2600);
+  }
+
+  /* loose-paper parallax: the sheet leans a touch toward the cursor */
+  if(!reduce){
+    var t = document.querySelector('.tilt-inner');
+    addEventListener('pointermove', function(e){
+      if(e.pointerType === 'touch') return;
+      var x = e.clientX / innerWidth - .5, y = e.clientY / innerHeight - .5;
+      t.style.transform = 'rotateX(' + (-y*2.2).toFixed(2) + 'deg) rotateY(' + (x*3).toFixed(2) + 'deg)';
+    }, {passive:true});
+  }
+})();
+</script>
+</body>
+</html>

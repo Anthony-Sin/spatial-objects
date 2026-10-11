@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SCRAP! — webcam boxing</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400&family=Marcellus&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#050403;
+    --warm:#ffd9a3;
+    --warm-hi:#ffe8c6;
+    --paper:#efe3cd;
+    --serif:"Marcellus","Palatino Linotype",Palatino,Georgia,serif;
+    --sans:"Jost","Avenir Next","Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0}
+  html{color-scheme:dark}
+  body{
+    min-height:100vh;min-height:100dvh;
+    display:flex;flex-direction:column;
+    background:var(--bg);color:var(--paper);
+    font-family:var(--sans);overflow-x:hidden;
+  }
+  /* faint ambient bloom up top + edge vignette over the stage only */
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
+    background:
+      radial-gradient(90% 60% at 50% 0%, rgba(255,205,140,.05), transparent 55%),
+      radial-gradient(115% 95% at 50% 42%, transparent 52%, rgba(0,0,0,.62) 100%);
+  }
+
+  /* ================= STAGE ================= */
+  .stage{position:relative;flex:1 0 auto;height:54vh;min-height:clamp(280px,50vh,440px)}
+  .rig{position:absolute;inset:0;transition:transform .55s cubic-bezier(.2,.8,.25,1);will-change:transform}
+
+  /* lamp: a warm bloom + tiny bulb point where the cone converges */
+  .source{position:absolute;top:-4%;left:50%;width:min(34vw,300px);height:16%;min-height:70px;
+    transform:translateX(-50%);pointer-events:none;
+    background:radial-gradient(ellipse at 50% 30%, rgba(255,224,172,.42), rgba(255,199,124,.12) 52%, transparent 72%);
+    filter:blur(7px);animation:breathe 9s ease-in-out infinite}
+  .source::before{content:"";position:absolute;left:50%;top:0;width:1px;height:26%;
+    background:linear-gradient(to bottom,transparent,rgba(255,222,170,.25))}
+  .source::after{content:"";position:absolute;left:50%;top:26%;width:7px;height:7px;border-radius:50%;
+    transform:translate(-50%,-50%);background:#ffedc9;
+    box-shadow:0 0 14px 4px rgba(255,216,150,.75),0 0 44px 16px rgba(255,198,120,.28)}
+
+  /* the beam: outer soft cone + hotter core, edges faded by mask, softened by blur */
+  .cone{position:absolute;top:0;left:50%;height:100%;width:min(92vw,64vh);
+    transform:translateX(-50%);
+    clip-path:polygon(45% 0,55% 0,103% 100%,-3% 100%);pointer-events:none}
+  .cone::before,.cone::after{content:"";position:absolute;inset:0}
+  .cone::before{
+    background:linear-gradient(to bottom, rgba(255,221,165,.30), rgba(255,201,126,.11) 58%, transparent 92%);
+    -webkit-mask:linear-gradient(to right,transparent,#000 20%,#000 80%,transparent);
+            mask:linear-gradient(to right,transparent,#000 20%,#000 80%,transparent);
+    filter:blur(9px);animation:breathe 9s ease-in-out infinite}
+  .cone::after{
+    clip-path:polygon(48% 0,52% 0,83% 100%,17% 100%);
+    background:linear-gradient(to bottom, rgba(255,236,196,.46), rgba(255,215,150,.15) 52%, transparent 86%);
+    -webkit-mask:linear-gradient(to right,transparent,#000 24%,#000 74%,transparent);
+            mask:linear-gradient(to right,transparent,#000 24%,#000 74%,transparent);
+    filter:blur(6px);animation:breathe 9s ease-in-out -3s infinite}
+
+  /* dust motes drifting down the beam (spawned by JS, clipped to the cone) */
+  .m{position:absolute;top:-4%;width:var(--s);height:var(--s);border-radius:50%;opacity:0;
+    background:radial-gradient(circle,rgba(255,232,196,.95),rgba(255,228,184,0) 70%);
+    animation:mote var(--d) linear var(--delay) infinite}
+  @keyframes mote{
+    0%{top:-4%;transform:translateX(0);opacity:0}
+    7%{opacity:var(--o)}88%{opacity:var(--o)}
+    100%{top:105%;transform:translateX(var(--dx));opacity:0}}
+
+  /* warm pool where the beam lands + a soft shadow under the gloves */
+  .pool{position:absolute;left:50%;top:79%;width:min(88vw,64vh);height:23%;
+    transform:translateX(-50%);pointer-events:none;
+    background:radial-gradient(ellipse at center, rgba(255,208,144,.24), rgba(255,196,120,.09) 46%, transparent 72%);
+    filter:blur(5px);animation:breathe 9s ease-in-out -1.5s infinite}
+  .gshadow{position:absolute;left:50%;top:86%;width:min(46%,340px);height:26px;
+    transform:translateX(-50%);border-radius:50%;
+    background:radial-gradient(ellipse at center, rgba(0,0,0,.6), transparent 68%);
+    filter:blur(6px)}
+
+  .gloves{position:absolute;top:0;left:50%;height:100%;transform:translateX(-50%)}
+  .hang{transform-box:view-box;transform-origin:200px 0;
+    animation:sway 9s ease-in-out infinite;
+    filter:drop-shadow(0 0 22px rgba(255,178,105,.10))}
+  @keyframes sway{0%,100%{transform:rotate(-1.4deg)}50%{transform:rotate(1.4deg)}}
+  @keyframes breathe{0%,100%{opacity:.78}50%{opacity:1}}
+
+  /* ================= CONTENT ================= */
+  .content{position:relative;z-index:2;flex:0 0 auto;text-align:center;
+    margin-top:clamp(-82px,-7.5vh,-30px);
+    padding:0 20px clamp(24px,4.5vh,56px)}
+  .wordmark{font-family:var(--serif);font-weight:400;
+    font-size:clamp(26px,4.2vmin,64px);letter-spacing:.36em;padding-left:.36em;
+    color:#f3e8d3;text-shadow:0 0 26px rgba(255,206,142,.4),0 0 60px rgba(255,190,115,.16)}
+  .wordmark .bang{color:var(--warm-hi)}
+  .wordmark::after{content:"";display:block;width:64px;height:1px;
+    margin:clamp(10px,1.6vmin,16px) auto 0;
+    background:linear-gradient(90deg,transparent,rgba(255,212,152,.55),transparent)}
+
+  .actions{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;
+    margin-top:clamp(22px,3.4vmin,34px)}
+  .btn{font-family:var(--sans);font-weight:400;text-transform:uppercase;
+    font-size:clamp(11px,1.5vmin,15px);letter-spacing:.26em;
+    text-decoration:none;color:#f4e2c2;text-align:center;
+    padding:clamp(13px,1.9vmin,17px) clamp(24px,3.6vmin,38px);
+    min-width:min(238px,78vw);
+    border:1px solid rgba(244,214,164,.30);border-radius:2px;background:transparent;
+    transition:border-color .25s ease,background .25s ease,color .25s ease,box-shadow .25s ease,transform .25s ease}
+  .btn.primary{border-color:rgba(255,216,158,.78);color:#ffe9c6;
+    background:rgba(255,203,130,.07);
+    box-shadow:0 0 22px rgba(255,198,120,.10),inset 0 0 18px rgba(255,205,140,.05)}
+  .btn.primary:hover{border-color:#ffe0ae;color:#fff6e4;background:rgba(255,206,138,.14);
+    box-shadow:0 0 30px rgba(255,203,130,.22),inset 0 0 22px rgba(255,208,145,.09);
+    transform:translateY(-1px)}
+  .btn.ghost{color:rgba(238,222,196,.66)}
+  .btn.ghost:hover{border-color:rgba(244,220,180,.6);color:#efe0c6;
+    background:rgba(255,210,150,.06);transform:translateY(-1px)}
+  .btn:focus{outline:none}
+  .btn:focus-visible{outline:2px solid var(--warm);outline-offset:4px;
+    box-shadow:0 0 0 4px rgba(255,217,163,.12),0 0 26px rgba(255,205,140,.3)}
+
+  .hint{margin-top:clamp(18px,3.2vmin,38px);
+    font-size:clamp(10px,1.3vmin,12.5px);letter-spacing:.3em;
+    text-transform:uppercase;color:rgba(236,220,194,.30)}
+  .hint kbd{font:inherit;border:1px solid rgba(236,220,194,.26);border-radius:4px;
+    padding:1.5px 7px;margin-right:2px;color:rgba(236,220,194,.44)}
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    .m{display:none}
+    .cone::before{opacity:.85}
+    .cone::after,.source,.pool{opacity:.9}
+  }
+</style>
+</head>
+<body>
+<div class="stage" aria-hidden="true">
+  <div class="rig" id="rig">
+    <div class="source"></div>
+    <div class="cone" id="cone"></div>
+    <div class="pool"></div>
+    <div class="gshadow"></div>
+    <svg class="gloves" viewBox="0 0 400 640" fill="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="gGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#4a2b1e"/>
+          <stop offset=".45" stop-color="#241410"/>
+          <stop offset="1" stop-color="#0d0807"/>
+        </linearGradient>
+        <g id="glove">
+          <ellipse cx="2" cy="118" rx="71" ry="85" fill="rgba(255,178,105,.22)"/>
+          <ellipse cx="2" cy="130" rx="70" ry="84" fill="url(#gGrad)"/>
+          <ellipse cx="56" cy="180" rx="23" ry="39" transform="rotate(16 56 180)" fill="url(#gGrad)"/>
+          <rect x="-32" y="0" width="66" height="46" rx="9" fill="url(#gGrad)"/>
+          <rect x="-32" y="0" width="66" height="46" rx="9" fill="none" stroke="rgba(255,196,128,.22)" stroke-width="1.5"/>
+          <path d="M-8 46 C -11 64 -18 78 -14 96" stroke="#3a2418" stroke-width="3" stroke-linecap="round"/>
+        </g>
+      </defs>
+      <g class="hang">
+        <path d="M200 -6 C 199 58 201 106 200 148" stroke="#3a2418" stroke-width="4" stroke-linecap="round"/>
+        <path d="M198 152 C 158 172 128 194 118 218" stroke="#3a2418" stroke-width="3.4" stroke-linecap="round"/>
+        <path d="M202 152 C 244 174 274 198 283 224" stroke="#3a2418" stroke-width="3.4" stroke-linecap="round"/>
+        <path d="M196 154 C 189 176 187 194 192 212" stroke="#3a2418" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M204 154 C 209 172 207 188 201 202" stroke="#3a2418" stroke-width="2.4" stroke-linecap="round"/>
+        <circle cx="200" cy="151" r="5.6" fill="#3a2418"/>
+        <use href="#glove" transform="translate(118,218) rotate(-7)"/>
+        <use href="#glove" transform="translate(283,224) rotate(8) scale(-1,1)"/>
+      </g>
+    </svg>
+  </div>
+</div>
+
+<main class="content">
+  <h1 class="wordmark">SCRAP<span class="bang">!</span></h1>
+  <nav class="actions" aria-label="Main menu">
+    <a class="btn primary" href="../../boxing.html">Enter the Ring</a>
+    <a class="btn ghost" href="../../lineup.html">Choose Your Fighter</a>
+  </nav>
+  <p class="hint"><kbd>C</kbd> · recenter</p>
+</main>
+
+<script>
+(function(){
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var cone = document.getElementById('cone');
+  for (var i=0;i<16;i++){
+    var m = document.createElement('i'); m.className = 'm';
+    m.style.left = (7+Math.random()*86)+'%';
+    m.style.setProperty('--s',(1.4+Math.random()*2.4).toFixed(1)+'px');
+    m.style.setProperty('--d',(9+Math.random()*11).toFixed(1)+'s');
+    m.style.setProperty('--delay',(-Math.random()*20).toFixed(1)+'s');
+    m.style.setProperty('--dx',(Math.random()*64-32).toFixed(0)+'px');
+    m.style.setProperty('--o',(0.28+Math.random()*0.5).toFixed(2));
+    cone.appendChild(m);
+  }
+  if (reduce) return;
+  var rig = document.getElementById('rig');
+  addEventListener('pointermove', function(e){
+    var x = e.clientX/innerWidth - .5, y = e.clientY/innerHeight - .5;
+    rig.style.transform = 'translate('+(x*-10).toFixed(1)+'px,'+(y*-6).toFixed(1)+'px)';
+  }, {passive:true});
+  addEventListener('keydown', function(e){
+    if (e.key==='Enter' && !e.metaKey && !e.ctrlKey && !e.altKey){
+      var a = document.activeElement;
+      if (!a || a.tagName!=='A') location.href = '../../boxing.html';
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SCRAP!</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Shadows+Into+Light&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink: #20265e;            /* ballpoint blue-black */
+    --ink-soft: rgba(32,38,94,.55);
+    --ink-faint: rgba(32,38,94,.30);
+    --red: #bc3a28;            /* the other pen */
+    --paper: #f7f2e4;          /* napkin cream */
+    --hand: 'Caveat','Segoe Script','Bradley Hand','Comic Sans MS',cursive;
+    --scrib: 'Shadows Into Light','Caveat','Comic Sans MS',cursive;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    min-height:100svh;
+    display:grid;
+    place-items:center;
+    font-family:var(--hand);
+    color:var(--ink);
+    overflow-x:hidden;
+    background-color:var(--paper);
+    background-image:
+      /* soft vignette + a faint coffee-ring stain, top right */
+      radial-gradient(ellipse at 50% 42%, transparent 55%, rgba(90,60,20,.08) 100%),
+      radial-gradient(circle at 87% 9%, transparent 0 54px, rgba(122,80,34,.10) 55px 59px, transparent 60px),
+      radial-gradient(circle at 87.6% 9.5%, transparent 0 60px, rgba(122,80,34,.06) 61px 63px, transparent 64px),
+      /* red margin line */
+      linear-gradient(90deg, transparent 0 54px, rgba(205,74,62,.28) 54px 56px, transparent 56px),
+      /* ruled lines */
+      repeating-linear-gradient(0deg, transparent 0 34px, rgba(84,120,168,.20) 34px 35px),
+      /* faint napkin weave */
+      repeating-linear-gradient(90deg, rgba(60,50,30,.018) 0 2px, transparent 2px 5px);
+  }
+  @media (max-width:560px){
+    body{background-image:
+      radial-gradient(ellipse at 50% 42%, transparent 55%, rgba(90,60,20,.08) 100%),
+      linear-gradient(90deg, transparent 0 26px, rgba(205,74,62,.28) 26px 28px, transparent 28px),
+      repeating-linear-gradient(0deg, transparent 0 30px, rgba(84,120,168,.20) 30px 31px),
+      repeating-linear-gradient(90deg, rgba(60,50,30,.018) 0 2px, transparent 2px 5px);}
+  }
+
+  .menu{
+    position:relative;
+    width:min(94vw,980px);
+    padding:clamp(52px,8vh,84px) clamp(8px,3vw,32px) clamp(20px,5vh,56px);
+    text-align:center;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+  }
+
+  /* ---------- wordmark ---------- */
+  .wordmark-wrap{position:relative; display:inline-block}
+  .wordmark{
+    position:relative;
+    margin:0;
+    font-weight:700;
+    font-size:clamp(4rem,15vw,14rem);
+    line-height:.92;
+    letter-spacing:.015em;
+    white-space:nowrap;
+    transform:rotate(-2deg);
+    text-shadow:1.5px 1.5px 0 rgba(32,38,94,.10);
+  }
+  .wordmark .bang{color:var(--red)}
+  .flourish{
+    display:block;
+    width:106%;
+    height:auto;
+    margin:-.14em -3% 0;
+    overflow:visible;
+  }
+  .flourish path{
+    fill:none; stroke:var(--ink); stroke-linecap:round;
+    stroke-dasharray:1; stroke-dashoffset:0;
+  }
+  .flourish .p1{stroke-width:5}
+  .flourish .p2{stroke-width:3.4; stroke:var(--ink-soft)}
+
+  /* ---------- doodles ---------- */
+  .glove{
+    position:absolute;
+    left:-7%;
+    top:-22%;
+    width:clamp(62px,13vw,118px);
+    height:auto;
+    transform:rotate(-16deg);
+    overflow:visible;
+  }
+  .glove path{fill:none; stroke:var(--ink); stroke-width:3.4; stroke-linecap:round; stroke-linejoin:round}
+  .glove .thin{stroke-width:2.4; stroke:var(--ink-soft)}
+
+  .you{
+    position:relative;
+    display:inline-block;
+    margin-top:clamp(6px,2.5vh,26px);
+    transform:rotate(1.5deg);
+  }
+  .you svg{width:clamp(96px,19vw,142px); height:auto; overflow:visible; display:block}
+  .you path,.you circle{fill:none; stroke:var(--ink); stroke-width:3; stroke-linecap:round}
+  .you .ring{stroke-width:2.6; stroke-dasharray:1; stroke-dashoffset:0}
+  .you .ring2{stroke-width:1.8; stroke:var(--ink-soft); stroke-dasharray:1; stroke-dashoffset:0}
+  .you-tag{
+    position:absolute;
+    right:-24%;
+    top:4%;
+    font-family:var(--scrib);
+    font-size:clamp(1.1rem,3.4vw,1.55rem);
+    color:var(--red);
+    transform:rotate(9deg);
+  }
+
+  /* ---------- hand-drawn buttons ---------- */
+  .actions{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:clamp(16px,3.4vh,30px);
+    margin-top:clamp(20px,4.5vh,48px);
+  }
+  .btn{
+    position:relative;
+    display:inline-block;
+    font-family:var(--hand);
+    font-weight:600;
+    font-size:clamp(1.65rem,4.6vw,3rem);
+    line-height:1;
+    color:var(--ink);
+    text-decoration:none;
+    padding:.3em 1.2em .42em;
+    border:2.5px solid var(--ink);
+    transition:transform .18s ease;
+    cursor:pointer;
+  }
+  /* the doubled, slightly-missed second pen stroke */
+  .btn::before{
+    content:"";
+    position:absolute;
+    inset:2px -4px -5px 3px;
+    border:1.6px solid var(--ink-soft);
+    pointer-events:none;
+    transition:border-color .18s ease;
+  }
+  /* the scribble underline that scratches in on hover */
+  .btn::after{
+    content:"";
+    position:absolute;
+    left:8%;
+    right:8%;
+    bottom:-12px;
+    height:8px;
+    background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='112' height='7'%3E%3Cpath d='M1 4.5 Q8 1.5 16 4.5 T32 4.5 T48 4.5 T64 4.5 T80 4.5 T96 4.5 T111 4' fill='none' stroke='%2320265e' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x left center / auto 100%;
+    transform:scaleX(0);
+    transform-origin:left center;
+    transition:transform .25s ease;
+    pointer-events:none;
+  }
+  .btn-fight{
+    border-radius:255px 18px 225px 18px / 18px 225px 18px 255px;
+    transform:rotate(-1.4deg);
+    background-image:repeating-linear-gradient(-48deg, transparent 0 7px, rgba(32,38,94,.075) 7px 9px);
+  }
+  .btn-fight::before{border-radius:18px 225px 20px 245px / 225px 18px 245px 20px}
+  .btn-rival{
+    border-radius:18px 235px 18px 255px / 235px 18px 255px 18px;
+    border-width:2px;
+    border-color:rgba(32,38,94,.82);
+    transform:rotate(1.1deg);
+    font-size:clamp(1.4rem,3.9vw,2.4rem);
+  }
+  .btn-rival::before{border-radius:235px 16px 250px 16px / 16px 250px 16px 235px}
+
+  .btn:hover,.btn:focus-visible{outline:none}
+  .btn-fight:hover,.btn-fight:focus-visible{
+    transform:rotate(-2.4deg) scale(1.05);
+    background-image:repeating-linear-gradient(-48deg, transparent 0 6px, rgba(32,38,94,.13) 6px 8px);
+  }
+  .btn-rival:hover,.btn-rival:focus-visible{transform:rotate(2.2deg) scale(1.05)}
+  .btn:hover::before,.btn:focus-visible::before{border-color:var(--ink)}
+  .btn:focus-visible::before{border-color:var(--red)}
+  .btn:hover::after,.btn:focus-visible::after{transform:scaleX(1)}
+  .btn.pressed{transform:rotate(0deg) scale(.94)}
+
+  /* ---------- the one margin scribble ---------- */
+  .scribble{
+    display:inline-flex;
+    align-items:flex-start;
+    gap:8px;
+    margin:clamp(22px,5vh,50px) 0 0;
+    font-family:var(--scrib);
+    font-size:clamp(1.15rem,3.6vw,1.7rem);
+    color:var(--red);
+    transform:rotate(-5deg) translateX(clamp(0px,11vw,150px));
+  }
+  .scribble svg{width:clamp(30px,7vw,44px); height:auto; margin-top:-16px; flex:none; overflow:visible}
+  .scribble path{fill:none; stroke:var(--red); stroke-width:2.6; stroke-linecap:round; stroke-linejoin:round}
+
+  /* ---------- motion (skipped when reduced-motion is on) ---------- */
+  @media (prefers-reduced-motion: no-preference){
+    .wordmark-wrap,.you,.actions,.scribble{animation:rise .55s cubic-bezier(.2,.8,.3,1) both}
+    .wordmark-wrap{animation-delay:.05s}
+    .you{animation-delay:.16s}
+    .actions{animation-delay:.28s}
+    .scribble{animation-delay:.44s}
+    @keyframes rise{from{opacity:0; transform:translateY(16px)}}
+    .flourish path{stroke-dashoffset:1; animation:draw .8s .4s ease forwards}
+    .flourish .p2{animation-delay:.55s}
+    .you .ring{stroke-dashoffset:1; animation:draw .9s .6s ease forwards}
+    .you .ring2{stroke-dashoffset:1; animation:draw .9s .85s ease forwards}
+    @keyframes draw{to{stroke-dashoffset:0}}
+    .glove{animation:glove-idle 3.4s ease-in-out 1.4s infinite}
+    @keyframes glove-idle{0%,100%{transform:rotate(-16deg) translateX(0)}50%{transform:rotate(-16deg) translateX(7px)}}
+    .menu:has(.btn-fight:hover) .glove,
+    .menu:has(.btn-fight:focus-visible) .glove{animation:jab .32s ease-in-out infinite}
+    @keyframes jab{0%,100%{transform:rotate(-16deg) translateX(0)}50%{transform:rotate(-14deg) translateX(16px)}}
+  }
+</style>
+</head>
+<body>
+<main class="menu">
+
+  <div class="wordmark-wrap">
+    <!-- doodled glove, mid-punch -->
+    <svg class="glove" viewBox="0 0 132 92" aria-hidden="true" focusable="false">
+      <path class="thin" d="M8 22 q12 4 20 6"/>
+      <path class="thin" d="M2 44 q12 1 22 2"/>
+      <path class="thin" d="M10 68 q11 -4 20 -7"/>
+      <path d="M44 26 C37 40 37 58 46 70"/>
+      <path d="M44 26 C50 27 55 29 58 31"/>
+      <path d="M46 70 C52 68 57 66 59 64"/>
+      <path class="thin" d="M42 44 l9 2"/>
+      <path class="thin" d="M42 55 l9 -1"/>
+      <path d="M58 32 C58 17 74 8 89 11 C105 14 113 30 110 47 C107 64 91 73 75 67 C64 63 57 48 58 32 Z"/>
+      <path class="thin" d="M70 57 C75 66 87 66 93 57"/>
+      <path class="thin" d="M91 15 C98 24 99 37 96 49"/>
+      <path class="thin" d="M116 26 l12 -8"/>
+      <path class="thin" d="M118 44 l14 -1"/>
+      <path class="thin" d="M115 60 l12 7"/>
+    </svg>
+    <h1 class="wordmark">SCRAP<span class="bang">!</span>
+      <svg class="flourish" viewBox="0 0 260 24" aria-hidden="true" focusable="false">
+        <path class="p1" pathLength="1" d="M4 15 C70 5 170 3 256 11"/>
+        <path class="p2" pathLength="1" d="M40 20 C120 14 200 12 250 14"/>
+      </svg>
+    </h1>
+  </div>
+
+  <!-- circled "you" stick figure, fists up -->
+  <div class="you">
+    <svg viewBox="0 0 100 112" aria-hidden="true" focusable="false">
+      <path class="ring"  pathLength="1" d="M50 10 C74 8 93 28 91 54 C89 82 70 100 46 99 C23 98 8 79 10 52 C12 28 30 11 52 10"/>
+      <path class="ring2" pathLength="1" d="M14 64 C13 86 34 102 58 99"/>
+      <circle cx="50" cy="26" r="9"/>
+      <path d="M50 35 L50 62"/>
+      <path d="M50 41 L35 30"/>
+      <path d="M50 41 L65 30"/>
+      <circle cx="33" cy="27" r="5.5"/>
+      <circle cx="67" cy="27" r="5.5"/>
+      <path d="M50 62 L40 82"/>
+      <path d="M50 62 L60 82"/>
+    </svg>
+    <span class="you-tag" aria-hidden="true">you</span>
+  </div>
+
+  <nav class="actions">
+    <a class="btn btn-fight" href="../../boxing.html">fight</a>
+    <a class="btn btn-rival" href="../../lineup.html">pick a rival</a>
+  </nav>
+
+  <p class="scribble">
+    <svg viewBox="0 0 44 58" aria-hidden="true" focusable="false">
+      <path d="M10 52 C8 38 14 20 32 10"/>
+      <path d="M32 10 L22 13"/>
+      <path d="M32 10 L28 20"/>
+    </svg>
+    <span>start here</span>
+  </p>
+
+</main>
+
+<script>
+  // pen-press feedback: a button "squishes" like ink while held
+  document.querySelectorAll('.btn').forEach(function(b){
+    b.addEventListener('pointerdown', function(){ b.classList.add('pressed'); });
+    ['pointerup','pointercancel','pointerleave','blur'].forEach(function(ev){
+      b.addEventListener(ev, function(){ b.classList.remove('pressed'); });
+    });
+    b.addEventListener('keydown', function(e){
+      if(e.key === ' ' || e.key === 'Enter'){ b.classList.add('pressed'); }
+    });
+    b.addEventListener('keyup', function(){ b.classList.remove('pressed'); });
+  });
+</script>
+</body>
+</html>

@@ -133,14 +133,15 @@ export const TUNING = {
      TRIPLE TAP (bubble) — the classic 3-punch flurry, one stamina burn.
      SLEDGE     (blocky) — a slow guard-cracking haymaker: big telegraph,
                            huge damage, and blocking only takes the edge off.
-     PEPPER 1-2 (bean)   — a blink-fast two-jab burst.
+     BEAN BARRAGE (bean) — the champ's heavy 1-2: two fast swings that land
+                           like trucks.
    Unknown/GLB rivals fall back to the bubble flurry. */
 export const SPECIALS = {
   bubble: { key: 'flurry', name: 'TRIPLE TAP', chain: 3, windupMul: 1,
     stam: .4, cost: .15 },
   blocky: { key: 'sledge', name: 'SLEDGE', dmgMul: 1.5, windup: 1.3, chip: .65,
     stam: .45, cost: .3 },
-  bean:   { key: 'flurry', name: 'PEPPER 1-2', chain: 2, windupMul: .75,
+  bean:   { key: 'flurry', name: 'BEAN BARRAGE', chain: 2, windupMul: .85,
     stam: .35, cost: .12 },
 };
 /* light paper-stats: how each rival's card numbers translate in the ring.
@@ -150,7 +151,7 @@ export const SPECIALS = {
 export const VSTATS = {
   bubble: { dmg: 1,    taken: 1,   windup: 1 },
   blocky: { dmg: 1.12, taken: .9,  windup: 1.08 },
-  bean:   { dmg: .9,   taken: 1,   windup: .92 },
+  bean:   { dmg: 1.15, taken: .9,  windup: 1 },      // the boss hits like a truck
 };
 
 // deterministic PRNG — no Math.random anywhere in this file

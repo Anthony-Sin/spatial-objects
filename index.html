@@ -609,27 +609,34 @@
 
   // career record pills — personal best pts, wins, KOs, average KO round
   (function career() {
-    const get = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
+    const get = (k, d) => { try {
+      const v = localStorage.getItem(k); if (v == null) return d;
+      const p = JSON.parse(v); return p == null ? d : p;   // 'null' parses fine — treat as missing
+    } catch { return d; } };
+    const num = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : 0;
     const ko = get('boxing:ko', { n: 0, sum: 0 });
-    document.querySelector('[data-best]').textContent = get('boxing:best', 0).toLocaleString();
-    document.querySelector('[data-wins]').textContent = get('boxing:wins', 0);
-    document.querySelector('[data-kos]').textContent = ko.n;
-    document.querySelector('[data-koavg]').textContent = ko.n ? (ko.sum / ko.n).toFixed(1) : '—';
+    const koN = num(ko?.n), koSum = num(ko?.sum);
+    const set = (sel, v) => { const el = document.querySelector(sel); if (el) el.textContent = v; };
+    set('[data-best]', num(get('boxing:best', 0)).toLocaleString());
+    set('[data-wins]', num(get('boxing:wins', 0)));
+    set('[data-kos]', koN);
+    set('[data-koavg]', koN ? (koSum / koN).toFixed(1) : '—');
   })();
 
   // tutorial checkmark syncs with Enter the Ring destination
   const tutToggle = document.getElementById('tut-toggle');
   const enterBtn = document.getElementById('enter-btn');
   function syncTutorial() {
-    enterBtn.href = tutToggle.checked ? './lineup.html?practice=1' : './lineup.html';
+    if (tutToggle && enterBtn)
+      enterBtn.href = tutToggle.checked ? './lineup.html?practice=1' : './lineup.html';
   }
   try {
-    if (localStorage.getItem('boxing:tutorial') === '1') {
+    if (tutToggle && localStorage.getItem('boxing:tutorial') === '1') {
       tutToggle.checked = true;
     }
   } catch {}
   syncTutorial();
-  tutToggle.addEventListener('change', () => {
+  tutToggle?.addEventListener('change', () => {
     syncTutorial();
     try {
       localStorage.setItem('boxing:tutorial', tutToggle.checked ? '1' : '0');
@@ -705,11 +712,14 @@
     syncTutorial();
     try { localStorage.setItem('boxing:tutorial', tutToggle.checked ? '1' : '0'); } catch {}
   });
-  tutToggle.addEventListener('change', () => {
+  tutToggle?.addEventListener('change', () => {
     settingTutorial.checked = tutToggle.checked;
   });
 
-  // 3D Animated Ring & Boxing Characters
+  // 3D Animated Ring & Boxing Characters — decorative backdrop: if WebGL or
+  // a scene piece is unavailable the menu must still work, so any failure
+  // here degrades quietly instead of killing the page module
+  try {
   (function init3D() {
     const canvas = document.getElementById('ring-canvas');
     if (!canvas) return;
@@ -751,7 +761,8 @@
     toRemove.forEach(o => o.parent?.remove(o));
 
     // Isometric diamond orientation matching concept art
-    const ringGroup = sceneObj.ring.group;
+    const ringGroup = sceneObj.ring?.group;
+    if (ringGroup) {
     ringGroup.rotation.y = Math.PI * 0.75;
     ringGroup.scale.set(0.74, 0.74, 0.74);
 
@@ -800,9 +811,10 @@
         }
       }
     });
+    }
 
     // Ensure ropes are visible with subtle dark arena tone
-    if (sceneObj.ring.ropes) {
+    if (sceneObj.ring?.ropes) {
       sceneObj.ring.ropes.forEach(r => {
         r.visible = true;
       });
@@ -1058,6 +1070,7 @@
       camera.position.set(0, yDist, zDist);
       camera.lookAt(0, 0.52, 0);
       camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.setSize(window.innerWidth, window.innerHeight, false);
     }
     updateCamera();
@@ -1112,6 +1125,9 @@
     }
     renderFrame();
   })();
+  } catch (e) {
+    console.warn('SCRAP! menu 3D unavailable — showing UI only:', e);
+  }
 </script>
 </body>
 </html>

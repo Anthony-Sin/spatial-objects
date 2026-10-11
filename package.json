@@ -6,7 +6,10 @@
     "start": "node server.mjs",
     "perf": "node test/fps-probe.mjs",
     "test": "node test/boxing-fight.mjs && node test/boxing-ring.mjs && node test/boxing-fists.mjs && node test/boxing-hands.mjs && node test/boxing-proto.mjs && node test/boxing-audio.mjs && node test/boxing-tutorial.mjs",
-    "test:e2e": "node test/boxing-page.mjs"
+    "test:e2e": "node test/boxing-page.mjs",
+    "qe": "node test/qe-runner.mjs",
+    "qe:static": "node test/qe-static.mjs",
+    "qe:res": "node test/qe-resources.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.22-rc.20250304",

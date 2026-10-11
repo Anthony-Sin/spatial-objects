@@ -481,7 +481,7 @@ const resolvedSwing = s => s.events.includes('player-dodged') || s.events.includ
     `want=${h._wantCombo} normals=${h._normals} stam=${h.state.npc.stamina.toFixed(3)}`);
 }
 
-/* 10c — per-variant specials: blocky's SLEDGE, bean's PEPPER 1-2 */
+/* 10c — per-variant specials: blocky's SLEDGE, bean's BEAN BARRAGE */
 {
   // SLEDGE — blocky throws one huge telegraphed uppercut that chips guard
   const f = new Fight({ seed: 5, npcVariant: 'blocky' });
@@ -517,20 +517,20 @@ const resolvedSwing = s => s.events.includes('player-dodged') || s.events.includ
     Math.abs(hp1 - h.state.player.hp - 17 * 1.12 * 1.5) < .5,
     `took=${hp1 - h.state.player.hp}`);
 
-  // PEPPER 1-2 — bean chains exactly two fast swings, not three
+  // BEAN BARRAGE — bean chains exactly two fast swings, not three
   const b = new Fight({ seed: 5, npcVariant: 'bean' });
   toFighting(b);
   b._normals = TUNING.specialEvery;
   b.state.npc.stamina = .9;
   b._windup();
-  check('bean: gate met → PEPPER 1-2 flurry flagged',
+  check('bean: gate met → BEAN BARRAGE flurry flagged',
     b._wantCombo === true && b._chainMax === 2
-      && b.state.npc.telegraph.special === 'PEPPER 1-2',
+      && b.state.npc.telegraph.special === 'BEAN BARRAGE',
     `want=${b._wantCombo} max=${b._chainMax} tele=${JSON.stringify(b.state.npc.telegraph)}`);
   // one landed first swing may chain exactly ONE follow-up (chain < 1)
   b._swing = 'blocked'; b._chain = 0;
   b._afterSwing(inp({ distance: .9 }));
-  check('bean: landed swing chains the second pepper jab',
+  check('bean: landed swing chains the second barrage jab',
     b.state.npc.action === 'windup' && b._chain === 1,
     `action=${b.state.npc.action} chain=${b._chain}`);
   b.state.npc.action = 'punch'; b._swing = 'blocked';

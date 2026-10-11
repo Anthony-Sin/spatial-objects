@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GLASS JAW — bring your own hands</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Permanent+Marker&family=Special+Elite&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#f2ecdc; --paper2:#e9e1cb; --ink:#171310; --ink-soft:#4a4237;
+    --accent:#ff2e1f;               /* fluorescent red marker — the ONE loud color */
+    --tape:rgba(216,205,166,.92);
+    --f-head:'Anton',Impact,'Haettenschweiler','Arial Narrow Bold',sans-serif;
+    --f-type:'Special Elite','Courier New',Courier,monospace;
+    --f-hand:'Permanent Marker','Segoe Print','Comic Sans MS',cursive;
+  }
+  *{box-sizing:border-box;margin:0}
+  html,body{min-height:100%}
+  body{
+    min-height:100vh; display:grid; place-items:center;
+    padding:clamp(12px,3.5vw,52px);
+    background:radial-gradient(130% 120% at 50% -10%, #2d2922 0%, #1e1a15 55%, #14110d 100%);
+    color:var(--ink); font-family:var(--f-type);
+    overflow-x:hidden;
+  }
+
+  /* ---------- the pole + layered scraps behind the flyer ---------- */
+  .flyer-wrap{ position:relative; width:min(100%,1140px); transform:rotate(-.7deg);
+    filter:drop-shadow(10px 16px 14px rgba(0,0,0,.55)); }
+  .scrap{ position:absolute; inset:-1.5% -2.5%; z-index:0; pointer-events:none; }
+  .scrap.s1{ background:#4e4a3f; transform:rotate(1.7deg) translate(1%, .4%);
+    clip-path:polygon(0% 3%,5% .5%,12% 2.5%,20% .8%,28% 2.8%,37% .4%,46% 2.6%,55% .7%,64% 2.5%,73% .5%,82% 2.7%,91% .6%,100% 2.2%,99% 12%,100% 25%,98.6% 38%,99.8% 52%,98.8% 66%,99.9% 80%,98.7% 93%,99.6% 100%,92% 98%,84% 99.6%,75% 98.2%,66% 99.7%,57% 98.4%,48% 99.6%,39% 98.3%,30% 99.7%,21% 98.5%,12% 99.5%,4% 98.4%,0% 99.4%,1% 88%,0% 75%,1.3% 62%,.2% 48%,1.2% 35%,0% 22%,1.1% 10%); }
+  .scrap.s2{ background:#3a362d; transform:rotate(-2.4deg) translate(-1.4%, .2%);
+    clip-path:polygon(0% 2%,7% .4%,15% 2.4%,24% .6%,33% 2.6%,42% .5%,51% 2.4%,60% .7%,69% 2.6%,78% .5%,87% 2.5%,96% .8%,100% 3%,98.8% 14%,100% 28%,98.7% 42%,99.9% 56%,98.9% 70%,100% 84%,98.8% 97%,91% 99.5%,82% 98.3%,73% 99.7%,64% 98.4%,55% 99.6%,46% 98.4%,37% 99.6%,28% 98.4%,19% 99.6%,10% 98.5%,2% 99.6%,0% 97%,1.2% 85%,0% 72%,1.3% 58%,.2% 44%,1.1% 30%,0% 16%,1.2% 6%); }
+
+  /* ---------- the flyer itself: torn photocopied sheet ---------- */
+  .sheet{
+    position:relative; z-index:1; overflow:hidden;
+    display:flex; flex-direction:column; align-items:center; text-align:center;
+    padding:clamp(34px,5.5vw,78px) clamp(16px,5vw,84px) clamp(20px,3.5vw,44px);
+    background:
+      radial-gradient(560px 300px at 86% 88%, rgba(122,100,58,.09), transparent 62%),
+      radial-gradient(430px 260px at 7% 12%, rgba(122,100,58,.08), transparent 60%),
+      radial-gradient(300px 300px at 50% 115%, rgba(122,100,58,.10), transparent 65%),
+      linear-gradient(165deg, var(--paper) 0%, var(--paper2) 100%);
+    clip-path:polygon(0% 1.4%,3% .5%,7% 1.7%,11% .7%,15% 1.5%,19% .4%,24% 1.8%,28% .8%,33% 1.4%,37% .5%,42% 1.7%,46% .6%,51% 1.5%,55% .4%,60% 1.8%,64% .7%,69% 1.4%,73% .5%,78% 1.7%,82% .6%,87% 1.5%,91% .5%,96% 1.6%,100% .9%,99.3% 5%,100% 10%,98.9% 15%,99.8% 20%,99.1% 26%,99.9% 32%,99% 38%,99.7% 44%,99.2% 50%,99.9% 56%,99% 62%,99.8% 68%,99.1% 74%,99.9% 80%,99.2% 86%,99.8% 92%,99% 98%,95% 99.2%,90% 98.4%,85% 99.6%,80% 98.6%,75% 99.5%,70% 98.5%,65% 99.7%,60% 98.7%,55% 99.4%,50% 98.6%,45% 99.6%,40% 98.5%,35% 99.5%,30% 98.7%,25% 99.6%,20% 98.5%,15% 99.4%,10% 98.6%,5% 99.5%,0% 98.8%,.9% 94%,0% 89%,1.2% 84%,.2% 79%,1% 74%,0% 69%,1.2% 64%,.3% 59%,1% 54%,0% 49%,1.1% 44%,.2% 39%,1% 34%,0% 29%,1.2% 24%,.3% 19%,1% 14%,0% 9%,1.1% 5%);
+  }
+  .grain{ position:absolute; inset:0; z-index:5; pointer-events:none;
+    filter:url(#photocopy); opacity:.08; mix-blend-mode:multiply; }
+
+  /* masking-tape corners (outside the clipped sheet so they overlap the tear) */
+  .tape{ position:absolute; z-index:4; width:clamp(86px,12vw,124px); height:clamp(26px,3.4vw,36px);
+    background:linear-gradient(103deg, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 46%), var(--tape);
+    border-left:2px dashed rgba(96,84,55,.4); border-right:2px dashed rgba(96,84,55,.4);
+    box-shadow:0 3px 5px rgba(0,0,0,.28); }
+  .tape.t1{ top:-8px; left:-16px; transform:rotate(-44deg); }
+  .tape.t2{ top:-10px; right:-18px; transform:rotate(41deg); }
+  .tape.t3{ bottom:-8px; left:-14px; transform:rotate(38deg); }
+  .tape.t4{ bottom:-10px; right:-16px; transform:rotate(-42deg); }
+
+  .staple{ position:absolute; z-index:2; top:clamp(30px,3.4%,46px); left:50%; width:30px; height:9px;
+    border:2.5px solid #8a8578; border-bottom:none; border-radius:4px 4px 0 0;
+    transform:translateX(-50%) rotate(3deg); opacity:.85; }
+
+  /* ---------- top dateline ---------- */
+  .dateline{
+    width:100%; margin:clamp(6px,1.4vw,14px) 0 clamp(20px,3.4vw,40px);
+    padding:8px 6px; border-top:2.5px solid var(--ink); border-bottom:2.5px solid var(--ink);
+    font-size:clamp(9.5px,1.5vw,14px); letter-spacing:.16em; text-transform:uppercase;
+    color:var(--ink-soft);
+  }
+  .hilite{ display:inline-block; padding:1px 8px 2px; color:var(--ink); font-weight:700;
+    background:var(--accent); transform:rotate(-1.4deg);
+    box-shadow:2px 2px 0 rgba(23,19,16,.85); }
+
+  /* ---------- ransom-note headline ---------- */
+  .ransom{
+    display:flex; flex-wrap:wrap; justify-content:center; align-items:center;
+    gap:.06em .08em; line-height:1; list-style:none;
+    font-size:clamp(40px,9vw,112px);
+    margin:0 0 clamp(14px,2vw,22px);
+  }
+  .ransom .l{
+    display:inline-flex; align-items:center; justify-content:center;
+    padding:.1em .16em .12em; font-family:var(--f-head); font-weight:400;
+    font-size:1em; line-height:1;
+    transform:rotate(calc(var(--br,0deg) + var(--j,0deg)));
+    box-shadow:.05em .06em 0 rgba(23,19,16,.8);
+  }
+  .l.a{ background:var(--ink); color:var(--paper); }
+  .l.b{ background:#fbf7ec; color:var(--ink); border:.035em solid var(--ink); }
+  .l.pop{ background:var(--accent); color:var(--ink); }
+  .l.f-type{ font-family:var(--f-type); font-weight:700; }
+  .l.f-hand{ font-family:var(--f-hand); }
+  .r1{--br:-3.5deg} .r2{--br:2.6deg; margin-top:.1em} .r3{--br:-1.8deg}
+  .r4{--br:3.8deg; margin-top:.14em} .r5{--br:-4.2deg} .r6{--br:2deg; margin-top:.12em}
+  .gap{ width:.34em; }
+
+  .tagline{ font-size:clamp(12.5px,2vw,18px); letter-spacing:.08em; color:var(--ink-soft);
+    margin-bottom:clamp(8px,1.4vw,14px); }
+
+  /* hand-scrawled margin notes */
+  .scrawl{ font-family:var(--f-hand); }
+  .note-ref{ align-self:flex-start; margin:0 0 clamp(16px,2.6vw,26px) clamp(0px,6%,70px);
+    display:flex; align-items:center; gap:8px; transform:rotate(-2.5deg);
+    font-family:var(--f-hand); font-size:clamp(14px,2vw,19px); color:var(--ink); }
+  .note-ref svg{ width:clamp(30px,4vw,44px); height:auto; flex:none; }
+  .note-ref .em{ color:var(--accent); }
+
+  /* rubber stamp */
+  .stamp{ position:absolute; z-index:2; top:clamp(64px,12%,130px); right:clamp(10px,4.5%,56px);
+    transform:rotate(-10deg); padding:.45em .8em; text-align:center;
+    font-family:var(--f-head); font-size:clamp(12px,1.9vw,20px); letter-spacing:.15em; line-height:1.35;
+    color:var(--accent); border:3px solid var(--accent); outline:2px solid var(--accent);
+    outline-offset:4px; opacity:.82; mix-blend-mode:multiply; pointer-events:none; }
+
+  /* ---------- menu buttons ---------- */
+  .menu{ display:flex; flex-direction:column; gap:clamp(16px,2.4vw,22px); align-items:center;
+    width:min(100%,470px); margin-bottom:clamp(18px,2.6vw,28px); }
+  .cta{ position:relative; display:block; width:100%; padding:clamp(13px,2vw,17px) 24px 16px;
+    text-decoration:none; text-align:center; text-transform:uppercase;
+    font-family:var(--f-head); font-size:clamp(20px,3.2vw,28px); letter-spacing:.13em;
+    border:3px solid var(--ink); transform:rotate(var(--r,0deg));
+    transition:box-shadow .18s ease; }
+  .cta small{ display:block; margin-top:5px; font-family:var(--f-type); font-weight:400;
+    font-size:clamp(9.5px,1.3vw,11.5px); letter-spacing:.2em; opacity:.82; }
+  .cta .scrib{ position:absolute; left:7%; bottom:7px; width:86%; height:9px; overflow:visible; }
+  .cta .scrib path{ fill:none; stroke:var(--accent); stroke-width:4; stroke-linecap:round;
+    stroke-dasharray:100; stroke-dashoffset:100;
+    transition:stroke-dashoffset .38s ease .05s; }
+  .cta:hover, .cta:focus-visible{ animation:flutter .45s ease-in-out; }
+  .cta:hover .scrib path, .cta:focus-visible .scrib path{ stroke-dashoffset:0; }
+  .cta:focus-visible{ outline:3px dashed var(--accent); outline-offset:5px; }
+  .cta:active{ transform:rotate(var(--r,0deg)) translateY(3px); }
+
+  .fight{ --r:-1.2deg; background:var(--ink); color:var(--paper);
+    box-shadow:7px 8px 0 var(--accent); }
+  .fight:hover{ box-shadow:10px 11px 0 var(--accent); }
+  .fight:active{ box-shadow:3px 4px 0 var(--accent); }
+  .pick{ --r:.9deg; background:#fbf7ec; color:var(--ink);
+    box-shadow:7px 8px 0 rgba(23,19,16,.9); }
+  .pick:hover{ box-shadow:10px 11px 0 rgba(23,19,16,.9); }
+  .pick:active{ box-shadow:3px 4px 0 rgba(23,19,16,.9); }
+
+  .lineup{ transform:rotate(-1.3deg); margin-bottom:clamp(26px,4vw,44px);
+    font-family:var(--f-hand); font-size:clamp(14px,2.2vw,20px); color:var(--ink); }
+  .lineup b{ color:var(--accent); }
+
+  /* ---------- house rules ---------- */
+  .rules{ width:100%; margin-bottom:clamp(24px,3.6vw,38px); }
+  .rules h2{ font-family:var(--f-hand); font-weight:400;
+    font-size:clamp(23px,3.6vw,34px); transform:rotate(-1.6deg);
+    margin-bottom:clamp(18px,2.8vw,28px); }
+  .rules h2 .sub{ font-size:.55em; color:var(--ink-soft); }
+  .cards{ display:grid; gap:clamp(12px,1.8vw,18px);
+    grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); }
+  .card{ position:relative; background:#fbf7ec; border:2.5px solid var(--ink);
+    padding:18px 14px 16px; transform:rotate(var(--r,0deg));
+    box-shadow:4px 5px 0 rgba(23,19,16,.85);
+    transition:box-shadow .18s ease; }
+  .card:hover{ animation:flutter .45s ease-in-out; box-shadow:6px 8px 0 rgba(23,19,16,.85); }
+  .card .minitape{ position:absolute; top:-11px; left:50%; width:64px; height:19px;
+    transform:translateX(-50%) rotate(-3deg); background:var(--tape);
+    border-left:1.5px dashed rgba(96,84,55,.4); border-right:1.5px dashed rgba(96,84,55,.4);
+    box-shadow:0 2px 3px rgba(0,0,0,.2); }
+  .card svg{ width:64px; height:44px; color:var(--ink); }
+  svg .acc{ stroke:var(--accent); }
+  .card h3{ font-family:var(--f-hand); font-weight:400; font-size:21px;
+    letter-spacing:.04em; margin:8px 0 5px; }
+  .card p{ font-size:11.5px; line-height:1.55; letter-spacing:.03em; color:var(--ink-soft); }
+  .c1{--r:-1.5deg} .c2{--r:1.1deg} .c3{--r:-.8deg} .c4{--r:1.7deg}
+
+  /* ---------- fine print + tear-off strips ---------- */
+  .fineprint{ width:100%; padding-top:14px; border-top:2px dashed rgba(23,19,16,.5);
+    font-size:clamp(9.5px,1.4vw,12px); letter-spacing:.15em; text-transform:uppercase;
+    color:var(--ink-soft); line-height:2.1; }
+  .fineprint b{ display:inline-block; padding:0 6px; border:1.5px solid var(--ink);
+    border-radius:3px; background:#fbf7ec; color:var(--ink); font-weight:700; line-height:1.5; }
+  .fineprint .legal{ text-transform:none; letter-spacing:.06em; opacity:.85; }
+
+  .takeone{ margin:20px 0 4px; transform:rotate(-1deg);
+    font-size:clamp(9px,1.3vw,11px); letter-spacing:.2em; text-transform:uppercase;
+    color:var(--ink-soft); }
+  .strips{ display:flex; justify-content:center; align-items:flex-end; }
+  .strip{ writing-mode:vertical-rl; height:clamp(108px,16vw,140px); padding:10px 7px;
+    border-left:1.5px dashed rgba(23,19,16,.5);
+    font-size:clamp(9px,1.2vw,10.5px); letter-spacing:.2em; text-transform:uppercase;
+    white-space:nowrap; color:var(--ink-soft);
+    transform:rotate(calc(var(--sr,0deg) + var(--j,0deg))); }
+  .strip:first-child{ border-left:none; }
+  .s-odd{--sr:.7deg} .s-even{--sr:-.6deg}
+
+  @keyframes flutter{
+    0%,100%{ transform:rotate(var(--r,0deg)) translateY(0); }
+    30%{ transform:rotate(calc(var(--r,0deg) + 1.5deg)) translateY(-2px); }
+    60%{ transform:rotate(calc(var(--r,0deg) - 1deg)) translateY(-1px); }
+    80%{ transform:rotate(calc(var(--r,0deg) + .6deg)); }
+  }
+
+  @media (max-width:760px){
+    .stamp{ display:none; }
+    .note-ref{ margin-left:0; }
+    .dateline{ letter-spacing:.1em; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .cta:hover, .card:hover{ animation:none; }
+    .cta .scrib path{ transition:none; }
+  }
+</style>
+</head>
+<body>
+
+  <!-- photocopy grain filter (generates its own noise, no assets) -->
+  <svg aria-hidden="true" style="position:absolute;width:0;height:0">
+    <filter id="photocopy" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" stitchTiles="stitch"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .9 0"/>
+    </filter>
+  </svg>
+
+  <main class="flyer-wrap">
+    <div class="scrap s1" aria-hidden="true"></div>
+    <div class="scrap s2" aria-hidden="true"></div>
+    <div class="tape t1" aria-hidden="true"></div>
+    <div class="tape t2" aria-hidden="true"></div>
+    <div class="tape t3" aria-hidden="true"></div>
+    <div class="tape t4" aria-hidden="true"></div>
+
+    <div class="sheet">
+      <div class="grain" aria-hidden="true"></div>
+      <div class="staple" aria-hidden="true"></div>
+      <div class="stamp" aria-hidden="true">NO GLOVES<br>&middot; NO REFS &middot;</div>
+
+      <p class="dateline">
+        TONIGHT &middot; EVERY NIGHT &middot; 8PM-ISH &middot; YOUR LIVING ROOM &middot;
+        <span class="hilite">BRING YOUR OWN HANDS</span>
+      </p>
+
+      <h1 class="ransom" aria-label="Glass Jaw">
+        <span class="l a r1">G</span><span class="l b f-type r2">L</span><span class="l a r3">A</span><span class="l b f-hand r4">S</span><span class="l a r5">S</span><span class="gap" aria-hidden="true"></span><span class="l b f-type r6">J</span><span class="l pop r5">A</span><span class="l a r2">W</span>
+      </h1>
+
+      <p class="tagline">your hands are the gloves &mdash; the camera keeps score.</p>
+
+      <p class="note-ref">
+        <svg viewBox="0 0 44 22" aria-hidden="true"><path d="M2 11 C 14 4, 28 18, 40 10 M33 6 l7 4 -8 3" fill="none" class="acc" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        your webcam is the ref &mdash; <span class="em">don't argue.</span>
+      </p>
+
+      <nav class="menu" aria-label="Main menu">
+        <a class="cta fight" href="../../boxing.html">
+          ENTER THE RING
+          <small>3 rounds &middot; one camera &middot; no mercy</small>
+          <svg class="scrib" viewBox="0 0 200 10" preserveAspectRatio="none" aria-hidden="true"><path pathLength="100" d="M4 6 C 40 2, 80 9, 120 4 S 178 2, 196 6"/></svg>
+        </a>
+        <a class="cta pick" href="../../lineup.html">
+          CHOOSE YOUR FIGHTER
+          <small>scout the roster before you swing</small>
+          <svg class="scrib" viewBox="0 0 200 10" preserveAspectRatio="none" aria-hidden="true"><path pathLength="100" d="M4 6 C 40 2, 80 9, 120 4 S 178 2, 196 6"/></svg>
+        </a>
+      </nav>
+
+      <p class="lineup">on the card: <b>BUBBLE</b> &times; <b>BLOCKY</b> &times; <b>BEAN</b> &mdash; they hit back. probably.</p>
+
+      <section class="rules" aria-labelledby="rules-head">
+        <h2 id="rules-head" class="scrawl">HOUSE RULES <span class="sub">(ninety seconds, tops)</span></h2>
+        <div class="cards">
+          <article class="card c1">
+            <i class="minitape" aria-hidden="true"></i>
+            <svg viewBox="0 0 64 44" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="18" r="9"/><rect x="12" y="26" width="16" height="8" rx="3"/><circle cx="44" cy="18" r="9"/><rect x="36" y="26" width="16" height="8" rx="3"/><path d="M13 8 l-3 -4 M27 8 l3 -4 M37 8 l-3 -4 M51 8 l3 -4" class="acc"/></g></svg>
+            <h3>GUARD</h3>
+            <p>fists up at the camera = gloves on. keep 'em high, chin down.</p>
+          </article>
+          <article class="card c2">
+            <i class="minitape" aria-hidden="true"></i>
+            <svg viewBox="0 0 64 44" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="22" y="4" width="20" height="14" rx="3"/><circle cx="32" cy="11" r="3.5"/><circle cx="32" cy="33" r="8"/><rect x="24" y="39" width="16" height="5" rx="2"/><path d="M25 26 l-4 -4 M39 26 l4 -4" class="acc"/></g></svg>
+            <h3>HIT</h3>
+            <p>punch straight at the lens. don't actually hit the screen, champ.</p>
+          </article>
+          <article class="card c3">
+            <i class="minitape" aria-hidden="true"></i>
+            <svg viewBox="0 0 64 44" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="26" cy="18" r="10"/><path d="M22 22 q4 3 8 0"/><path d="M16 36 h24"/><path d="M40 12 q11 2 13 11 M50 18 l4 6 -7 1" class="acc"/></g></svg>
+            <h3>DODGE</h3>
+            <p>lean your head left or right to slip a punch. feet stay put.</p>
+          </article>
+          <article class="card c4">
+            <i class="minitape" aria-hidden="true"></i>
+            <svg viewBox="0 0 64 44" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 38 h48 M20 38 l-3 4 M30 38 l3 4"/><path d="M26 32 V11 M22 15 l4 -5 4 5" class="acc"/><path d="M42 11 V32 M38 28 l4 5 4 -5"/></g></svg>
+            <h3>STEP</h3>
+            <p>lean your whole body forward or back &mdash; close in or bail out.</p>
+          </article>
+        </div>
+      </section>
+
+      <footer class="fineprint">
+        <p class="keys">KEYS &mdash; <b>C</b> recenter view &middot; <b>W</b>/<b>S</b> step in &amp; out in mouse mode</p>
+        <p class="legal">xeroxed at the library &middot; no camera? mouse mode has your back &middot; tell your friends</p>
+      </footer>
+
+      <p class="takeone">&mdash; tear off a strip, hand it to a friend &mdash;</p>
+      <div class="strips" aria-hidden="true">
+        <span class="strip s-odd">GLASS JAW</span><span class="strip s-even">BYO HANDS</span><span class="strip s-odd">8PM-ISH</span><span class="strip s-even">FREE ENTRY</span><span class="strip s-odd">NO GLOVES</span><span class="strip s-even">TELL A PAL</span><span class="strip s-odd">GLASS JAW</span><span class="strip s-even">BRING HANDS</span>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    (function(){
+      var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      /* every print run is a little crooked: jitter the pasted letters + tear strips */
+      document.querySelectorAll('.l, .strip').forEach(function(el){
+        el.style.setProperty('--j', (Math.random()*4-2).toFixed(2) + 'deg');
+      });
+
+      /* the flyer sways on the pole, barely */
+      if(!reduce){
+        var wrap = document.querySelector('.flyer-wrap'), tx=0, ty=0, cx=0, cy=0;
+        addEventListener('pointermove', function(e){
+          tx = e.clientX/innerWidth - .5;
+          ty = e.clientY/innerHeight - .5;
+        }, {passive:true});
+        (function tick(){
+          cx += (tx-cx)*.06; cy += (ty-cy)*.06;
+          wrap.style.transform =
+            'rotate(' + (-0.7 + cx*0.9).toFixed(3) + 'deg)' +
+            ' translate(' + (cx*12).toFixed(1) + 'px,' + (cy*9).toFixed(1) + 'px)';
+          requestAnimationFrame(tick);
+        })();
+      }
+    })();
+  </script>
+</body>
+</html>

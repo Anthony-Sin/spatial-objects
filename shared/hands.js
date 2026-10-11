@@ -27,7 +27,7 @@ export class Hands {
     this.landmarker = null;                       // inline fallback only
     this._t = -1; this._prev = {}; this._tick = 0;
     this._vendorUrl = null; this._video = null; this._onNew = null;
-    this._retryT = null;
+    this._retryT = null; this._initLocalP = null; this._stopped = false;
     this.stats = { cameraHz: 0, trackHz: 0, roundTripMs: 0, inferMs: 0,
       lastResultAt: 0, frameWidth: 0, frameHeight: 0 };
     this._lastCameraAt = 0;
@@ -59,6 +59,7 @@ export class Hands {
           else { h._adopt(w, d.delegate); res('ok'); }
         }
         else if (d.type === 'result') {
+          if (h._worker !== w) return;   // zombie worker (errored but not yet reaped) — ignore its frames
           const now = performance.now(), st = h.stats;
           st.roundTripMs = h._sentAt ? now - h._sentAt : 0;
           st.inferMs = d.inferMs || 0;
@@ -70,11 +71,12 @@ export class Hands {
         }
         else if (d.type === 'fatal') {   // repeated detect errors — GPU ctx died
           try { w.terminate(); } catch {}
-          if (h._worker === w) { h._worker = null; h.delegate = 'none'; }
-          h._inFlight = false; h._initLocal().catch(() => {});
+          if (h._worker === w) { h._worker = null; h.delegate = 'none';
+            h._inFlight = false; h._initLocal().catch(() => {}); }
         }
       };
       w.onerror = () => {
+        try { w.terminate(); } catch {}   // an errored worker may stay alive and keep posting — reap it
         if (h._worker === w) { h._worker = null; h._inFlight = false; h._initLocal().catch(() => {}); }
         res('fail');
       };
@@ -88,14 +90,24 @@ export class Hands {
     this.delegate = `${delegate}-worker`;
     this.landmarker?.close?.(); this.landmarker = null;   // worker won — free the inline copy
     w.onerror = () => {                                  // mid-game death → inline + one respawn
-      if (this._worker === w) { this._worker = null; this.delegate = 'none'; }
+      try { w.terminate(); } catch {}
+      if (this._worker !== w) return;                    // already replaced — don't touch the new worker's flight state
+      this._worker = null; this.delegate = 'none';
       this._inFlight = false;
       this._initLocal().catch(() => {});
       clearTimeout(this._retryT);
       this._retryT = setTimeout(() => { if (!this._worker) this._spawn(); }, 3000);
     };
   }
+  /* concurrent callers (fatal + onerror can fire together) must share ONE
+     boot — two inline landmarkers meant leaked GPU/CPU graphs */
   async _initLocal() {
+    if (this.landmarker) return;
+    if (this._initLocalP) return this._initLocalP;
+    this._initLocalP = this._initLocalOnce().finally(() => { this._initLocalP = null; });
+    return this._initLocalP;
+  }
+  async _initLocalOnce() {
     if (this.landmarker) return;
     const { FilesetResolver, HandLandmarker } = await import(`${this._vendorUrl}/vision_bundle.mjs`);
     const fileset = await FilesetResolver.forVisionTasks(`${this._vendorUrl}/wasm`);
@@ -174,10 +186,14 @@ export class Hands {
     };
     this._onNew = onNew;   // worker results re-dispatch here — no rVFC bubble
     if (v.requestVideoFrameCallback) {          // paced by the camera itself — rAF fires too often
-      const again = () => v.requestVideoFrameCallback(() => { if (this._worker || this.landmarker) onNew(); again(); });
+      const again = () => v.requestVideoFrameCallback(() => {
+        if (this._stopped) return;              // stop() must kill the chain, not just idle it
+        if (this._worker || this.landmarker) onNew(); again(); });
       again();
     } else {
-      const again = () => { if (this._worker || this.landmarker) onNew(); requestAnimationFrame(again); };
+      const again = () => {
+        if (this._stopped) return;
+        if (this._worker || this.landmarker) onNew(); requestAnimationFrame(again); };
       again();
     }
   }
@@ -229,11 +245,17 @@ export class Hands {
     return lm[0].x > .5 ? 'left' : 'right';
   }
   stop() {
+    this._stopped = true;
     clearTimeout(this._retryT);
     try { this._worker?.postMessage({ type: 'close' }); } catch {}
     this._worker?.terminate(); this._worker = null;
     try { this.landmarker?.close?.(); } catch {} this.landmarker = null;
-    this.state.hands = [];
+    this.delegate = 'none';
+    // drop the whole derived state, not just .hands — a stale pinch/orbit
+    // handle kept pointing at a dead hand object after stop()
+    const st = this.state;
+    st.hands = [];
+    st.pinch = st.point = st.orbit = st.zoom = st.spread = null;
   }
 }
 export default Hands;

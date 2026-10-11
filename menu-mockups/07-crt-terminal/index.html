@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SCRAP!</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&family=VT323&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ph:#3dff6e;
+  --ph-dim:rgba(61,255,110,.55);
+  --ph-faint:rgba(61,255,110,.22);
+  --bg:#020604;
+  --mono:'VT323','IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'Courier New',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{min-height:100%}
+body{
+  background:#000;
+  font-family:var(--mono);
+  color:var(--ph);
+  -webkit-font-smoothing:none;
+}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* ---------- CRT shell ---------- */
+.crt{
+  min-height:100dvh;
+  display:flex;
+  flex-direction:column;
+  background:
+    radial-gradient(130% 100% at 50% 42%, #06190c 0%, #041008 46%, var(--bg) 78%, #000 100%);
+}
+.term{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  width:min(92vw,72rem);
+  margin-inline:auto;
+  padding:clamp(1rem,5vmin,4rem) clamp(.9rem,4vw,4rem) clamp(.9rem,3vmin,2.5rem);
+  font-size:clamp(16px,2.5vmin,34px);
+  line-height:1.45;
+  letter-spacing:.04em;
+  text-shadow:0 0 .16em rgba(61,255,110,.75),0 0 .7em rgba(61,255,110,.28);
+  animation:flicker 6s steps(90) infinite;
+}
+@keyframes flicker{
+  0%,100%{opacity:1}
+  47%{opacity:.985}
+  48%{opacity:.955}
+  49%{opacity:.99}
+  82%{opacity:.97}
+  83%{opacity:1}
+}
+
+/* ---------- boot log ---------- */
+#boot{min-height:8.2em;white-space:pre-wrap}
+#boot .line{min-height:1.45em}
+#boot .dim{color:var(--ph-dim)}
+
+/* ---------- ASCII hero ---------- */
+.logo{
+  font-family:'IBM Plex Mono',ui-monospace,Menlo,Consolas,'Courier New',monospace;
+  font-size:clamp(7px,min(2.6vw,2.2vmin),40px);
+  line-height:1.15;
+  margin-block:clamp(.6rem,3.5vmin,3rem) clamp(1.2rem,4vmin,3.4rem);
+  text-shadow:0 0 .14em rgba(61,255,110,.8),0 0 .5em rgba(61,255,110,.3);
+}
+
+/* ---------- menu ---------- */
+.menu-label{margin-bottom:.15em;white-space:pre}
+nav a{
+  display:block;
+  color:inherit;
+  text-decoration:none;
+  padding:0 .45em;
+  line-height:1.75;
+  letter-spacing:.1em;
+  white-space:pre;
+  cursor:pointer;
+}
+nav a .mk{display:inline-block;width:1.1em;opacity:0}
+nav a.sel .mk{opacity:1}
+nav a.sel,
+nav a:focus-visible{
+  background:var(--ph);
+  color:#02170a;
+  text-shadow:none;
+  outline:none;
+}
+nav a.sel::after{
+  content:" \2588";
+  animation:blink 1.06s steps(1) infinite;
+}
+
+/* ---------- blinking cursor ---------- */
+.cur{animation:blink 1.06s steps(1) infinite}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+
+/* ---------- status line ---------- */
+.status{
+  margin-top:auto;
+  padding-top:1.5em;
+  color:var(--ph-dim);
+  font-size:.78em;
+  letter-spacing:.18em;
+  white-space:nowrap;
+}
+
+/* ---------- CRT overlays ---------- */
+.fx{position:fixed;inset:0;pointer-events:none}
+.scanlines{
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.3) 0 1px,transparent 1px 3px);
+}
+.beam{
+  top:-25%;height:22%;
+  background:linear-gradient(180deg,transparent,rgba(140,255,180,.05) 44%,rgba(170,255,200,.1) 50%,rgba(140,255,180,.05) 56%,transparent);
+  animation:sweep 8s linear infinite;
+}
+@keyframes sweep{to{transform:translateY(640%)}}
+.glare{
+  background:
+    linear-gradient(180deg,rgba(150,255,190,.045),transparent 26%),
+    radial-gradient(70% 45% at 50% -12%,rgba(140,255,180,.07),transparent 70%);
+}
+.vignette{
+  background:radial-gradient(115% 130% at 50% 50%,transparent 52%,rgba(0,0,0,.5) 88%,rgba(0,0,0,.88) 100%);
+  box-shadow:inset 0 0 14vmin rgba(0,0,0,.75),inset 0 0 3.5vmin rgba(0,0,0,.55);
+  border-radius:3.5vmin;
+}
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion:reduce){
+  .term{animation:none}
+  .beam{display:none}
+  .cur,nav a.sel::after{animation:none;opacity:1}
+}
+</style>
+</head>
+<body>
+
+<div class="crt">
+  <main class="term">
+    <h1 class="sr-only">SCRAP!</h1>
+
+    <div id="boot" aria-hidden="true"></div>
+
+    <pre class="logo" id="hero" aria-hidden="true" hidden>███████╗   ██████╗  ██████╗    █████╗   ██████╗   ██╗
+██╔════╝  ██╔════╝  ██╔══██╗  ██╔══██╗  ██╔══██╗  ██║
+███████╗  ██║       ██████╔╝  ███████║  ██████╔╝  ██║
+╚════██║  ██║       ██╔══██╗  ██╔══██║  ██╔═══╝   ╚═╝
+███████║  ╚██████╗  ██║  ██║  ██║  ██║  ██║       ██╗
+╚══════╝   ╚═════╝  ╚═╝  ╚═╝  ╚═╝  ╚═╝  ╚═╝       ╚═╝</pre>
+
+    <nav id="menu" aria-label="Main menu" hidden>
+      <div class="menu-label">SELECT AN OPTION: <span class="cur" aria-hidden="true">█</span></div>
+      <a href="../../boxing.html" class="sel"><span class="mk" aria-hidden="true">&gt;</span>1) FIGHT</a>
+      <a href="../../lineup.html"><span class="mk" aria-hidden="true">&gt;</span>2) CHOOSE FIGHTER</a>
+    </nav>
+
+    <div class="status" id="status" hidden>WEBCAM REQUIRED · C=RECENTER</div>
+  </main>
+</div>
+
+<div class="fx glare"></div>
+<div class="fx scanlines"></div>
+<div class="fx beam"></div>
+<div class="fx vignette"></div>
+
+<script>
+(function(){
+  "use strict";
+  var reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var LINES = [
+    'PUGILIST BIOS v3.11',
+    'MEM CHECK ............... 640K OK',
+    'LOADING HANDS.SYS ....... OK',
+    'LOADING PUNCH.COM ....... OK',
+    'WEBCAM .................. READY',
+    'C:\\>SCRAP.EXE'
+  ];
+  var STATUS_TXT = 'WEBCAM REQUIRED · C=RECENTER';
+
+  var boot   = document.getElementById('boot');
+  var hero   = document.getElementById('hero');
+  var menu   = document.getElementById('menu');
+  var status = document.getElementById('status');
+  var done   = false;
+
+  function wait(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
+  function showAll(){
+    if (done) return;
+    done = true;
+    boot.textContent = '';
+    LINES.forEach(function(l){
+      var d = document.createElement('div');
+      d.className = 'line';
+      d.textContent = l;
+      boot.appendChild(d);
+    });
+    hero.hidden = menu.hidden = status.hidden = false;
+  }
+
+  function runBoot(){
+    if (reduced){ showAll(); return; }
+    (async function(){
+      for (var i = 0; i < LINES.length; i++){
+        var d = document.createElement('div');
+        d.className = 'line';
+        boot.appendChild(d);
+        var l = LINES[i];
+        for (var c = 1; c <= l.length; c++){
+          if (done) return;
+          d.textContent = l.slice(0, c) + '█';
+          await wait(12 + Math.random() * 22);
+        }
+        d.textContent = l;
+        await wait(80 + Math.random() * 60);
+      }
+      if (done) return;
+      await wait(300);
+      showAll();
+    })();
+  }
+
+  /* ---------- menu selection ---------- */
+  var items = Array.prototype.slice.call(menu.querySelectorAll('a'));
+  var idx = 0;
+  function select(i, focus){
+    idx = (i + items.length) % items.length;
+    items.forEach(function(a, k){ a.classList.toggle('sel', k === idx); });
+    if (focus) items[idx].focus({ preventScroll: true });
+  }
+  items.forEach(function(a, i){
+    a.addEventListener('mouseenter', function(){ select(i); });
+    a.addEventListener('focus', function(){ select(i); });
+  });
+
+  /* ---------- recenter flash ---------- */
+  var rt;
+  function recenter(){
+    status.textContent = 'RECENTERING ... HANDS.SYS OK';
+    clearTimeout(rt);
+    rt = setTimeout(function(){ status.textContent = STATUS_TXT; }, 1400);
+  }
+
+  /* ---------- input ---------- */
+  addEventListener('keydown', function(e){
+    if (!done){ showAll(); e.preventDefault(); return; }
+    var k = e.key;
+    if (k === 'ArrowDown' || k === 'ArrowUp'){
+      select(idx + (k === 'ArrowDown' ? 1 : -1), true);
+      e.preventDefault();
+    } else if (k === 'Enter' || k === ' '){
+      items[idx].click();
+      e.preventDefault();
+    } else if (k === '1' || k === '2'){
+      items[+k - 1].click();
+    } else if (k === 'c' || k === 'C'){
+      recenter();
+    }
+  });
+  addEventListener('pointerdown', function(){ if (!done) showAll(); });
+
+  select(0);
+  runBoot();
+})();
+</script>
+</body>
+</html>

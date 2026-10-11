@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>menu mockups — pick one</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Patrick+Hand&family=Nunito:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#FFF8EC; --cream:#FFFDF6; --ink:#2B2118; --coral:#FF6B57;
+    --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--paper); color:var(--ink); min-height:100vh; padding:44px 22px 80px;
+    font-family:'Nunito',system-ui,sans-serif;
+    background-image:radial-gradient(#F3E4C8 1.4px, transparent 1.4px); background-size:26px 26px; }
+  .wrap { max-width:1280px; margin:0 auto; }
+  header { text-align:center; margin-bottom:44px; }
+  .badge { display:inline-block; background:var(--sun); border:3px solid var(--ink); border-radius:999px;
+    padding:6px 18px; font-family:'Patrick Hand',cursive; font-size:18px; transform:rotate(-2deg);
+    box-shadow:3px 3px 0 var(--ink); margin-bottom:20px; }
+  h1 { font-family:'Fredoka',sans-serif; font-weight:700; font-size:clamp(34px,5.5vw,56px); line-height:1.05; }
+  h1 .amp { color:var(--coral); }
+  .sub { font-family:'Patrick Hand',cursive; font-size:21px; margin-top:12px; color:#6d5c49; }
+  .sub b { color:var(--coral); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(400px,1fr)); gap:30px; }
+  @media (max-width:480px){ .grid{grid-template-columns:1fr} }
+  .card { position:relative; display:block; text-decoration:none; color:var(--ink);
+    background:var(--cream); border:3px solid var(--ink); border-radius:22px; padding:18px;
+    box-shadow:6px 6px 0 var(--ink); transition:transform .18s cubic-bezier(.34,1.56,.64,1), box-shadow .18s; }
+  .card:hover { transform:translate(-2px,-4px) rotate(-.6deg); box-shadow:9px 10px 0 var(--ink); }
+  .num { position:absolute; top:-15px; left:-11px; width:40px; height:40px; border-radius:50%;
+    border:3px solid var(--ink); display:grid; place-items:center; z-index:3;
+    font-family:'Fredoka'; font-weight:700; font-size:18px; background:var(--coral); color:var(--cream); }
+  .card:nth-child(2) .num{background:var(--sun);color:var(--ink)}
+  .card:nth-child(3) .num{background:var(--leaf)}
+  .card:nth-child(4) .num{background:var(--sky)}
+  .card:nth-child(5) .num{background:var(--berry)}
+  .shot { position:relative; aspect-ratio:16/10; border:3px solid var(--ink); border-radius:14px;
+    overflow:hidden; background:#111; margin-bottom:15px; }
+  .shot iframe { position:absolute; top:0; left:0; width:1280px; height:800px; border:0;
+    transform:scale(.335); transform-origin:0 0; pointer-events:none; background:#FFF8EC; }
+  .shot .open { position:absolute; inset:0; display:grid; place-items:center;
+    background:rgba(43,33,24,0); transition:background .15s; }
+  .shot .open span { opacity:0; font-family:'Fredoka'; font-weight:700; font-size:18px;
+    background:var(--cream); border:3px solid var(--ink); border-radius:14px; padding:10px 22px;
+    box-shadow:4px 4px 0 var(--ink); transition:opacity .15s, transform .18s cubic-bezier(.34,1.56,.64,1);
+    transform:scale(.85); }
+  .card:hover .shot .open { background:rgba(43,33,24,.28); }
+  .card:hover .shot .open span { opacity:1; transform:scale(1); }
+  .vibe { font-family:'Patrick Hand',cursive; font-size:14px; letter-spacing:.06em;
+    text-transform:uppercase; color:#8a7457; }
+  .name { font-family:'Fredoka'; font-weight:700; font-size:26px; margin:1px 0 4px; }
+  .tag { font-family:'Patrick Hand',cursive; font-size:16.5px; color:var(--coral); margin-bottom:6px; }
+  .desc { font-size:14.5px; line-height:1.45; color:#5c4d3a; }
+  .go { margin-top:12px; display:inline-block; font-family:'Fredoka'; font-weight:600;
+    font-size:14px; color:var(--coral); }
+  footer { text-align:center; margin-top:52px; font-family:'Patrick Hand'; font-size:17px; color:#8a7457; }
+  footer code { font-family:ui-monospace,monospace; font-size:14px; background:#f3e9d4; padding:1px 7px; border-radius:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="badge">start-menu bake-off · 11 directions</span>
+    <h1>Pick the new <span class="amp">title screen</span></h1>
+    <p class="sub">Each card is a live preview — click it to open full size. Two designs independently landed on <b>GLASS JAW</b>, if that means anything.</p>
+  </header>
+  <div class="grid">
+    <a class="card" href="01-arcade-neon/" target="_blank">
+      <span class="num">1</span>
+      <div class="shot"><iframe src="01-arcade-neon/index.html" loading="lazy" tabindex="-1" title="Arcade neon mockup"></iframe>
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">80s coin-op · neon marquee</div>
+      <div class="name">GLASS JAW</div>
+      <div class="tag">"TWO FISTS. ONE WEBCAM. NO CONTINUES."</div>
+      <p class="desc">A dark arcade cabinet — flickering neon sign, chasing marquee bulbs, scanlines, HI-SCORE HUD, INSERT COIN blink, fight-card ticker.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="02-fight-poster/" target="_blank">
+      <span class="num">2</span>
+      <div class="shot"><iframe src="02-fight-poster/index.html" loading="lazy" tabindex="-1" title="Fight poster mockup"></iframe>
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">vintage · fight-night poster</div>
+      <div class="name">HAYMAKER</div>
+      <div class="tag">"A webcam prizefight — your fists are the gloves"</div>
+      <p class="desc">A 1940s boxing bill taped to the gym wall — wood-type headline, main-event card, ticket-stub buttons, aged halftone paper.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="03-comic-book/" target="_blank">
+      <span class="num">3</span>
+      <div class="shot"><iframe src="03-comic-book/index.html" loading="lazy" tabindex="-1" title="Comic book mockup"></iframe>
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">saturday-morning · comic cover</div>
+      <div class="name">SCRAP!</div>
+      <div class="tag">webcam boxing, comic-book style</div>
+      <p class="desc">Superhero-comic cover in the house palette — halftone dots, sunburst rays, POW!/BIFF! starbursts, tilted-panel CTAs.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="04-tv-broadcast/" target="_blank">
+      <span class="num">4</span>
+      <div class="shot"><iframe src="04-tv-broadcast/index.html" loading="lazy" tabindex="-1" title="TV broadcast mockup"></iframe>
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">prime-time · sports broadcast</div>
+      <div class="name">Title Shot</div>
+      <div class="tag">"live from your webcam — twelve rounds for the undisputed crown"</div>
+      <p class="desc">Arena spotlights over navy dark — metallic-gold wordmark, LIVE bug, tale-of-the-tape panel, keys-to-the-fight lower third, news ticker.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="05-punk-flyer/" target="_blank">
+      <span class="num">5</span>
+      <div class="shot"><iframe src="05-punk-flyer/index.html" loading="lazy" tabindex="-1" title="Punk flyer mockup"></iframe>
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">diy · photocopied punk flyer</div>
+      <div class="name">GLASS JAW</div>
+      <div class="tag">"your hands are the gloves — the camera keeps score"</div>
+      <p class="desc">A stapled underground-boxing flyer — torn newsprint, masking-tape corners, ransom-note letters, marker scribbles, tear-off strips.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+  </div>
+  <header style="margin-top:72px">
+    <span class="badge" style="background:var(--ink);color:var(--cream)">wave 2 · stripped down — just title + buttons</span>
+    <h1 style="font-size:clamp(30px,4.5vw,46px)">Same name, <span class="amp">less information</span></h1>
+    <p class="sub">All six use <b>SCRAP!</b> so the only variable is the layout. No how-to cards, no stats — title and two buttons.</p>
+  </header>
+  <div class="grid">
+    <a class="card" href="06-swiss-type/" target="_blank">
+      <span class="num">6</span>
+      <div class="shot"><iframe src="06-swiss-type/index.html" loading="lazy" tabindex="-1" title="Swiss type mockup"></iframe>
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">swiss · museum modernism</div>
+      <div class="name">SCRAP!</div>
+      <div class="tag">the exclamation mark is the only color</div>
+      <p class="desc">Off-white field, hairline rules, one enormous Archivo wordmark, two plain rectangles, a lone asterisk footnote.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="07-crt-terminal/" target="_blank">
+      <span class="num">7</span>
+      <div class="shot"><iframe src="07-crt-terminal/index.html" loading="lazy" tabindex="-1" title="CRT terminal mockup"></iframe>
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">DOS · phosphor terminal</div>
+      <div class="name">SCRAP!</div>
+      <div class="tag">types a boot log, then waits for input</div>
+      <p class="desc">Green CRT with scanlines — ASCII-art title, a numbered text menu you can click, arrow-key, or hotkey 1/2.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="08-rising-sun/" target="_blank">
+      <span class="num">8</span>
+      <div class="shot"><iframe src="08-rising-sun/index.html" loading="lazy" tabindex="-1" title="Rising sun mockup"></iframe>
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">japanese poster · brush ink</div>
+      <div class="name">SCRAP!</div>
+      <div class="tag">one sun, one kanji, two ink stamps</div>
+      <p class="desc">Warm cream paper, vermillion disc behind the brushed wordmark, vertical 拳闘 accent, hand-cut stamp buttons.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="09-one-glove/" target="_blank" style="border-color:var(--leaf);border-width:4px">
+      <span class="num" style="background:var(--leaf)">9</span>
+      <div class="shot"><iframe src="09-one-glove/index.html" loading="lazy" tabindex="-1" title="One glove mockup"></iframe>
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">app icon · one sticker — <b style="color:var(--leaf)">WINNER · now the real menu</b></div>
+      <div class="name">SCRAP!</div>
+      <div class="tag">the whole menu fits in one icon</div>
+      <p class="desc">A pair of bobbing hand-drawn gloves over the wordmark, three pills — fight, pick a rival, mini tutorial — nothing else on dotted paper.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="10-spotlight/" target="_blank">
+      <span class="num">10</span>
+      <div class="shot"><iframe src="10-spotlight/index.html" loading="lazy" tabindex="-1" title="Spotlight mockup"></iframe>
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">cinematic · empty ring</div>
+      <div class="name">SCRAP!</div>
+      <div class="tag">quietest one — one cone of light</div>
+      <p class="desc">Near-black stage, gloves hanging by laces in a warm spotlight, drifting dust motes, ghost-outline buttons.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+    <a class="card" href="11-napkin-sketch/" target="_blank">
+      <span class="num">11</span>
+      <div class="shot"><iframe src="11-napkin-sketch/index.html" loading="lazy" tabindex="-1" title="Napkin sketch mockup"></iframe>
+        <span class="open"><span>Open full size →</span></span></div>
+      <div class="vibe">napkin doodle · ballpoint</div>
+      <div class="name">SCRAP!</div>
+      <div class="tag">sketched in pen on ruled paper</div>
+      <p class="desc">Wobbly wordmark, doodled glove, circled stick-figure "you", hand-drawn pen boxes, one red "start here" arrow.</p>
+      <span class="go">Open mockup →</span>
+    </a>
+  </div>
+  <footer>
+    Say the number (or the name) and I'll wire the winner into <code>index.html</code> — name, tagline, buttons, the works.
+  </footer>
+</div>
+</body>
+</html>

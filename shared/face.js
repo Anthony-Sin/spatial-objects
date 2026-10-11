@@ -33,7 +33,7 @@ export class Face {
     this.landmarker = null;                       // inline fallback only
     this._t = -1; this._tick = 0; this._rate = 2;
     this._vendorUrl = null; this._video = null; this._onNew = null;
-    this._retryT = null;
+    this._retryT = null; this._initLocalP = null; this._stopped = false;
   }
   static async create(video, vendorUrl = './vendor/mediapipe', opts = {}) {
     const f = new Face();
@@ -60,16 +60,18 @@ export class Face {
           else { f._adopt(w, d.delegate); res('ok'); }
         }
         else if (d.type === 'result') {
+          if (f._worker !== w) return;   // zombie worker (errored but not yet reaped) — ignore its frames
           f._inFlight = false; f.inferMs = d.inferMs || 0;
           f._ingest(d); f._onNew?.();
         }
         else if (d.type === 'fatal') {
           try { w.terminate(); } catch {}
-          if (f._worker === w) { f._worker = null; f.delegate = 'none'; }
-          f._inFlight = false; f._initLocal().catch(() => {});
+          if (f._worker === w) { f._worker = null; f.delegate = 'none';
+            f._inFlight = false; f._initLocal().catch(() => {}); }
         }
       };
       w.onerror = () => {
+        try { w.terminate(); } catch {}   // an errored worker may stay alive and keep posting — reap it
         if (f._worker === w) { f._worker = null; f._inFlight = false; f._initLocal().catch(() => {}); }
         res('fail');
       };
@@ -84,14 +86,24 @@ export class Face {
     this._rate = 1;   // offer every camera frame — _inFlight gates the pace
     this.landmarker?.close?.(); this.landmarker = null;
     w.onerror = () => {                                  // mid-game death → inline + one respawn
-      if (this._worker === w) { this._worker = null; this.delegate = 'none'; }
+      try { w.terminate(); } catch {}
+      if (this._worker !== w) return;                    // already replaced — don't touch the new worker's flight state
+      this._worker = null; this.delegate = 'none';
       this._inFlight = false;
       this._initLocal().catch(() => {});
       clearTimeout(this._retryT);
       this._retryT = setTimeout(() => { if (!this._worker) this._spawn(); }, 3000);
     };
   }
+  /* concurrent callers (fatal + onerror can fire together) must share ONE
+     boot — two inline landmarkers meant leaked GPU/CPU graphs */
   async _initLocal() {
+    if (this.landmarker) return;
+    if (this._initLocalP) return this._initLocalP;
+    this._initLocalP = this._initLocalOnce().finally(() => { this._initLocalP = null; });
+    return this._initLocalP;
+  }
+  async _initLocalOnce() {
     if (this.landmarker) return;
     const { FilesetResolver, FaceLandmarker } = await import(`${this._vendorUrl}/vision_bundle.mjs`);
     const fileset = await FilesetResolver.forVisionTasks(`${this._vendorUrl}/wasm`);
@@ -148,10 +160,14 @@ export class Face {
     };
     this._onNew = onNew;   // worker results re-dispatch here — no rVFC bubble
     if (v.requestVideoFrameCallback) {
-      const again = () => v.requestVideoFrameCallback(() => { if (this._worker || this.landmarker) onNew(); again(); });
+      const again = () => v.requestVideoFrameCallback(() => {
+        if (this._stopped) return;              // stop() must kill the chain, not just idle it
+        if (this._worker || this.landmarker) onNew(); again(); });
       again();
     } else {
-      const again = () => { if (this._worker || this.landmarker) onNew(); requestAnimationFrame(again); };
+      const again = () => {
+        if (this._stopped) return;
+        if (this._worker || this.landmarker) onNew(); requestAnimationFrame(again); };
       again();
     }
   }
@@ -192,12 +208,15 @@ export class Face {
     } else if (this._okAt < 0 || performance.now() - this._okAt > LOST_MS) s.found = false;
   }
   stop() {
+    this._stopped = true;
     clearTimeout(this._retryT);
     try { this._worker?.postMessage({ type: 'close' }); } catch {}
     this._worker?.terminate(); this._worker = null;
     try { this.landmarker?.close?.(); } catch {} this.landmarker = null;
     this._okAt = -1;
+    this.delegate = 'none';
     this.state.found = false;
+    this.state.lm = null;
   }
 }
 export default Face;

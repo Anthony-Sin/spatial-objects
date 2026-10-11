@@ -22,23 +22,28 @@
    landed-hit hold even after the fight state has moved on.
 */
 
-/* A stored proto pick only counts if the fighter is actually unlocked —
-   the lineup gates variants by your average KO round (koAvg). Anything
-   still locked falls back to the house favorite. */
-const ownedPick = (pick) => {
-  try {
-    if (!pick.startsWith('proto:')) return pick;
-    const need = { 'proto:blocky': 3, 'proto:bean': 2 }[pick];
-    if (need == null) return pick;
-    const ko = JSON.parse(localStorage.getItem('boxing:ko') || 'null');
-    return ko && ko.n > 0 && ko.sum / ko.n <= need ? pick : 'proto:bubble';
-  } catch { return 'proto:bubble'; }
-};
+/* A stored pick only counts while it's genuinely earnable — the same rules
+   the lineup enforces: proto variants (written 'proto:x' or a bare 'x') pass
+   the koAvg gate below, and GLB ids must name a non-PROP fighter candidate.
+   A locked variant, a prop, a stale id → the pick falls back to the house
+   favorite instead of sneaking into the ring. */
 const pickId = () => {
-  // no stored pick → the house-made favorite
-  try { return ownedPick(localStorage.getItem('boxing:npc') || 'proto:bubble'); }
+  try { return localStorage.getItem('boxing:npc') || 'proto:bubble'; }
   catch { return 'proto:bubble'; }
 };
+// the lineup's lock, verbatim: a gated variant opens once your AVERAGE KO
+// round is early enough (VARIANT_INFO .koAvg); no gate → always open
+const variantOpen = (info, variant) => {
+  const need = info?.[variant]?.koAvg;
+  if (need == null) return true;
+  try {
+    const ko = JSON.parse(localStorage.getItem('boxing:ko') || 'null');
+    return !!(ko && ko.n > 0 && ko.sum / ko.n <= need);
+  } catch { return false; }
+};
+// one cached module promise — the gate and the builder share the import
+let protoP = null;
+const protoModule = () => (protoP ||= import('./protoBoxer.js').catch(() => null));
 
 const fetchManifest = async (opts) => {
   if (opts.manifest) return opts.manifest;
@@ -180,7 +185,7 @@ async function tryGlb(THREE, cand) {
 }
 
 async function tryProto(THREE, variant) {
-  const m = await import('./protoBoxer.js').catch(() => null);
+  const m = await protoModule();
   if (!m?.buildBoxer) return null;
   const v = (m.VARIANTS || []).includes(variant) ? variant : (m.VARIANTS?.[0] || 'bubble');
   try {
@@ -254,7 +259,10 @@ export async function createNpc(THREE, opts = {}) {
   if (opts.scene) opts.scene.add(group);
   const pick = opts.id ?? pickId();
   const manifest = await fetchManifest(opts);
-  const cand = pick ? manifest.candidates.find(c => c.id === pick && c.type === 'glb') : null;
+  // manifest "PROP" entries (ring/gloves/bag) are set dressing — the lineup
+  // never lists them, and a stored pick can't smuggle one in as a rival
+  const cand = pick ? manifest.candidates.find(c => c.id === pick
+    && c.type === 'glb' && !/^PROP/i.test(c.notes || '')) : null;
 
   let impl = null, kind = 'proto', id = pick || 'bubble', name = pretty(pick);
   if (cand) {
@@ -262,7 +270,12 @@ export async function createNpc(THREE, opts = {}) {
     if (impl) { kind = 'glb'; name = cand.name || pick; }
   }
   if (!impl) {
-    const variant = pretty(pick).toLowerCase().replace(/ /g, '') || 'bubble';
+    // 'proto:x' and a bare 'x' name the same fighter — resolve the pick
+    // against the roster, then gate it exactly like the lineup does
+    const m = await protoModule();
+    const wanted = pretty(pick).toLowerCase().replace(/ /g, '') || 'bubble';
+    const variant = (m?.VARIANTS || []).includes(wanted)
+      && !variantOpen(m.VARIANT_INFO, wanted) ? (m.VARIANTS[0] || 'bubble') : wanted;
     impl = await tryProto(THREE, variant);
     if (impl) { kind = 'proto'; id = impl.variant || variant; name = pretty(impl.variant || variant); }
   }
