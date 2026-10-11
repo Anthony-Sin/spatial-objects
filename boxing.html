@@ -372,7 +372,7 @@
       // each landmarker boots inside its own worker — fire both, wire in when ready.
       // Hands get the whole GPU budget: a tracked hand roughly doubles infer
       // cost, and two fists up is the exact moment tracking must keep 30Hz.
-      // BlazeFace is ~4ms — it lives on spare CPU cores instead of competing.
+      // FaceLandmarker (~10-20ms on CPU) lives on spare cores instead of competing.
       Face.create(video, './vendor/mediapipe', { preferCpu: true })
         .then(f => { face = f; status.textContent = `face · ${f.delegate}`; }).catch(() => {});
       Hands.create(video, './vendor/mediapipe', { preferCpu: false }).then(h => {
@@ -1021,16 +1021,23 @@
       }
     };
 
-    /* nose dot on the peephole */
+    /* face landmarks on the peephole — sparse mesh dots + the nose */
     const nc = $('[data-nose]'), nx = nc.getContext('2d');
     let ncW = 0, ncH = 0;                       // clientWidth is a layout read — cache it
     const noseDot = () => {
-      if (!face?.state.found) { if (nc.width) { nc.width = 0; } return; }  // nothing to draw — zero layout reads
+      const fs = face?.state;
+      if (!fs?.found) { if (nc.width) { nc.width = 0; } return; }  // nothing to draw — zero layout reads
       if (!ncW) { ncW = nc.clientWidth || 0; ncH = nc.clientHeight || 0; }
       if (!ncW) return;
       if (nc.width !== ncW || nc.height !== ncH) { nc.width = ncW; nc.height = ncH; }  // resize clears — only when needed
       nx.clearRect(0, 0, ncW, ncH);
-      nx.beginPath(); nx.arc(face.state.nose.x * ncW, face.state.nose.y * ncH, 4, 0, 7);
+      const lm = fs.lm;
+      if (lm?.length) {                          // 478-pt mesh → 1px dot cloud
+        nx.fillStyle = 'rgba(210,235,255,.5)';
+        for (let i = 0, n = lm.length; i < n; i += 3)
+          nx.fillRect(lm[i].x * ncW - .5, lm[i].y * ncH - .5, 1, 1);
+      }
+      nx.beginPath(); nx.arc(fs.nose.x * ncW, fs.nose.y * ncH, 4, 0, 7);
       nx.fillStyle = '#ff6b57'; nx.fill();
     };
 

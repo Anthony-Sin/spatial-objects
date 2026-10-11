@@ -1,14 +1,19 @@
-/* shared/face.js — webcam head tracker. Same tiny API, two engines:
-     - worker path (preferred): a dedicated track-worker.js runs the detector
-       off the main thread. BlazeFace first (nose + box is all we need),
-       FaceLandmarker as its own fallback inside the worker.
+/* shared/face.js — webcam face tracker. Same tiny API, two engines:
+     - worker path (preferred): a dedicated track-worker.js runs
+       FaceLandmarker (478-pt landmark mesh) off the main thread, CPU
+       delegate first — the iGPU keeps render + hand inference, and the
+       landmarker sits on spare cores. BlazeFace is the fallback inside
+       the worker if the landmarker can't boot.
      - inline path: FaceLandmarker on the main thread, only if workers die.
-   .state {found, nose{x,y}, size, center{x,y}} stays self-view-mirrored.
+   .state {found, nose{x,y}, size, center{x,y}, lm[...]} stays
+   self-view-mirrored — lm is the full mesh (or null on the det fallback).
 
-   Cadence: BlazeFace is ~4ms → every camera frame (lowest sway latency);
-   the landmarker fallback → every 2nd; inline (blocks the thread) → every
-   3rd. Boot policy mirrors hands.js: worker first, inline covers a slow
-   boot after 30s, a late worker 'ready' always adopts the pump.
+   Cadence: in the worker every new camera frame is offered — the
+   one-in-flight gate self-throttles to whatever the delegate sustains
+   (FaceLandmarker ≈10–20ms on CPU → ~camera rate), so it can never drag
+   render fps. Inline blocks the thread → every 3rd. Boot policy mirrors
+   hands.js: worker first, inline covers a slow boot after 30s, a late
+   worker 'ready' always adopts the pump.
 */
 const BOOT_MS = 30000;
 /* a glove passed in front of the camera occludes the face for a moment —
@@ -20,7 +25,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 export class Face {
   constructor() {
-    this.state = { found: false, nose: { x: .5, y: .5 }, size: 0, center: { x: .5, y: .5 } };
+    this.state = { found: false, nose: { x: .5, y: .5 }, size: 0,
+      center: { x: .5, y: .5 }, lm: null };
+    this.inferMs = 0;
     this.delegate = 'none';
     this._worker = null; this._inFlight = false; this._okAt = -1;
     this.landmarker = null;                       // inline fallback only
@@ -32,7 +39,9 @@ export class Face {
     const f = new Face();
     f._vendorUrl = new URL(vendorUrl, location.href).href.replace(/\/$/, '');
     f._video = video;
-    f._preferCpu = !!opts.preferCpu;
+    // face infer is light enough that CPU-first is the right default — the
+    // GPU stays reserved for render + hands. opt out with preferCpu:false
+    f._preferCpu = opts.preferCpu !== false;
     const which = await Promise.race([f._spawn(), sleep(BOOT_MS).then(() => 'slow')]);
     if (which !== 'ok') await f._initLocal();   // 'fail' or 'slow' → cover the gap
     f._pump(video);
@@ -50,7 +59,10 @@ export class Face {
           if (d.error) { try { w.terminate(); } catch {} res('fail'); }
           else { f._adopt(w, d.delegate); res('ok'); }
         }
-        else if (d.type === 'result') { f._inFlight = false; f._ingest(d); f._onNew?.(); }
+        else if (d.type === 'result') {
+          f._inFlight = false; f.inferMs = d.inferMs || 0;
+          f._ingest(d); f._onNew?.();
+        }
         else if (d.type === 'fatal') {
           try { w.terminate(); } catch {}
           if (f._worker === w) { f._worker = null; f.delegate = 'none'; }
@@ -69,7 +81,7 @@ export class Face {
   _adopt(w, delegate) {
     this._worker = w;
     this.delegate = `${delegate}-worker`;
-    this._rate = delegate.startsWith('det') ? 1 : 2;      // BlazeFace is cheap enough for 30Hz
+    this._rate = 1;   // offer every camera frame — _inFlight gates the pace
     this.landmarker?.close?.(); this.landmarker = null;
     w.onerror = () => {                                  // mid-game death → inline + one respawn
       if (this._worker === w) { this._worker = null; this.delegate = 'none'; }
@@ -83,7 +95,8 @@ export class Face {
     if (this.landmarker) return;
     const { FilesetResolver, FaceLandmarker } = await import(`${this._vendorUrl}/vision_bundle.mjs`);
     const fileset = await FilesetResolver.forVisionTasks(`${this._vendorUrl}/wasm`);
-    for (const delegate of ['GPU', 'CPU']) {
+    const order = this._preferCpu ? ['CPU', 'GPU'] : ['GPU', 'CPU'];
+    for (const delegate of order) {
       try {
         const lm = await FaceLandmarker.createFromOptions(fileset, {
           baseOptions: { modelAssetPath: `${this._vendorUrl}/face_landmarker.task`, delegate },
@@ -145,18 +158,22 @@ export class Face {
   _ingest(d) {
     const s = this.state;
     let tx = 0, ty = 0, tsize = 0, cx = 0, cy = 0, ok = false;
-    if (d.face) {                              // BlazeFace: nose keypoint + box
+    if (d.face) {                              // BlazeFace fallback: nose keypoint + box
+      s.lm = null;
       tx = 1 - d.face.nose.x; ty = d.face.nose.y;
       tsize = Math.hypot(d.face.box.w, d.face.box.h);
       cx = 1 - (d.face.box.x + d.face.box.w / 2); cy = d.face.box.y + d.face.box.h / 2;
       ok = true;
-    } else if (d.landmarks) {                  // FaceLandmarker: bbox over 478 pts
+    } else if (d.landmarks) {                  // FaceLandmarker: bbox + mesh over 478 pts
       const lm = d.landmarks;
       let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      const pts = s.lm && s.lm.length === lm.length ? s.lm : (s.lm = new Array(lm.length));
       for (let i = 0, n = lm.length; i < n; i++) {
         const p = lm[i];
         if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x;
         if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y;
+        const q = pts[i] || (pts[i] = { x: 0, y: 0, z: 0 });   // reuse — no per-frame GC
+        q.x = 1 - p.x; q.y = p.y; q.z = p.z || 0;              // mirror once, like hands.js
       }
       const nose = lm[1] || { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
       tx = 1 - nose.x; ty = nose.y;

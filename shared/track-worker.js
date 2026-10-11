@@ -9,9 +9,10 @@
    detectForVideo off the main thread is what lets the render loop hold 60 —
    a synchronous call there costs 10–30ms every camera frame.
 
-   The 'face' worker prefers BlazeFace (FaceDetector, ~230KB model, ~10×
-   cheaper per frame) — the game only needs nose tip + a face-size proxy.
-   The 478-point FaceLandmarker stays vendored as the fallback.
+   The 'face' worker runs FaceLandmarker (478-pt landmark mesh) — ~10–20ms
+   on the CPU delegate, nothing on the main thread, and it stays off the
+   GPU so the iGPU keeps render + hand inference. BlazeFace (~230KB) stays
+   vendored as the last-resort fallback if the landmarker can't boot.
 
    Messages in:  {type:'init', kind, vendorUrl}   (vendorUrl = absolute)
                  {type:'frame', frame:VideoFrame|ImageBitmap}  (transferred)
@@ -43,13 +44,13 @@ self.onmessage = async (e) => {
           minHandPresenceConfidence: .35, minTrackingConfidence: .3 }, delegate.toLowerCase()]);
       } else {
         attempts = [
-          ...order.map(delegate => [FaceDetector, {
-            baseOptions: { modelAssetPath: `${m.vendorUrl}/blaze_face_short_range.tflite`, delegate },
-            runningMode: 'VIDEO', minDetectionConfidence: .4 }, `det-${delegate.toLowerCase()}`]),
           ...order.map(delegate => [FaceLandmarker, {
             baseOptions: { modelAssetPath: `${m.vendorUrl}/face_landmarker.task`, delegate },
             runningMode: 'VIDEO', numFaces: 1, minFaceDetectionConfidence: .35,
             minFacePresenceConfidence: .35, minTrackingConfidence: .25 }, delegate.toLowerCase()]),
+          ...order.map(delegate => [FaceDetector, {
+            baseOptions: { modelAssetPath: `${m.vendorUrl}/blaze_face_short_range.tflite`, delegate },
+            runningMode: 'VIDEO', minDetectionConfidence: .4 }, `det-${delegate.toLowerCase()}`]),
         ];
       }
       let lastErr = null;
@@ -98,12 +99,13 @@ self.onmessage = async (e) => {
             > det.boundingBox.width * det.boundingBox.height) det = d2;
       const W = frame.displayWidth || frame.width || 1;
       const H = frame.displayHeight || frame.height || 1;
-      self.postMessage({ type: 'result', face: det ? {
+      self.postMessage({ type: 'result', inferMs, face: det ? {
         nose: { x: det.keypoints[2].x, y: det.keypoints[2].y },
         box: { x: det.boundingBox.originX / W, y: det.boundingBox.originY / H,
                w: det.boundingBox.width / W, h: det.boundingBox.height / H } } : null });
     } else
-      self.postMessage({ type: 'result', landmarks: res.faceLandmarks?.[0] || null });
+      self.postMessage({ type: 'result', inferMs,
+        landmarks: res.faceLandmarks?.[0] || null });
   } catch (err) {
     if (!warned) { warned = true; console.warn('track-worker detect failed:', String(err)); }
     // a dead delegate returns empty landmarks forever — escalate so the page

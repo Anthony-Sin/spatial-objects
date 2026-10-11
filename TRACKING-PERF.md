@@ -28,7 +28,9 @@ software cannot remove.
    inferMs 149 → ~21, trackHz 11.5 → 44 on a 720p source).
 2. `preferCpu: weakGpu` sent hand inference to XNNPACK at ~37ms — half the
    camera's frames were dropped. GPU delegate keeps 30Hz. Hands get the whole
-   iGPU; BlazeFace (~4ms) moved to a CPU worker (`boxing.html`, `track-worker.js`).
+   iGPU; face tracking moved to a CPU worker (`boxing.html`, `track-worker.js`)
+   — now FaceLandmarker (478-pt mesh, ~10–20ms on CPU) rather than BlazeFace's
+   nose keypoint, still off the render thread so it can't cost fps.
 3. Smoothing layers between result and glove: `hands.js` LERP .72, overlay
    `k=.55/frame` + `lead` extrapolation, `dispReach` EMA — each trailed the real
    hand. All removed; the overlay draws the newest measured pose.
