@@ -173,7 +173,12 @@ async function tryProto(THREE, variant) {
   const v = (m.VARIANTS || []).includes(variant) ? variant : (m.VARIANTS?.[0] || 'bubble');
   try {
     const b = m.buildBoxer(THREE, { variant: v });
-    b.group.traverse?.(o => { if (o.isMesh) o.castShadow = true; });
+    // inked() casts only on silhouette parts — a blanket traverse here once
+    // lit ~100 meshes (hull shells included), doubling the shadow pass for
+    // a soft blob shadow that can't show the detail anyway
+    b.group.traverse?.(o => {
+      if (o.isMesh && o.material?.side === THREE.BackSide) o.castShadow = false;
+    });
     return b;
   } catch { return null; }
 }

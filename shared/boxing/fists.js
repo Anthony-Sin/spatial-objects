@@ -61,6 +61,8 @@ export const TUNING = {
                         // ~400ms between a real head lean and the dodge)
   SWAY_SMOOTH: 15,      // /s — sway EMA
   SWAY_RANGE: .13,      // nose-x units of lean that map to ±1
+  CENTER_RATE: .35,     // /s — neutral lean centre slowly follows posture drift
+  CENTER_ZONE: .3,      // …but only while |lean| is under this (real leans never get eaten)
   DUCK_LO: .035,        // nose-y drop ignored (posture drift / nodding)
   DUCK_RANGE: .09,      // further nose-y drop that maps to duck 1
   DT_MAX: .1,           // s — clamp dt (tab-switch spikes)
@@ -83,7 +85,7 @@ export class FistTracker {
     this._t = 0;
     this._s = { left: this._blank(), right: this._blank() };
     this._nose = { x: .5, y: .5 };          // smoothed nose (guard band + sway)
-    this._cx = .5;                          // calibrated sway center
+    this._cx = null;                        // calibrated sway center — first face sighting
     this._cy = null;                        // neutral nose height — first face sighting
     this._faceSize = 0;
   }
@@ -132,9 +134,14 @@ export class FistTracker {
       this._nose.y = ema(this._nose.y, f.nose.y, T.FACE_SMOOTH, dt);
       if (f.size > 0) this._faceSize = this._faceSize
         ? ema(this._faceSize, f.size, T.FACE_SMOOTH, dt) : f.size;
-      const lean = clamp((this._nose.x - this._cx) / T.SWAY_RANGE, -1, 1);
-      this.sway = ema(this.sway, lean, T.SWAY_SMOOTH, dt);
+      // centre = wherever YOU sit (not the middle of the frame), and it
+      // quietly follows slow posture drift so the view never creeps sideways.
+      // f.manual (mouse sway) is a synthetic face — never auto-centre on it.
+      if (this._cx === null) this._cx = f.manual ? .5 : f.nose.x;
       if (this._cy === null) this._cy = f.nose.y;
+      const lean = clamp((this._nose.x - this._cx) / T.SWAY_RANGE, -1, 1);
+      if (!f.manual && Math.abs(lean) < T.CENTER_ZONE) this._cx = ema(this._cx, this._nose.x, T.CENTER_RATE, dt);
+      this.sway = ema(this.sway, lean, T.SWAY_SMOOTH, dt);
       const drop = clamp((this._nose.y - this._cy - T.DUCK_LO) / T.DUCK_RANGE, 0, 1);
       this.duck = ema(this.duck, drop, T.SWAY_SMOOTH, dt);
     } else {
@@ -267,7 +274,7 @@ export class FistTracker {
 
   calibrate() {
     // neutral pose snapshot: sway re-centers, current span becomes rest size
-    this._cx = this._nose.x;
+    if (this._cx !== null) this._cx = this._nose.x;
     if (this._cy !== null) this._cy = this._nose.y;   // no face yet → keep auto-pick
     this.sway = 0; this.duck = 0;
     for (const side of SIDES) {

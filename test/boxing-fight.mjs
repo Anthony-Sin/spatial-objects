@@ -29,7 +29,7 @@ const until = (f, pred, secs, mk, seen = []) => {
   }
   return pred(f.state);
 };
-const toFighting = (f, seen = []) => until(f, s => s.phase === 'fighting', TUNING.introT + 1, null, seen);
+const toFighting = (f, seen = []) => until(f, s => s.phase === 'fighting', TUNING.introT + TUNING.countT + 1, null, seen);
 
 /* 0 — intro → round-start → fighting */
 {
@@ -39,6 +39,43 @@ const toFighting = (f, seen = []) => until(f, s => s.phase === 'fighting', TUNIN
   check('intro resolves to fighting', toFighting(f, seen), f.state.phase);
   check('round-start emitted, round=1', seen.includes('round-start') && f.state.round === 1,
     `round=${f.state.round}`);
+}
+
+/* 0b — 3-2-1 countdown sits between the intro and the bell */
+{
+  const f = new Fight({ seed: 7 });
+  until(f, s => s.phase !== 'intro', TUNING.introT + 1);
+  check('intro hands off to a countdown', f.state.phase === 'countdown', f.state.phase);
+  const seen = [], nums = [];
+  const hp0 = f.state.npc.hp;
+  until(f, s => s.phase === 'fighting', TUNING.countT + .5,
+    g => { if (g.state.countdown && nums.at(-1) !== g.state.countdown) nums.push(g.state.countdown);
+      return inp({ punches: [{ kind: 'cross', side: 'right', power: 1 }], distance: 1 }); }, seen);
+  check('countdown ticks 3,2,1 then the bell', nums.join() === '3,2,1'
+    && seen.filter(e => e === 'countdown').length === 3 && seen.at(-1) === 'round-start', `${nums} | ${seen}`);
+  check('nothing lands during the countdown', f.state.npc.hp === hp0 && !seen.includes('player-hit'));
+  f.startNow();
+  check('startNow mid-fight is a no-op', f.state.phase === 'fighting');
+}
+
+/* 0c — tutorial hooks: parked AI, scripted swings, practice can't KO */
+{
+  const f = new Fight({ seed: 7, ai: false, practice: true });
+  toFighting(f);
+  const seen = [];
+  until(f, () => false, 5, null, seen);
+  check('ai:false → PIP never swings on its own', !seen.includes('npc-punch') && f.state.npc.action === 'idle',
+    `${f.state.npc.action} ${seen}`);
+  check('throwPunch starts a telegraphed windup', f.throwPunch('hook', 'right', 1.2)
+    && f.state.npc.telegraph?.kind === 'hook' && f.state.npc.telegraph.side === 'right');
+  check('throwPunch refuses while PIP is busy', f.throwPunch('jab') === false);
+  until(f, s => s.events.includes('player-hit-taken'), 3);
+  f.state.player.hp = 3;
+  f._pk = { kind: 'upper', side: 'left' }; f._impact(inp());
+  check('practice: player is never KO\'d', f.state.phase === 'fighting' && f.state.player.hp > 0, f.state.phase);
+  const t0 = f.state.timeLeft;
+  until(f, () => false, 1);
+  check('practice: clock does not run', f.state.timeLeft === t0);
 }
 
 /* 1 — scripted punch in range → npc.hp drops + 'player-hit' */
@@ -383,16 +420,65 @@ const resolvedSwing = s => s.events.includes('player-dodged') || s.events.includ
 
 /* 10 — NPC fatigue is reachable during a combo burst */
 {
-  const f = new Fight({ seed: 5 });
+  const f = new Fight({ seed: 7, playerHp: 1e6 });
   toFighting(f);
   let min = 1, sawGassed = false;
-  for (let i = 0; i < 20 * 60; i++) {   // idle player at close range
+  for (let i = 0; i < 30 * 60; i++) {   // idle (unkillable) player at close range
     f.step(DT, IDLE);
     min = Math.min(min, f.state.npc.stamina);
     if (f.state.npc.gassed) sawGassed = true;
   }
   check('npc stamina drops below gassedT under sustained attack',
     min < TUNING.gassedT && sawGassed, `min=${min.toFixed(3)} gassed=${sawGassed}`);
+}
+
+/* 10b — the 3-punch flurry is a stamina-gated SPECIAL behind ~3 normals */
+{
+  const f = new Fight({ seed: 11, playerHp: 1e6 });
+  toFighting(f);
+  let last = '', seq = [], maxCombo = 0, sawNormalChain = false;
+  for (let i = 0; i < 120 * 60 && f.state.phase === 'fighting'; i++) {
+    const n = f.state.npc, t = n.telegraph;
+    // guard the telegraphed side so swings 'block' → flurries can still chain
+    f.step(DT, t ? inp({ distance: .9, guard: t.side === 'left' ? { right: 1 } : { left: 1 } })
+               : inp({ distance: .9 }));
+    if (n.action === 'windup' && last !== 'windup') {
+      if (n.telegraph.combo === 0) seq.push(f._wantCombo ? 'S' : 'n');
+      else if (!f._wantCombo) sawNormalChain = true;
+      maxCombo = Math.max(maxCombo, n.telegraph.combo);
+    }
+    last = n.action;
+  }
+  const firstS = seq.indexOf('S');
+  check('~three normal attacks lead before the first special',
+    firstS === TUNING.specialEvery, `firstS=${firstS} seq=${seq.join('')}`);
+  check('every special is preceded by at least specialEvery normals',
+    seq.reduce((ok, c, i) => ok && (c !== 'S' || seq.slice(Math.max(0, i - TUNING.specialEvery), i).every(x => x === 'n')), true),
+    seq.join(''));
+  check('the special still chains to the third punch', maxCombo >= TUNING.comboMax - 1,
+    `maxCombo=${maxCombo}`);
+  check('normal attacks never chain', !sawNormalChain, seq.join(''));
+
+  // the gate: counter ready but stamina under the floor → stays normal
+  const g = new Fight({ seed: 5 });
+  toFighting(g);
+  g._normals = TUNING.specialEvery;
+  g.state.npc.stamina = TUNING.specialStam - .05;
+  g._windup();
+  check('stamina below the floor keeps the next attack normal',
+    g._wantCombo === false && g._normals === TUNING.specialEvery + 1,
+    `want=${g._wantCombo} normals=${g._normals}`);
+
+  // the cost: counter + floor met → special flags and burns specialCost up front
+  const h = new Fight({ seed: 5 });
+  toFighting(h);
+  h._normals = TUNING.specialEvery;
+  h.state.npc.stamina = .9;
+  h._windup();
+  check('the special resets the count and burns stamina up front',
+    h._wantCombo === true && h._normals === 0
+      && h.state.npc.stamina <= .9 - TUNING.specialCost + .001,
+    `want=${h._wantCombo} normals=${h._normals} stam=${h.state.npc.stamina.toFixed(3)}`);
 }
 
 /* 11 — defending opens a counter; consecutive clean hits build a chain */

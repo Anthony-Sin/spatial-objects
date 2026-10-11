@@ -29,7 +29,7 @@
 export const TUNING = {
   radius: 2.6,           // ring radius to the ropes (world units)
   bodyRadius: 0.34,      // fighter footprint radius (collision + rope clamp)
-  npcSpeed: 1.85,        // close the first gap and re-engage promptly
+  npcSpeed: 1.35,        // unhurried footwork — re-engages without rushing
   playerDrift: 1.0,      // legacy option retained for callers
   accel: 5.5,            // velocity approach rate /s — smooth accel & decel
   stunDamp: 8.0,         // stunned npc velocity decay rate /s (deadened drift)
@@ -37,7 +37,10 @@ export const TUNING = {
   midRange: 1.5,         // 'circle' orbit radius
   arriveRadius: 0.5,     // seek-and-hold slowdown radius around a goal point
   avoidPad: 0.22,        // pad beyond punchRange where the route-around flow kicks in
-  orbitSpeed: 1.1,       // tangential npc speed while circling
+  orbitSpeed: .75,       // tangential npc speed while circling
+  laneAngle: .42,        // rad — PIP stays inside this cone in front of the
+                         // player, so the first-person view never has to swing
+  laneGain: 4,           // how hard a drift past the lane edge is pulled back
   orbitFlipMin: 2.0,     // seconds, min/max between circle direction flips
   orbitFlipMax: 4.2,
   // Small forward/back steps preserve the first-person corner framing.
@@ -128,8 +131,12 @@ export class RingSim {
           break;
         }
         case 'circle': {
-          // Orbit the player at midRange; flip direction on a seeded timer.
+          // Orbit the player at midRange; flip direction on a seeded timer —
+          // or early, when the orbit is carrying PIP out of the front lane.
           this._flipT -= dt;
+          const lat = N.pos.x - P.pos.x;
+          const atEdge = Math.abs(lat) > Math.max(.15, P.pos.z - N.pos.z) * Math.tan(t.laneAngle) * .8;
+          if (atEdge && Math.sign(sx * this._orbit) === Math.sign(lat)) this._flipT = 0;
           if (this._flipT <= 0) {
             this._orbit *= -1;
             this._flipT = lerp(t.orbitFlipMin, t.orbitFlipMax, this._rng());
@@ -154,6 +161,13 @@ export class RingSim {
         }
         default: break;                    // 'hold' / unknown: stand ground
       }
+    }
+    // front lane (player faces −Z from its corner): anything that drifts PIP
+    // wide gets pulled back toward the centre line in front of you
+    if (!inp.stun) {
+      const lat = N.pos.x - P.pos.x;
+      const over = Math.abs(lat) - Math.max(.15, P.pos.z - N.pos.z) * Math.tan(t.laneAngle);
+      if (over > 0) nvx -= Math.sign(lat) * Math.min(t.npcSpeed, over * t.laneGain);
     }
     const nk = 1 - Math.exp(-(inp.stun ? t.stunDamp : t.accel) * dt);
     N.vel.x += (nvx - N.vel.x) * nk;

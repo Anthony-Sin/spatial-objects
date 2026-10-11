@@ -145,7 +145,10 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
       h.scale.set(k, k, k);
       m.add(h);
     }
-    m.castShadow = true;
+    // only silhouette parts cast — an earring's shadow can't mark a soft
+    // blob at 512², but every caster is a draw call in the shadow pass
+    if (!geo.boundingSphere) geo.computeBoundingSphere?.();
+    m.castShadow = (geo.boundingSphere?.radius ?? 1) > .055;
     return m;
   }
 
@@ -580,8 +583,10 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     knot.position.set(.20, .11, .21);
     parts.head.add(knot);
   }
-  limb('armL', -C.shx, C.shy, C.armR, C.armLen, P.skin);
-  limb('armR', C.shx, C.shy, C.armR, C.armLen, P.skin);
+  // your boxer gets meatier stub arms — they're the same rubber-hose bones,
+  // just built thicker so a stretched reach still reads as an arm, not a wire
+  limb('armL', -C.shx, C.shy, playerLook ? C.armR * 1.55 : C.armR, C.armLen, P.skin);
+  limb('armR', C.shx, C.shy, playerLook ? C.armR * 1.55 : C.armR, C.armLen, P.skin);
   mark('gloveL', put(squash, (g => (g.position.set(...C.guard.l), g))(buildGlove(-1))));
   mark('gloveR', put(squash, (g => (g.position.set(...C.guard.r), g))(buildGlove(1))));
   if (playerLook) for (const side of ['gloveL', 'gloveR'])
@@ -605,6 +610,8 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   const R = rest;
   // live strike aim from pose(…, {kind, reach, y}) — null = classic extension
   let SK = null, SZ = null, SY = null;
+  // t.X.p/.s are persistent arrays — write in place, never t.X.p = […]
+  const P3 = (v, x, y, z) => { v[0] = x; v[1] = y; v[2] = z; };
   const other = g => g === 'gloveL' ? 'gloveR' : 'gloveL';
   const angryBrows = (t, a) => { t.browL.r[2] = -a; t.browR.r[2] = a; };
 
@@ -612,22 +619,22 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   function windupSide(t, k, f, g, sx) {
     const e = ss(0, 1, k), r = R[g].p;
     if (SK === 'hook') {                         // cocked WIDE and high — it comes from the side
-      t[g].p = [r[0] + .24 * sx * e, r[1] + .1 * e, r[2] - .14 * e];
+      P3(t[g].p, r[0] + .24 * sx * e, r[1] + .1 * e, r[2] - .14 * e);
       t[g].r[1] = sx * .9 * e;
       t.torso.r[1] = .6 * sx * e; t.head.r[1] = -.18 * sx * e;
     } else if (SK === 'upper') {                 // sinks low — it comes from below
-      t[g].p = [r[0] + .06 * sx * e, r[1] - .28 * e, r[2] - .04 * e];
+      P3(t[g].p, r[0] + .06 * sx * e, r[1] - .28 * e, r[2] - .04 * e);
       t[g].r[0] = -.6 * e;
       t.torso.r[1] = .3 * sx * e; t.torso.r[0] = .22 * e;
       t.root.p[1] -= .07 * e; t.root.r[2] = .12 * sx * e;
     } else {                                     // jab / straight — pulled back on the line
-      t[g].p = [r[0] + .1 * sx * e, r[1] + .05 * e, r[2] - .26 * e];
+      P3(t[g].p, r[0] + .1 * sx * e, r[1] + .05 * e, r[2] - .26 * e);
       t[g].r[0] = .5 * e;
       t.torso.r[1] = .42 * sx * e; t.head.r[1] = -.14 * sx * e;
     }
-    t[g].s = [1 + .2 * e, 1 + .2 * e, 1 + .2 * e];  // cocked glove swells
+    P3(t[g].s, 1 + .2 * e, 1 + .2 * e, 1 + .2 * e);   // cocked glove swells
     t[other(g)].p[2] -= .07 * e;
-    t.squash.s = [1 + .05 * e, 1 - .07 * e, 1 + .05 * e];
+    P3(t.squash.s, 1 + .05 * e, 1 - .07 * e, 1 + .05 * e);
     t.root.p[1] -= .02 * e;
     angryBrows(t, .5 * e);                       // angry V
     t.browL.p[1] -= .018 * e; t.browR.p[1] -= .018 * e;
@@ -635,39 +642,38 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
   }
   function straight(t, k, f, g, sx, zEnd, smear, twist) {
     const e = attack(k), r = R[g].p;
-    t[g].p = [lerp(r[0], .05 * sx, e), lerp(r[1], SY ?? .74, e), lerp(r[2], SZ ?? zEnd, e)];
-    t[g].s = [1 - .12 * e, 1 - .12 * e, 1 + smear * e];   // motion smear
+    P3(t[g].p, lerp(r[0], .05 * sx, e), lerp(r[1], SY ?? .74, e), lerp(r[2], SZ ?? zEnd, e));
+    P3(t[g].s, 1 - .12 * e, 1 - .12 * e, 1 + smear * e);   // motion smear
     t[g].r[0] = -.32 * e;
     t.torso.r[1] = -twist * sx * e; t.head.r[1] = (twist > .5 ? .12 : .08) * sx * e;
     if (twist > .5) t.root.p[2] += .05 * e;
-    t.squash.s = [1 - .02 * e, 1 + .025 * e, 1 + .055 * e];
+    P3(t.squash.s, 1 - .02 * e, 1 + .025 * e, 1 + .055 * e);
     t[other(g)].p[2] -= (twist > .5 ? .1 : .07) * e;
     angryBrows(t, .33 * e);
     f.mouth = 'grit';
   }
   function hookSide(t, k, f, g, sx) {
     const e = attack(k), r = R[g].p, arc = Math.sin(e * Math.PI);
-    t[g].p = [
+    P3(t[g].p,
       lerp(r[0], -.05 * sx, e) + arc * (SZ ? .34 : .2) * sx,   // swing wide then across
       lerp(r[1], SY ?? .76, e),
-      lerp(r[2], SZ ?? .36, e) + arc * .07,
-    ];
+      lerp(r[2], SZ ?? .36, e) + arc * .07);
     t[g].r[1] = -1.25 * sx * e;
-    t[g].s = [1 + .22 * e, 1 - .08 * e, 1 - .08 * e];
+    P3(t[g].s, 1 + .22 * e, 1 - .08 * e, 1 - .08 * e);
     t.torso.r[1] = -.62 * sx * e; t.head.r[1] = .16 * sx * e;
-    t.squash.s = [1 + .04 * e, 1 - .02 * e, 1 - .02 * e];
+    P3(t.squash.s, 1 + .04 * e, 1 - .02 * e, 1 - .02 * e);
     angryBrows(t, .38 * e);
     f.mouth = 'grit';
   }
   function upperSide(t, k, f, g, sx) {
     const e = attack(k), r = R[g].p;
     // scoop: starts at the hip and drives UP the centre line into the chin
-    t[g].p = [lerp(r[0], .04 * sx, e), lerp(r[1] - .26, SY ?? .95, e), lerp(r[2], SZ ?? .6, e)];
+    P3(t[g].p, lerp(r[0], .04 * sx, e), lerp(r[1] - .26, SY ?? .95, e), lerp(r[2], SZ ?? .6, e));
     t[g].r[0] = lerp(-.6, -1.1, e);
-    t[g].s = [1 - .1 * e, 1 + .35 * e, 1 - .1 * e];        // vertical smear
+    P3(t[g].s, 1 - .1 * e, 1 + .35 * e, 1 - .1 * e);       // vertical smear
     t.torso.r[1] = -.4 * sx * e; t.torso.r[0] = lerp(.22, -.12, e);
     t.root.p[1] += .05 * e; t.head.r[0] = -.12 * e;
-    t.squash.s = [1 - .04 * e, 1 + .07 * e, 1 - .03 * e];  // rises onto the toes
+    P3(t.squash.s, 1 - .04 * e, 1 + .07 * e, 1 - .03 * e); // rises onto the toes
     t[other(g)].p[2] -= .08 * e;
     angryBrows(t, .42 * e);
     f.mouth = 'grit';
@@ -705,9 +711,9 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
       t.root.r[2] = w * .16; t.root.r[0] = -.08 + w2 * .05;
       t.root.p[0] += w * .05;
       t.head.r[2] = -w * .22; t.head.r[0] = -.18 + w2 * .08;
-      t.gloveL.p = [R.gloveL.p[0] - .08, R.gloveL.p[1] - .3 + w * .03, R.gloveL.p[2] - .06];
-      t.gloveR.p = [R.gloveR.p[0] + .08, R.gloveR.p[1] - .3 - w * .03, R.gloveR.p[2] - .06];
-      t.squash.s = [1 + .04, 1 - .05, 1 + .04];
+      P3(t.gloveL.p, R.gloveL.p[0] - .08, R.gloveL.p[1] - .3 + w * .03, R.gloveL.p[2] - .06);
+      P3(t.gloveR.p, R.gloveR.p[0] + .08, R.gloveR.p[1] - .3 - w * .03, R.gloveR.p[2] - .06);
+      P3(t.squash.s, 1 + .04, 1 - .05, 1 + .04);
       t.browL.r[2] = .45; t.browR.r[2] = -.45;
       t.browL.p[1] += .025; t.browR.p[1] += .025;
       f.eye = 'spiral'; f.mouth = 'o';
@@ -717,8 +723,8 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
       t.root.r[0] = .2 * e; t.root.p[2] += .1 * e;
       t.root.r[2] = .12 * e * Math.sin(k * 7);
       t.torso.r[1] = .3 * e;
-      t.gloveL.p = [R.gloveL.p[0] + .1 * e, R.gloveL.p[1] - .1 * e, R.gloveL.p[2] + .25 * e];
-      t.gloveR.p = [R.gloveR.p[0] + .12 * e, R.gloveR.p[1] - .18 * e, R.gloveR.p[2] - .05 * e];
+      P3(t.gloveL.p, R.gloveL.p[0] + .1 * e, R.gloveL.p[1] - .1 * e, R.gloveL.p[2] + .25 * e);
+      P3(t.gloveR.p, R.gloveR.p[0] + .12 * e, R.gloveR.p[1] - .18 * e, R.gloveR.p[2] - .05 * e);
       t.head.r[0] = .15 * e;
       t.browL.r[2] = .35 * e; t.browR.r[2] = -.35 * e;
       t.browL.p[1] += .03 * e; t.browR.p[1] += .03 * e;
@@ -726,12 +732,12 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     },
     block(t, k, f) {                             // mitts up over the face
       const b = ss(0, .4, k);
-      t.gloveL.p = [lerp(R.gloveL.p[0], -.13, b), lerp(R.gloveL.p[1], .88, b), lerp(R.gloveL.p[2], .34, b)];
-      t.gloveR.p = [lerp(R.gloveR.p[0], .13, b), lerp(R.gloveR.p[1], .88, b), lerp(R.gloveR.p[2], .34, b)];
+      P3(t.gloveL.p, lerp(R.gloveL.p[0], -.13, b), lerp(R.gloveL.p[1], .88, b), lerp(R.gloveL.p[2], .34, b));
+      P3(t.gloveR.p, lerp(R.gloveR.p[0], .13, b), lerp(R.gloveR.p[1], .88, b), lerp(R.gloveR.p[2], .34, b));
       t.gloveL.r[1] = -.3 * b; t.gloveR.r[1] = .3 * b;
       t.head.p[1] -= .04 * b; t.head.r[0] = .18 * b;
       t.torso.r[0] = .14 * b;
-      t.squash.s = [1 + .05 * b, 1 - .06 * b, 1 + .05 * b];
+      P3(t.squash.s, 1 + .05 * b, 1 - .06 * b, 1 + .05 * b);
       t.root.p[1] -= .03 * b;
       t.browL.r[2] = -.15 * b; t.browR.r[2] = .15 * b;
       f.mouth = 'flat';
@@ -741,9 +747,9 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
       t.head.r[0] = -.55 * e; t.head.p[1] += .03 * e;
       t.root.r[0] = -.14 * e; t.root.p[2] -= .07 * e;
       t.root.r[2] = Math.sin(k * 9.4) * .08 * (1 - k);
-      t.gloveL.p = [R.gloveL.p[0] - .16 * e, R.gloveL.p[1] - .15 * e, R.gloveL.p[2] - .14 * e];
-      t.gloveR.p = [R.gloveR.p[0] + .18 * e, R.gloveR.p[1] - .12 * e, R.gloveR.p[2] - .16 * e];
-      t.squash.s = [1 + .12 * e, 1 - .14 * e, 1 + .08 * e];
+      P3(t.gloveL.p, R.gloveL.p[0] - .16 * e, R.gloveL.p[1] - .15 * e, R.gloveL.p[2] - .14 * e);
+      P3(t.gloveR.p, R.gloveR.p[0] + .18 * e, R.gloveR.p[1] - .12 * e, R.gloveR.p[2] - .16 * e);
+      P3(t.squash.s, 1 + .12 * e, 1 - .14 * e, 1 + .08 * e);
       t.browL.r[2] = .4 * e; t.browR.r[2] = -.4 * e;        // worried Λ
       t.browL.p[1] += .02 * e; t.browR.p[1] += .02 * e;
       f.eye = k > .1 && k < .85 ? 'x' : 'open';
@@ -756,10 +762,10 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
       t.root.r[0] = -.12 * fo;
       t.root.p[0] = -.30 * fo;                    // center the horizontal body
       t.root.p[1] = .18 * fo;                     // body clears the mat
-      t.squash.s = [1 + .06 * e, 1 - .07 * e, 1 + .04 * e];
+      P3(t.squash.s, 1 + .06 * e, 1 - .07 * e, 1 + .04 * e);
       t.head.r[2] = .09 * e;                     // small head lag after impact
-      t.gloveL.p = [lerp(R.gloveL.p[0], -.42, fo), lerp(R.gloveL.p[1], .48, fo), lerp(R.gloveL.p[2], .08, fo)];
-      t.gloveR.p = [lerp(R.gloveR.p[0], .43, fo), lerp(R.gloveR.p[1], .48, fo), lerp(R.gloveR.p[2], .08, fo)];
+      P3(t.gloveL.p, lerp(R.gloveL.p[0], -.42, fo), lerp(R.gloveL.p[1], .48, fo), lerp(R.gloveL.p[2], .08, fo));
+      P3(t.gloveR.p, lerp(R.gloveR.p[0], .43, fo), lerp(R.gloveR.p[1], .48, fo), lerp(R.gloveR.p[2], .08, fo));
       t.footL.p[1] = lerp(R.footL.p[1], .14, fo);
       t.footR.p[1] = lerp(R.footR.p[1], .12, fo);
       t.footL.r[2] = -.32 * fo; t.footR.r[2] = .28 * fo;
@@ -769,9 +775,9 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     celebrate(t, k, f) {                         // arms up, bouncing joy
       const c = Math.abs(Math.sin(k * TAU));
       t.root.p[1] += .14 * c;
-      t.squash.s = [1 - .04 * c, 1 + .08 * c, 1 - .04 * c];
-      t.gloveL.p = [-.30, 1.14 + .05 * Math.sin(k * 12.5), .12];
-      t.gloveR.p = [.30, 1.14 + .05 * Math.sin(k * 12.5 + 1.6), .12];
+      P3(t.squash.s, 1 - .04 * c, 1 + .08 * c, 1 - .04 * c);
+      P3(t.gloveL.p, -.30, 1.14 + .05 * Math.sin(k * 12.5), .12);
+      P3(t.gloveR.p, .30, 1.14 + .05 * Math.sin(k * 12.5 + 1.6), .12);
       t.gloveL.r[2] = .3; t.gloveR.r[2] = -.3;
       t.head.r[0] = -.18; t.head.r[2] = Math.sin(k * TAU) * .12;
       t.browL.p[1] += .03; t.browR.p[1] += .03;
@@ -779,15 +785,15 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
       f.mouth = 'grin';
     },
     wave(t, k, f) {
-      t.gloveR.p = [.42, 1.12 + Math.sin(k * 12) * .045, .17];
+      P3(t.gloveR.p, .42, 1.12 + Math.sin(k * 12) * .045, .17);
       t.gloveR.r[2] = -.35 + Math.sin(k * 12) * .35;
       t.gloveL.p[1] += .04;
       t.head.r[2] = -.12;
       f.eye = 'happy'; f.mouth = 'grin';
     },
     point(t, k, f) {
-      t.gloveR.p = [.04, .77, .7];
-      t.gloveR.s = [.9, .9, 1.16];
+      P3(t.gloveR.p, .04, .77, .7);
+      P3(t.gloveR.s, .9, .9, 1.16);
       t.gloveL.p[1] += .08;
       t.torso.r[1] = -.18;
       t.head.r[2] = -.07;
@@ -795,8 +801,8 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     },
     victory(t, k, f) {
       const bob = Math.abs(Math.sin(k * 8)) * .04;
-      t.gloveL.p = [-.39, 1.13 + bob, .16];
-      t.gloveR.p = [.39, 1.13 + bob, .16];
+      P3(t.gloveL.p, -.39, 1.13 + bob, .16);
+      P3(t.gloveR.p, .39, 1.13 + bob, .16);
       t.gloveL.r[2] = .18; t.gloveR.r[2] = -.18;
       t.head.r[2] = Math.sin(k * 5) * .08;
       f.eye = 'happy'; f.mouth = 'grin';
@@ -865,19 +871,43 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     b.position.z = piv.userData.len * s * .5;
   }
 
-  function trackHands(handsState) {
+  /* hand→glove spaces. 'close': the tight walk-on shot parks the mitts wide
+     beside the cheeks. 'wide': the pulled-back outro shot keeps them inside
+     the rubber arm's honest reach — past ~3× stretch the bone reads as a
+     wire, not a limb, so the anchor is also reeled back toward the shoulder. */
+  const HAND_SPACES = {
+    close: { x: [.55, .9], bias: .2, y: [.28, 1.3], ym: 1.55, yb: .76,
+      z: [.12, .58], zm: 1.6, zb: .25, reach: Infinity },
+    wide:  { x: [.2, .55], bias: .12, y: [.5, 1.18], ym: 1.3, yb: .78,
+      z: [.1, .45], zm: 1.2, zb: .2, reach: .46 },
+  };
+
+  function trackHands(handsState, space = 'close') {
+    const S = HAND_SPACES[space] || HAND_SPACES.close;
     for (const h of handsState?.hands || []) {
       if (!h?.palm || (h.side !== 'left' && h.side !== 'right')) continue;
-      const glove = parts[h.side === 'left' ? 'gloveL' : 'gloveR'];
-      const arm = parts[h.side === 'left' ? 'armL' : 'armR'];
+      const left = h.side === 'left';
+      const gname = left ? 'gloveL' : 'gloveR';
+      const glove = parts[gname];
+      const arm = parts[left ? 'armL' : 'armR'];
       const span = h.lm?.[0] && h.lm?.[9]
         ? Math.hypot(h.lm[0].x - h.lm[9].x, h.lm[0].y - h.lm[9].y) : .1;
       // Keep each hand beside the face during the close camera shot, while
       // still following the player's horizontal and vertical motion.
-      const rawX = (h.palm.x - .5) * 2 + (h.side === 'left' ? -.2 : .2);
-      const x = h.side === 'left' ? clamp(rawX, -.9, -.55) : clamp(rawX, .55, .9);
-      const y = clamp(.76 + (.5 - h.palm.y) * 1.55, .28, 1.3);
-      const z = clamp(.25 + (span - .1) * 1.6, .12, .58);
+      const rawX = (h.palm.x - .5) * 2 + (left ? -1 : 1) * S.bias;
+      let x = left ? clamp(rawX, -S.x[1], -S.x[0]) : clamp(rawX, S.x[0], S.x[1]);
+      let y = clamp(S.yb + (.5 - h.palm.y) * S.ym, S.y[0], S.y[1]);
+      let z = clamp(S.zb + (span - .1) * S.zm, S.z[0], S.z[1]);
+      if (S.reach < Infinity) {
+        const dx = x - arm.position.x, dy = y - arm.position.y, dz = z - arm.position.z;
+        const d = Math.hypot(dx, dy, dz);
+        if (d > S.reach) { const k = S.reach / d; x = arm.position.x + dx * k; y = arm.position.y + dy * k; z = arm.position.z + dz * k; }
+      }
+      // pin the blend target too: called before tick() the pose engine stops
+      // fighting the tracked hand, and a dropped hand falls back to the pose
+      // on the next pose() call — no stale frozen glove
+      const tg = T[gname];
+      if (tg) { tg.p[0] = x; tg.p[1] = y; tg.p[2] = z; }
       glove.position.x = lerp(glove.position.x, x, .62);
       glove.position.y = lerp(glove.position.y, y, .62);
       glove.position.z = lerp(glove.position.z, z, .62);

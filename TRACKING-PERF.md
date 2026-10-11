@@ -20,7 +20,12 @@ software cannot remove.
 ## Root causes that were fixed
 
 1. `VideoFrame` resize hint ignored → full 720p frames went to the landmarker.
-   Fixed by requesting 640×480 at `getUserMedia` (`boxing.html`).
+   Fixed by requesting 640×480 at `getUserMedia` (`boxing.html`) — then HARD-
+   enforced in `hands.js`/`face.js` `_send`: sources wider than 640px are
+   downscaled via `createImageBitmap` resize before they cross to the worker
+   (`ideal` getUserMedia is a hint, not a guarantee — cams without a native
+   480p mode deliver 720p+, and `?vid=` files are always full-res. Measured:
+   inferMs 149 → ~21, trackHz 11.5 → 44 on a 720p source).
 2. `preferCpu: weakGpu` sent hand inference to XNNPACK at ~37ms — half the
    camera's frames were dropped. GPU delegate keeps 30Hz. Hands get the whole
    iGPU; BlazeFace (~4ms) moved to a CPU worker (`boxing.html`, `track-worker.js`).

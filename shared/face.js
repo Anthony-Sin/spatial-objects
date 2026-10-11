@@ -11,13 +11,18 @@
    boot after 30s, a late worker 'ready' always adopts the pump.
 */
 const BOOT_MS = 30000;
+/* a glove passed in front of the camera occludes the face for a moment —
+   'found' only concedes the face is gone after this much CONTINUOUS loss,
+   so a punch flurry never makes the nose dot / head tracking blink out */
+const LOST_MS = 3000;
+const INFER_W = 640;      // downscale wider frames before inference — same cap as hands.js
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 export class Face {
   constructor() {
     this.state = { found: false, nose: { x: .5, y: .5 }, size: 0, center: { x: .5, y: .5 } };
     this.delegate = 'none';
-    this._worker = null; this._inFlight = false; this._miss = 0;
+    this._worker = null; this._inFlight = false; this._okAt = -1;
     this.landmarker = null;                       // inline fallback only
     this._t = -1; this._tick = 0; this._rate = 2;
     this._vendorUrl = null; this._video = null; this._onNew = null;
@@ -93,20 +98,28 @@ export class Face {
     }
     if (!this._worker) this.delegate = 'none';
   }
-  /* One camera frame in flight, shared capture resolution with hand tracking. */
+  /* One camera frame in flight, downscaled like hands.js — 'ideal' camera
+     constraints don't guarantee 640×480, and VideoFrame ignores resize on
+     video elements; createImageBitmap honours it. */
   _send(v) {
     this._inFlight = true;
+    const vw = v.videoWidth || 0, vh = v.videoHeight || 0;
+    const post = (frame) => {
+      try { this._worker.postMessage({ type: 'frame', frame }, [frame]); }
+      catch { frame.close?.(); this._inFlight = false; }
+    };
+    const bmp = (opts) => createImageBitmap(v, opts || {}).then(post).catch(() => {
+      let f; try { f = new VideoFrame(v); } catch {}
+      if (f) post(f); else this._inFlight = false;
+    });
+    if (vw > INFER_W) return void bmp({
+      resizeWidth: INFER_W,
+      resizeHeight: Math.max(2, Math.round(INFER_W * vh / vw / 2) * 2),
+      resizeQuality: 'low' });
     let f;
     try { f = new VideoFrame(v); } catch { f = null; }
-    if (f) {
-      try { this._worker.postMessage({ type: 'frame', frame: f }, [f]); }
-      catch { f.close(); this._inFlight = false; }
-      return;
-    }
-    createImageBitmap(v).then(bmp => {
-      try { this._worker.postMessage({ type: 'frame', frame: bmp }, [bmp]); }
-      catch { bmp.close(); this._inFlight = false; }
-    }).catch(() => { this._inFlight = false; });
+    if (f) return void post(f);
+    bmp();
   }
   _pump(v) {
     const onNew = () => {   // a *new* frame exists — nothing gained by re-detecting the same one
@@ -152,20 +165,21 @@ export class Face {
       ok = true;
     }
     if (ok) {
-      this._miss = 0; s.found = true;
+      this._okAt = performance.now(); s.found = true;
       const k = s.size ? .68 : 1;                       // snap first, then light EMA
       // (.45 made head motion visibly trail the camera; .68 converges in ~2
       // results ≈ 60ms at 30Hz while still damping single-frame jitter)
       s.nose.x += (tx - s.nose.x) * k; s.nose.y += (ty - s.nose.y) * k;
       s.center.x += (cx - s.center.x) * k; s.center.y += (cy - s.center.y) * k;
       s.size += (tsize - s.size) * (s.size ? .5 : 1);
-    } else if (++this._miss > 25) s.found = false;
+    } else if (this._okAt < 0 || performance.now() - this._okAt > LOST_MS) s.found = false;
   }
   stop() {
     clearTimeout(this._retryT);
     try { this._worker?.postMessage({ type: 'close' }); } catch {}
     this._worker?.terminate(); this._worker = null;
     try { this.landmarker?.close?.(); } catch {} this.landmarker = null;
+    this._okAt = -1;
     this.state.found = false;
   }
 }

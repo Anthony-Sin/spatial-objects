@@ -51,50 +51,19 @@ try {
 check('boxing.html boots; __boxing handle exists', booted);
 
 if (booted) {
-  const intro = await pg.evaluate(() => ({
+  const boot = await pg.evaluate(() => ({
     phase: window.__boxing.state.phase,
+    rd: document.querySelector('[data-round]').textContent,
     avatar: window.__boxing.game.playerAvatar.group.visible,
-    card: document.querySelector('[data-entrance]').classList.contains('on'),
   }));
-  check('entrance shows the player boxer and ringside card',
-    intro.phase === 'intro' && intro.avatar && intro.card, JSON.stringify(intro));
-  const waitForHands = await pg.evaluate(() => {
-    const B = window.__boxing, before = B.fight._phaseT;
-    for (let i = 0; i < 90; i++) B.game.step(1 / 60, { hands: [] }, null, { waitForHands: true });
-    return { before, after: B.fight._phaseT, phase: B.state.phase };
-  });
-  check('entrance clock waits for hand tracking', waitForHands.phase === 'intro'
-    && Math.abs(waitForHands.after - waitForHands.before) < .01, JSON.stringify(waitForHands));
-  await pg.evaluate(() => { window.__forceHands = { hands: [{ kind: 'palm' }] }; });
-  await pg.evaluate(() => {
-    const B = window.__boxing;
-    for (let i = 0; i < 16; i++) window.__waveSign = B.game.step(1 / 60, window.__forceHands, null).entranceSign;
-  });
-  await new Promise(r => setTimeout(r, 150));
-  const wave = await pg.evaluate(() => ({
-    sign: window.__waveSign,
-    gloveY: window.__boxing.game.playerAvatar.parts.gloveR.position.y,
-  }));
-  check('an open palm makes the entrance boxer wave',
-    wave.sign === 'wave' && wave.gloveY > .9, JSON.stringify(wave));
-  const tracked = await pg.evaluate(() => {
-    const B = window.__boxing, before = B.game.playerAvatar.parts.gloveL.position.x;
-    const shape = [[0,1.15],[.55,.78],[.8,.5],[1,.32],[1.12,.18],
-      [.36,-.12],[.4,-.4],[.42,-.6],[.44,-.74],
-      [0,-.2],[0,-.48],[0,-.7],[0,-.86],
-      [-.34,-.12],[-.38,-.36],[-.4,-.55],[-.42,-.68],
-      [-.6,-.05],[-.66,-.26],[-.7,-.42],[-.72,-.52]];
-    const lm = shape.map(([x, y]) => ({ x: .2 + x * .08, y: .3 + y * .08, z: 0 }));
-    window.__forceHands = { hands: [{ side: 'left', kind: 'palm',
-      palm: { x: .2, y: .3 }, lm }] };
-    for (let i = 0; i < 12; i++) B.game.step(1 / 60, window.__forceHands, null);
-    return { before, after: B.game.playerAvatar.parts.gloveL.position.x };
-  });
-  check('tracked hand moves the entrance boxer’s glove', tracked.after < tracked.before - .08,
-    JSON.stringify(tracked));
-  await pg.screenshot({ path: '/tmp/boxing-entrance.png' });
-  await pg.evaluate(() => { window.__forceHands = null; window.__boxing.game.skipIntro(); });
-  await pg.waitForFunction(() => window.__boxing.state.phase === 'fighting', { timeout: 45000 });
+  check('boot goes straight to the countdown — no walk-on card',
+    boot.phase !== 'intro' && /^ROUND/.test(boot.rd) && !boot.avatar, JSON.stringify(boot));
+  let bell = { phase: 'timeout', round: 0 };
+  try {
+    await pg.waitForFunction(() => window.__boxing.state.phase === 'fighting', { timeout: 45000 });
+    bell = await pg.evaluate(() => ({ phase: window.__boxing.state.phase, round: window.__boxing.state.round }));
+  } catch { }
+  check('the countdown bell starts round 1', bell.phase === 'fighting' && bell.round === 1, JSON.stringify(bell));
   const res = await pg.evaluate(() => {
     const B = window.__boxing;
     // same mitten-ish synthetic fist the page's mouse fallback uses

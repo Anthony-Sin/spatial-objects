@@ -19,7 +19,17 @@
    Starting the dodge within perfectWin of impact = PERFECT: PIP reels
    ('stunned') and every glove you land shaves the stun — a free flurry.
    Ducking into an uppercut eats duckUpperMul damage. A dodged swing
-   leaves PIP 'whiff' (off-balance, open). Landed swings may chain combos.
+   leaves PIP 'whiff' (off-balance, open) and ends the flurry; swings that
+   connect (hit OR blocked) always chain to the next. The comboMax-punch
+   flurry is the SPECIAL: it costs a burst of stamina, needs a stamina
+   floor to start, and only returns after ~specialEvery normal single
+   attacks — normals are the default rhythm, the flurry is the payoff.
+
+   PHASES: intro → countdown (3-2-1, state.countdown = whole seconds left)
+   → fighting → [countdown between rounds] → playerdown|npcdown → win|lose.
+   Tutorial hooks: opts.ai=false parks PIP (no decisions — drive it with
+   throwPunch(kind, side, windupSec)); opts.practice=true means nobody can
+   be KO'd and the clock never runs.
 
    NPC personality: PIP is a showboat. Loop = circle for an angle → press in →
    telegraphed windup → swing → recover, with taunts when it's feeling cocky,
@@ -40,7 +50,8 @@
    off to breathe. All feel knobs live in TUNING.
 */
 export const TUNING = {
-  introT: 11.0,         // give the player time to find the camera and perform signs
+  introT: 6.0,          // short walk-on cinematic (emotes live in the post-fight outro now)
+  countT: 3.0,          // 3-2-1-FIGHT before every round — a breath to get set
   downT: 2.4,           // a KO'd fighter stays down this long → win/lose
   rounds: 3,            // judges' decision after this many rounds
   roundHeal: .12,       // fraction of maxHp restored between rounds
@@ -56,9 +67,9 @@ export const TUNING = {
   dmg:      { jab: 7, cross: 11, hook: 13, uppercut: 16 },  // player base damage
   powFloor: .55,        // dmg scale = powFloor + (1-powFloor)*power
   npcDmg:   { jab: 6, hook: 12, upper: 17 },                // npc damage by kind
-  windup:   { jab: .44, hook: .56, upper: .68 },             // telegraph seconds —
+  windup:   { jab: .66, hook: .8, upper: .95 },              // telegraph seconds —
                                                           // readable anticipation;
-                                                          // the SWING stays .22 so
+                                                          // the SWING stays short so
                                                           // releases still feel fast
   punchDur: .26,        // npc swing length — long enough to SEE the glove come in
   hitAt: .5,            // impact lands this far (t01) through the swing
@@ -69,16 +80,19 @@ export const TUNING = {
   perfectStun: 1.4,     // PIP reels this long after a perfect dodge — free flurry
   stunHitCost: .17,     // each flurry hit shaves this off the remaining stun
   duckUpperMul: 1.35,   // ducking INTO an uppercut eats extra damage
-  comboChance: .4,      // chance a landed/blocked swing chains another
-  comboRage: .35,       // extra chain chance at full rage
-  comboWindup: .32,     // follow-up telegraph — shorter, the real dodge test
-  comboMax: 3,          // longest chain (swings) PIP will throw
+  comboWindup: .5,      // follow-up telegraph — shorter, the real dodge test
+  comboMax: 3,          // punches in the SPECIAL flurry — connected swings
+                        // chain the next until this many are thrown
+  specialEvery: 3,      // normal single attacks between 3-punch flurries
+  specialStam: .4,      // npc stamina floor required to start a flurry
+                        // (above gassedT .3 — winded PIP still can't)
+  specialCost: .15,     // extra upfront burn at flurry start (on top of swings)
 
   stamCost: { jab: .10, cross: .16, hook: .18, uppercut: .22 },
   stamRegen: .28,       // player stamina per second
   exhaustMul: .35,      // an exhausted whiff still burns cost*this
-  npcCost: .2,          // npc stamina per swing (follow-ups .6×) — combos genuinely drain it
-  npcRegen: .15,        // slow enough that burst fatigue is reachable, fast enough
+  npcCost: .23,         // npc stamina per swing (follow-ups .6×) — combos genuinely drain it
+  npcRegen: .12,        // slow enough that burst fatigue is reachable, fast enough
                         // that PIP isn't gassed (and passive) for the whole fight
 
   gassedT: .3,          // below this stamina a fighter is 'gassed' (state flag)
@@ -93,17 +107,17 @@ export const TUNING = {
 
   hurtT: .4,            // player flinch time after eating a hit
   npcHurtT: .32,        // npc stagger — also its i-frames (no juggling)
-  recoverT: .3,         // npc idle after a landed swing
-  whiffT: .62,          // a dodged/whiffed swing leaves PIP open — counter window
+  recoverT: .6,         // npc idle after a landed swing
+  whiffT: .85,          // a dodged/whiffed swing leaves PIP open — counter window
   blockT: .7,
-  idleMin: .1, idleVar: .18,
-  circleMin: .3, circleVar: .4,
+  idleMin: .5, idleVar: .55,    // breathing room between exchanges
+  circleMin: .7, circleVar: .7,
   retreatMin: .45, retreatVar: .35,
   pressMax: 1.7,        // give up pressing if it can't close the gap
   celebrateT: .9,       // taunt length — PIP is punishable while showboating
   celebrateCd: 4,       // min seconds between taunts
 
-  rageSpeed: .35,       // windup/decision haste as npc hp → 0
+  rageSpeed: .22,       // windup/decision haste as npc hp → 0
   slipBase: .04,        // npc slip chance vs punches while circling/retreating
   slipRage: .3,         // extra slip chance at full rage
   retreatOnHurt: .12,   // stay in trading range more often
@@ -128,9 +142,11 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 export class Fight {
   constructor(opts = {}) {
-    this.opts = { playerHp: 100, npcHp: 100, npcName: 'PIP', roundLen: 90, seed: 1, ...opts };
+    this.opts = { playerHp: 100, npcHp: 100, npcName: 'PIP', roundLen: 90, seed: 1,
+      ai: true, practice: false, ...opts };
+    this.ai = this.opts.ai !== false;
     this.state = {
-      phase: 'intro', round: 0, timeLeft: this.opts.roundLen,
+      phase: 'intro', round: 0, timeLeft: this.opts.roundLen, countdown: 0,
       player: { hp: 0, maxHp: 0, stamina: 1, score: 0, combo: 0, bestCombo: 0,
         counterT: 0, status: 'idle', hurtT: 0, gassed: false,
         dodge: { dir: null, t: 9, cd: 0 }, perfects: 0 },   // dir: 'left'|'right'|'duck'|null
@@ -157,8 +173,10 @@ export class Fight {
     this._prevSway = 0; this._prevDuck = 0;   // dodge edge detection
     this._aim = 0;                    // what PIP aimed at: -1|1 held lean, 'duck', 0
     this._chain = 0;                  // swings thrown in the current combo
+    this._wantCombo = false;          // this attack is the 3-punch special
+    this._normals = 0;                // normal attacks since the last special
     this._swing = null;               // how the live swing resolved: hit|blocked|dodged|perfect|whiff
-    s.phase = 'intro'; s.round = 0; s.timeLeft = o.roundLen;
+    s.phase = 'intro'; s.round = 0; s.timeLeft = o.roundLen; s.countdown = 0;
     s.events.length = 0; s.lastBlow = null;
     this._comboT = 0;
     Object.assign(s.player, { hp: o.playerHp, maxHp: o.playerHp, stamina: 1, score: 0,
@@ -220,6 +238,17 @@ export class Fight {
         this._phaseT += dt;
         if (this._phaseT >= T.introT) this._startRound();
         break;
+      case 'countdown': {   // gloves up, nothing lands — then the bell
+        this._phaseT += dt;
+        const n = Math.max(0, Math.ceil(T.countT - this._phaseT));
+        if (n !== s.countdown && n > 0) { s.countdown = n; this._emit('countdown'); }
+        if (this._phaseT >= T.countT) {
+          s.countdown = 0; s.phase = 'fighting'; this._phaseT = 0;
+          this._setAct('idle', .5);
+          this._emit('round-start');
+        }
+        break;
+      }
       case 'fighting':
         // counters resolve first — a glove in PIP's face cancels its windup
         for (const pn of inp.punches) {
@@ -229,7 +258,7 @@ export class Fight {
         if (s.phase !== 'fighting') break;
         this._npc(dt, inp);
         if (s.phase !== 'fighting') break;
-        s.timeLeft = Math.max(0, s.timeLeft - dt);
+        if (!this.opts.practice) s.timeLeft = Math.max(0, s.timeLeft - dt);
         if (s.timeLeft <= 0) this._roundEnd();
         break;
       case 'playerdown': case 'npcdown':
@@ -261,6 +290,14 @@ export class Fight {
     if (this.state.phase === 'intro') this._startRound();
   }
 
+  // scripted swing (tutorial): telegraphs like a real one; false if PIP is busy
+  throwPunch(kind = 'jab', side = 'left', windup = null) {
+    const s = this.state, n = s.npc;
+    if (s.phase !== 'fighting' || ['windup', 'punch', 'down', 'hurt', 'stunned'].includes(n.action)) return false;
+    this._windup(false, { kind: TUNING.windup[kind] ? kind : 'jab', side, windup });
+    return true;
+  }
+
   /* ---------- internals ---------- */
 
   _emit(e) { this.state.events.push(e); }
@@ -280,12 +317,12 @@ export class Fight {
     if (a !== 'windup') n.telegraph = null;
   }
 
-  _startRound() {
+  _startRound() {   // → countdown; the bell ('round-start') rings when it hits zero
     const s = this.state;
     s.round++; s.timeLeft = this.opts.roundLen;
-    s.phase = 'fighting'; this._phaseT = 0;
-    this._setAct('idle', .35);
-    this._emit('round-start');
+    s.phase = 'countdown'; this._phaseT = 0; s.countdown = 0;
+    this._chain = 0; this._swing = null;
+    this._setAct('idle', .5);
   }
 
   _roundEnd() {
@@ -313,6 +350,11 @@ export class Fight {
 
   _ko(who) {
     const s = this.state;
+    if (this.opts.practice) {   // practice: nobody goes down — just keep the floor
+      const f = who === 'npc' ? s.npc : s.player;
+      f.hp = Math.max(1, f.maxHp * .35);
+      return;
+    }
     s.npc.telegraph = null; this._phaseT = 0;
     this._emit('ko');
     if (who === 'npc') {
@@ -384,7 +426,7 @@ export class Fight {
     this._emit('player-miss');
     s.lastBlow = { who: 'player', kind: pn.kind, result: 'miss', reason };
     // PIP loves watching you miss — occasional taunt (only from mobile states)
-    if (reason !== 'exhausted' && this._celebrateCd <= 0 && this._rng() < .18
+    if (this.ai && reason !== 'exhausted' && this._celebrateCd <= 0 && this._rng() < .18
         && ['idle', 'circle', 'press', 'retreat'].includes(s.npc.action)) {
       this._celebrateCd = TUNING.celebrateCd;
       this._setAct('celebrate', TUNING.celebrateT);
@@ -398,14 +440,14 @@ export class Fight {
     n.actionT += dt;
     switch (n.action) {
       case 'idle': case 'circle':
-        if (n.actionT >= this._actFor) this._choose(inp);
+        if (this.ai && n.actionT >= this._actFor) this._choose(inp);
         break;
       case 'retreat':
         if (n.actionT >= this._actFor) this._setAct('idle', this._idle());
         break;
       case 'press':
         if (n.gassed) this._setAct('retreat', this._retreat());   // gassed — fade out
-        else if (inp.distance <= T.attackAt) this._windup();
+        else if (inp.distance <= T.attackAt) this.ai ? this._windup() : this._setAct('idle', 1);
         else if (n.actionT >= T.pressMax) this._setAct('circle', this._circle());
         break;
       case 'block':
@@ -413,7 +455,7 @@ export class Fight {
         break;
       case 'hurt':
         if (n.actionT >= T.npcHurtT) {
-          if (this._rng() < T.retreatOnHurt + this._tilt * .08) this._setAct('retreat', this._retreat());
+          if (this.ai && this._rng() < T.retreatOnHurt + this._tilt * .08) this._setAct('retreat', this._retreat());
           else this._setAct('idle', this._idle());
         }
         break;
@@ -460,25 +502,35 @@ export class Fight {
       this._chain = 0;
       return this._setAct('whiff', T.whiffT);   // off-balance — counter window
     }
-    if (this._chain < T.comboMax - 1 && !n.gassed && inp.distance <= T.npcReach
-        && this._rng() < T.comboChance + T.comboRage * this._rage())
-      return this._windup(true);
+    if (this.ai && this._wantCombo && this._chain < T.comboMax - 1 && !n.gassed && inp.distance <= T.npcReach)
+      return this._windup(true);   // the flurry is committed — next punch telegraphs
     this._chain = 0;
     if (res === 'hit') this._taunt(.4);        // showboats over a clean shot
     if (n.action === 'punch') this._setAct('idle', T.recoverT);
   }
 
-  _windup(combo = false) {
+  _windup(combo = false, force = null) {
     const T = TUNING, n = this.state.npc, rage = this._rage(), inp = this._inp;
+    /* fresh attack → special or normal? The 3-punch flurry is the special:
+       it needs the stamina floor AND ~specialEvery normals since the last
+       one, then burns a chunk up front. Scripted swings are always singles. */
+    if (!combo) {
+      this._wantCombo = !force && this.ai && !n.gassed
+        && this._normals >= T.specialEvery && n.stamina >= T.specialStam;
+      if (!force) {
+        if (this._wantCombo) { this._normals = 0; n.stamina = Math.max(0, n.stamina - T.specialCost); }
+        else this._normals++;
+      }
+    }
     const prev = this._pk.kind, r = this._rng();
     // PIP reads a HELD duck and digs an uppercut; combos follow real patterns
     const ducking = inp && inp.duck >= T.dodgeT;
-    let kind = ducking && this._rng() < .7 ? 'upper'
+    let kind = force ? force.kind : ducking && this._rng() < .7 ? 'upper'
       : combo ? (prev === 'jab' ? (r < .55 ? 'jab' : 'hook')
         : prev === 'hook' ? (r < .6 ? 'upper' : 'hook') : 'jab')
       : r < .5 - .1 * rage ? 'jab' : r < .8 ? 'hook' : 'upper';
     // combos alternate hands (hook→hook switches sides, the classic double)
-    const side = combo && kind === 'hook' && prev === 'hook'
+    const side = force ? force.side : combo && kind === 'hook' && prev === 'hook'
       ? (this._pk.side === 'left' ? 'right' : 'left')
       : kind === 'jab' ? (this._rng() < .8 ? 'left' : 'right')
       : kind === 'upper' ? (this._rng() < .7 ? 'right' : 'left')
@@ -488,7 +540,7 @@ export class Fight {
       : ducking ? 'duck' : 0;
     this._chain = combo ? this._chain + 1 : 0;
     n.stamina = Math.max(0, n.stamina - T.npcCost * (combo ? .6 : 1));
-    this._windupFor = (combo ? T.comboWindup : T.windup[kind]) * (1 - T.rageSpeed * rage)
+    this._windupFor = force?.windup || (combo ? T.comboWindup : T.windup[kind]) * (1 - T.rageSpeed * rage)
       * (n.gassed ? T.gasWindup : 1);   // tired arms telegraph slower
     this._pk = { kind, side };
     n.action = 'windup'; n.actionT = 0;
@@ -551,7 +603,7 @@ export class Fight {
   }
 
   _taunt(chance) {  // showboat tax — celebrates its own work, fully punishable
-    if (this._celebrateCd > 0 || this.state.player.hp <= 0) return;
+    if (!this.ai || this._celebrateCd > 0 || this.state.player.hp <= 0) return;
     if (this._rng() < chance) {
       this._celebrateCd = TUNING.celebrateCd;
       this._setAct('celebrate', TUNING.celebrateT);

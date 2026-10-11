@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pick your rival — storywood scrap</title>
+<title>pick your rival — scrap!</title>
 <link rel="icon" href="data:,">
 <script type="importmap">
 { "imports": {
@@ -70,8 +70,7 @@
 </head>
 <body>
   <header class="mast">
-    <div class="wm">PICK YOUR RIVAL<span>storywood scrap · character lineup</span></div>
-    <a class="back" href="./boxing.html">ring →</a>
+    <div class="wm">PICK YOUR RIVAL<span>scrap! · character lineup</span></div>
     <a class="back" href="./">menu</a>
   </header>
   <div class="note" data-note>loading the lineup…</div>
@@ -140,23 +139,28 @@
     ren.setPixelRatio(1);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xfdf3e3);
-    scene.add(new THREE.HemisphereLight(0xfff2dd, 0x8a7f6c, 1.15));
+    const hemi = new THREE.HemisphereLight(0xfff2dd, 0x8a7f6c, 1.15);
     const key = new THREE.DirectionalLight(0xffe6bd, 1.6); key.position.set(3, 6, 4);
-    scene.add(key);
+    scene.add(hemi, key);
+    // each slot gets its own layer — a cell's camera can never see the
+    // neighbor's disc/pedestal/fighter bleeding in at the frame edge.
+    // Lights shine on every layer so the isolated fighters stay lit.
+    hemi.layers.enableAll(); key.layers.enableAll();
     const cam = new THREE.PerspectiveCamera(40, SLOT_W / SLOT_H, .1, 60);
     const ACC = [0xff6b57, 0xffc53d, 0x4fb06d, 0x5da9e9, 0xb565d8];
     for (const c of cells) {
       const x = c.i * 3;
+      c.lay = (c.i % 31) + 1;                 // layer 0 stays clear for lights
       // paper pedestal + accent disc backdrop per slot
       const disc = new THREE.Mesh(new THREE.CircleGeometry(.95, 40),
         new THREE.MeshBasicMaterial({ color: ACC[c.i % ACC.length] }));
-      disc.position.set(x, .78, -.8); scene.add(disc);
+      disc.position.set(x, .78, -.8); disc.layers.set(c.lay); scene.add(disc);
       const ped = new THREE.Mesh(new THREE.CylinderGeometry(.8, .9, .12, 28),
         new THREE.MeshStandardMaterial({ color: 0xfff8ec, roughness: .9 }));
-      ped.position.set(x, -.06, 0); scene.add(ped);
+      ped.position.set(x, -.06, 0); ped.layers.set(c.lay); scene.add(ped);
       const trim = new THREE.Mesh(new THREE.TorusGeometry(.85, .035, 10, 40).rotateX(Math.PI / 2),
         new THREE.MeshStandardMaterial({ color: 0x2b2118, roughness: .9 }));
-      trim.position.set(x, .01, 0); scene.add(trim);
+      trim.position.set(x, .01, 0); trim.layers.set(c.lay); scene.add(trim);
     }
 
     const die = (c, why) => {
@@ -188,6 +192,7 @@
         try {
           c.impl = proto.buildBoxer(THREE, { variant: c.e.variant });
           c.impl.group.position.set(x, .02, 0);
+          c.impl.group.traverse(o => o.layers.set(c.lay));
           c.impl.snap?.('idle', 0);            // instant idle pose for the thumb
           scene.add(c.impl.group); c.ok = true;
         } catch { die(c, 'not built'); }
@@ -196,6 +201,7 @@
         if (got) {
           c.obj = got.o;
           c.obj.position.x += x; c.obj.position.y += .02;
+          c.obj.traverse(o => o.layers.set(c.lay));
           const idle = got.clips.find(k => k.name.toLowerCase().includes('idle'));
           if (idle) { c.mixer = new THREE.AnimationMixer(c.obj); c.mixer.clipAction(idle).play(); }
           scene.add(c.obj); c.ok = true;
@@ -245,12 +251,14 @@
         const col = c.i % COLS, row = (c.i / COLS) | 0;
         slotCam.set(x + .9, 1.35, 2.9); look.set(x, .72, 0);
         cam.position.copy(slotCam); cam.lookAt(look);
+        cam.layers.set(c.lay);
         ren.setViewport(col * SLOT_W, row * SLOT_H, SLOT_W, SLOT_H);
         ren.setScissor(col * SLOT_W, row * SLOT_H, SLOT_W, SLOT_H);
         ren.setScissorTest(true);
         ren.render(scene, cam);
         c.ctx.clearRect(0, 0, SLOT_W, SLOT_H);
-        c.ctx.drawImage(glc, col * SLOT_W, row * SLOT_H, SLOT_W, SLOT_H, 0, 0, SLOT_W, SLOT_H);
+        // GL viewport rows run bottom→top, drawImage runs top→bottom — flip
+        c.ctx.drawImage(glc, col * SLOT_W, (ROWS - 1 - row) * SLOT_H, SLOT_W, SLOT_H, 0, 0, SLOT_W, SLOT_H);
       }
     }
     if (cells.length) loop();

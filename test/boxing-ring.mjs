@@ -152,6 +152,19 @@ const wrap = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a
   check('neutral posture returns to corner mark', Math.abs(sim.player.pos.z - home) < .06);
 }
 
+/* 4b — PIP stays in the front lane: the first-person view never has to swing */
+{
+  const sim = new RingSim({ seed: 9 });
+  let worst = 0;
+  const dirs = ['circle', 'retreat', 'press', 'circle', 'hold'];
+  run(sim, 20, t => ({ npcDir: dirs[Math.floor(t / 4) % dirs.length] }), s => {
+    const lat = s.npc.pos.x - s.player.pos.x, dep = s.player.pos.z - s.npc.pos.z;
+    if (dep > .3) worst = Math.max(worst, Math.abs(Math.atan2(lat, dep)));
+  });
+  check('npc stays inside the front lane (≤ laneAngle + slack)', worst <= .42 + .12,
+    `worst=${worst.toFixed(2)} rad`);
+}
+
 /* 5 — 'circle' actually orbits: bearing accumulates + direction flips ----- */
 {
   const sim = new RingSim({ seed: 42 });

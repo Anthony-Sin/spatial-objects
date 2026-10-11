@@ -2,74 +2,937 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>bout night — webcam boxing</title>
+<title>SCRAP!</title>
 <link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Baloo+2:wght@700;800&display=swap" rel="stylesheet">
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/three.module.js"
+} }
+</script>
 <style>
-  :root { --paper:#FFF8EC; --ink:#2B2118; --coral:#FF6B57; --sun:#FFC53D; --leaf:#4FB06D; --sky:#5DA9E9; --berry:#B565D8; }
+  :root {
+    --paper:#FFF8EC; --ink:#2B2118; --coral:#FF6B57; --sun:#FFC53D; --sky:#5DA9E9;
+    --dark-bg:#0c101a; --dark-surface:#161d2d;
+  }
   * { box-sizing:border-box; margin:0; }
-  body { min-height:100vh; display:grid; place-items:center; overflow:hidden; background:var(--paper);
-    color:var(--ink); font-family:"Fredoka","Baloo 2","Avenir Next","Trebuchet MS",system-ui,sans-serif;
-    background-image:radial-gradient(rgba(43,33,24,.05) 1.5px, transparent 1.5px); background-size:26px 26px; }
-  .stage { text-align:center; padding:20px; position:relative; }
+  html, body { height:100%; }
+  body {
+    min-height:100vh; min-height:100svh; display:grid; place-items:center; overflow:hidden;
+    background:var(--dark-bg); color:#fff;
+    font-family:"Fredoka","Baloo 2","Avenir Next","Trebuchet MS",system-ui,sans-serif;
+    position:relative;
+  }
 
-  /* gloves */
-  .gloves { position:relative; height:130px; margin-bottom:6px; }
-  .glove { position:absolute; left:50%; top:8px; width:96px; height:96px; }
-  .glove svg { display:block; filter:drop-shadow(0 4px 0 rgba(43,33,24,.9)); }
-  .glove.l { transform:translateX(-112%) rotate(-14deg); animation:bobL 2.4s ease-in-out infinite; }
-  .glove.r { transform:translateX(12%) rotate(14deg) scaleX(-1); animation:bobR 2.4s ease-in-out infinite; animation-delay:.3s; }
-  @keyframes bobL { 0%,100%{transform:translateX(-112%) rotate(-14deg) translateY(0)} 50%{transform:translateX(-112%) rotate(-10deg) translateY(-14px)} }
-  @keyframes bobR { 0%,100%{transform:translateX(12%) rotate(14deg) scaleX(-1) translateY(0)} 50%{transform:translateX(12%) rotate(10deg) scaleX(-1) translateY(-14px)} }
+  /* Deep dark boxing arena backdrop */
+  body::before {
+    content:""; position:fixed; inset:0;
+    z-index:0; pointer-events:none;
+    background:radial-gradient(ellipse 75% 55% at 50% 45%, rgba(26, 35, 54, 0.78) 0%, rgba(12, 16, 26, 0.96) 65%, #07090e 100%);
+  }
 
-  .belt { display:inline-block; background:var(--sun); color:var(--ink); font-weight:700;
-    font-size:11px; letter-spacing:.32em; padding:6px 20px 6px 22px; border-radius:99px;
-    border:2.5px solid var(--ink); transform:rotate(-2deg); margin-bottom:10px;
-    box-shadow:0 3px 0 var(--ink); }
-  h1 { font-weight:700; letter-spacing:.04em; font-size:clamp(46px,9vw,84px); line-height:.95;
-    text-shadow:4px 4px 0 var(--coral), 8px 8px 0 rgba(43,33,24,.12); margin-bottom:4px; }
-  h1 span { color:var(--coral); text-shadow:4px 4px 0 var(--ink), 8px 8px 0 rgba(43,33,24,.12); }
-  .tag { color:#8a7f6c; font-style:italic; font-size:15px; margin-bottom:34px; }
+  /* subtle arena dust / particle speckle */
+  body::after {
+    content:""; position:fixed; inset:0;
+    z-index:0; pointer-events:none;
+    background-image:radial-gradient(rgba(255, 255, 255, 0.05) 1.2px, transparent 1.2px);
+    background-size:28px 28px;
+  }
 
-  .menu { display:flex; flex-direction:column; gap:14px; align-items:center; }
-  .btn { display:block; min-width:300px; padding:17px 40px; border:2.5px solid var(--ink);
-    color:var(--ink); text-decoration:none; font-size:15px; font-weight:700; letter-spacing:.14em;
-    text-transform:uppercase; border-radius:22px; background:#fff;
-    box-shadow:0 5px 0 var(--ink); transition:transform .16s cubic-bezier(.34,1.56,.64,1), box-shadow .16s; }
-  .btn:hover { transform:translateY(-3px) rotate(-1deg); box-shadow:0 8px 0 var(--ink); }
-  .btn:active { transform:translateY(3px); box-shadow:0 1px 0 var(--ink); }
-  .btn.main { background:var(--coral); color:#fff; font-size:17px; }
-  .btn.alt { background:var(--sky); color:#fff; }
-  .btn small { display:block; font-size:9px; letter-spacing:.2em; opacity:.75; margin-top:3px; font-weight:600; }
+  /* ---------- one sticker on paper ---------- */
+  .stage {
+    position:relative; z-index:2;
+    min-height:100vh; min-height:100svh;
+    display:flex; flex-direction:column; justify-content:space-between; align-items:center;
+    text-align:center; padding:clamp(16px, 2.8vh, 32px) 20px clamp(24px, 3.8vh, 44px);
+    pointer-events:none;
+  }
+  .stage > * { pointer-events:auto; }
 
-  .how { display:flex; gap:12px; justify-content:center; margin-top:38px; flex-wrap:wrap; }
-  .how div { background:#fff; border:2px solid var(--ink); border-radius:16px; padding:10px 18px;
-    font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
-    box-shadow:0 3px 0 var(--ink); }
-  .how div:nth-child(1){transform:rotate(-2deg)} .how div:nth-child(2){transform:rotate(1.2deg)} .how div:nth-child(3){transform:rotate(-1deg)}
-  .how b { color:var(--coral); display:block; font-size:12px; margin-bottom:2px; }
-  .foot { margin-top:30px; color:#b9ac93; font-size:9px; letter-spacing:.22em; text-transform:uppercase; }
+  /* ---------- Sticker Logo with Comic Halftone & Sparkles ---------- */
+  .logo-container {
+    position:relative; display:inline-flex; flex-direction:column; align-items:center;
+    margin-top:clamp(4px, 1.2vh, 18px);
+    user-select:none;
+  }
+
+  .comic-halftone {
+    position:absolute; inset:-40px -60px -30px;
+    pointer-events:none; z-index:1;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .comic-halftone svg {
+    width:100%; height:100%; overflow:visible;
+  }
+
+  .logo-title {
+    position:relative; z-index:2;
+    margin:0; transform:rotate(-3deg);
+    font-family:"Baloo 2","Fredoka",cursive,sans-serif;
+    font-weight:800; font-size:clamp(84px, 16vmin, 168px);
+    line-height:.85; letter-spacing:.02em;
+    color:#FF654E;
+    /* Chunky sticker outline and comic bevel layers */
+    text-shadow:
+      0 -3px 0 #FFC83B,
+      -3px -3px 0 #2B2118,
+      3px -3px 0 #2B2118,
+      -3px 3px 0 #2B2118,
+      3px 3px 0 #2B2118,
+      0 -4px 0 #2B2118,
+      0 4px 0 #2B2118,
+      -4px 0 0 #2B2118,
+      4px 0 0 #2B2118,
+      0 8px 0 #2B2118;
+    filter:
+      drop-shadow(0 0 0 #fff)
+      drop-shadow(-5px -5px 0 #fff)
+      drop-shadow(5px -5px 0 #fff)
+      drop-shadow(-5px 5px 0 #fff)
+      drop-shadow(5px 5px 0 #fff)
+      drop-shadow(0 6px 0 #fff)
+      drop-shadow(0 12px 0 #2B2118)
+      drop-shadow(0 18px 25px rgba(43,33,24,.18));
+    transition:transform .2s cubic-bezier(.34,1.7,.5,1);
+  }
+  .logo-title:hover {
+    transform:rotate(-1deg) scale(1.03);
+  }
+  .logo-title .bang {
+    color:#FF654E;
+  }
+
+  .ring-canvas {
+    position:fixed; inset:0; width:100%; height:100%;
+    z-index:1; pointer-events:none;
+  }
+
+  /* ---------- Bottom Arcade Menu Controls ---------- */
+  .menu-group {
+    display:flex; flex-direction:column; align-items:center; gap:clamp(10px, 1.6vmin, 16px);
+    filter:drop-shadow(0 8px 18px rgba(43,33,24,.12));
+    z-index:10;
+  }
+
+  .tut-check {
+    display:inline-flex; align-items:center; gap:9px;
+    cursor:pointer; user-select:none; -webkit-tap-highlight-color:transparent;
+    padding:6px 18px;
+    background:#fff;
+    border:3px solid var(--ink); border-radius:999px;
+    box-shadow:0 3.5px 0 var(--ink);
+    font-size:clamp(12px,1.4vmin,14px); font-weight:700;
+    letter-spacing:.09em; text-transform:uppercase; color:var(--ink);
+    transition:transform .15s cubic-bezier(.34,1.7,.5,1), box-shadow .15s;
+    margin-bottom:2px;
+  }
+  .tut-check:hover {
+    transform:translateY(-2px) rotate(-.8deg);
+    box-shadow:0 5.5px 0 var(--ink);
+  }
+  .tut-check:active {
+    transform:translateY(1px);
+    box-shadow:0 1px 0 var(--ink);
+  }
+  .tut-check:focus-within {
+    outline:3px solid var(--coral);
+    outline-offset:3px;
+  }
+  .tut-input {
+    position:absolute; opacity:0; pointer-events:none; width:0; height:0; margin:0;
+  }
+  .tut-box {
+    width:22px; height:22px; border-radius:6px;
+    border:2.5px solid var(--ink); background:#fff;
+    box-shadow:0 3px 0 var(--ink);
+    display:grid; place-items:center; flex-shrink:0;
+    transition:background .15s, box-shadow .15s, transform .15s cubic-bezier(.34,1.7,.5,1);
+  }
+  .tut-check:hover .tut-box {
+    box-shadow:0 4px 0 var(--ink);
+  }
+  .tut-box svg {
+    width:14px; height:14px; fill:none;
+    stroke:var(--ink); stroke-width:3.5; stroke-linecap:round; stroke-linejoin:round;
+    opacity:0; transform:scale(.4) rotate(-12deg);
+    transition:opacity .15s ease, transform .18s cubic-bezier(.34,1.8,.5,1);
+  }
+  .tut-input:checked + .tut-box {
+    background:var(--sun);
+  }
+  .tut-input:checked + .tut-box svg {
+    opacity:1; transform:scale(1) rotate(0deg);
+  }
+  .tut-input:focus-visible + .tut-box {
+    outline:3px solid var(--sun); outline-offset:3px;
+  }
+  .tut-label {
+    line-height:1;
+  }
+
+  .menu-row {
+    display:flex; flex-direction:row; align-items:center; justify-content:center;
+    gap:clamp(12px, 1.8vmin, 20px);
+    flex-wrap:wrap;
+  }
+
+  .btn {
+    display:inline-flex; align-items:center; justify-content:center;
+    padding:clamp(14px,2.1vmin,20px) clamp(24px,3.2vmin,40px);
+    border:3.5px solid var(--ink); border-radius:999px;
+    font-family:inherit; font-weight:800; text-transform:uppercase; text-decoration:none; text-align:center;
+    font-size:clamp(14px,1.75vmin,19px); letter-spacing:.12em; line-height:1.2;
+    white-space:nowrap; cursor:pointer;
+    box-shadow:0 6px 0 var(--ink);
+    transition:transform .18s cubic-bezier(.34,1.7,.5,1), box-shadow .18s cubic-bezier(.34,1.7,.5,1);
+  }
+  .btn:hover  { transform:translateY(-3.5px) rotate(-.8deg); box-shadow:0 9.5px 0 var(--ink); }
+  .btn:active { transform:translateY(2.5px) scale(.98); box-shadow:0 1px 0 var(--ink); transition-duration:.06s; }
+  .btn:focus-visible { outline:4px solid var(--sun); outline-offset:3px; }
+  .btn.main {
+    background:#FF604B; color:#fff;
+    box-shadow:0 6px 0 var(--ink), 0 0 16px rgba(255,96,75,.35);
+  }
+  .btn.alt  {
+    background:#fff; color:var(--ink);
+  }
+
+  /* Round Gear Settings Button */
+  .btn-gear {
+    width:clamp(54px, 7vmin, 66px); height:clamp(54px, 7vmin, 66px);
+    border-radius:50%;
+    border:3.5px solid var(--ink); background:var(--sun); color:var(--ink);
+    display:grid; place-items:center; cursor:pointer; flex-shrink:0;
+    box-shadow:0 6px 0 var(--ink);
+    transition:transform .18s cubic-bezier(.34,1.7,.5,1), box-shadow .18s cubic-bezier(.34,1.7,.5,1), background .15s;
+    padding:0;
+  }
+  .btn-gear svg {
+    width:55%; height:55%; fill:var(--ink);
+    transition:transform .4s cubic-bezier(.34,1.7,.5,1);
+  }
+  .btn-gear:hover {
+    transform:translateY(-3.5px) rotate(25deg);
+    box-shadow:0 9.5px 0 var(--ink);
+    background:#FFD05B;
+  }
+  .btn-gear:active {
+    transform:translateY(2.5px) rotate(45deg);
+    box-shadow:0 1px 0 var(--ink);
+  }
+  .btn-gear:focus-visible {
+    outline:4px solid var(--coral); outline-offset:3px;
+  }
+
+  /* centered settings modal */
+  .settings-overlay {
+    position:fixed; inset:0; z-index:50;
+    background:rgba(43,33,24,.45);
+    backdrop-filter:blur(4px);
+    display:grid; place-items:center;
+    padding:16px;
+    opacity:0; pointer-events:none;
+    transition:opacity .2s ease;
+  }
+  .settings-overlay.open {
+    opacity:1; pointer-events:auto;
+  }
+  .settings-card {
+    position:relative;
+    background:var(--paper); color:var(--ink);
+    border:3.5px solid var(--ink); border-radius:26px;
+    box-shadow:0 10px 0 var(--ink), 0 20px 45px rgba(43,33,24,.35);
+    width:min(92vw, 420px);
+    padding:24px 28px 26px;
+    text-align:left;
+    transform:scale(.92) rotate(-1deg);
+    transition:transform .25s cubic-bezier(.34,1.56,.64,1);
+  }
+  .settings-overlay.open .settings-card {
+    transform:scale(1) rotate(0deg);
+  }
+  .settings-header {
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:20px;
+  }
+  .settings-title {
+    font-size:clamp(26px,4vmin,34px); font-weight:700;
+    letter-spacing:.03em; line-height:1;
+    transform:rotate(-1.5deg);
+    text-shadow:.04em .04em 0 var(--coral), .08em .08em 0 rgba(43,33,24,.08);
+  }
+  .settings-close {
+    width:34px; height:34px; border-radius:50%;
+    border:2.5px solid var(--ink); background:#fff;
+    font-size:18px; font-weight:800; line-height:1; cursor:pointer;
+    display:grid; place-items:center; box-shadow:0 3px 0 var(--ink);
+    color:var(--ink); font-family:inherit;
+    transition:transform .12s, box-shadow .12s;
+  }
+  .settings-close:hover { transform:translateY(-2px); box-shadow:0 5px 0 var(--ink); }
+  .settings-close:active { transform:translateY(1px); box-shadow:0 1px 0 var(--ink); }
+
+  .settings-list {
+    display:flex; flex-direction:column; gap:14px;
+    margin-bottom:22px;
+  }
+  .setting-row {
+    display:flex; align-items:center; justify-content:space-between;
+    gap:12px; padding:10px 14px; background:rgba(255,255,255,.7);
+    border:2px solid var(--ink); border-radius:14px;
+    box-shadow:0 3px 0 rgba(43,33,24,.15);
+  }
+  .setting-info { display:flex; flex-direction:column; }
+  .setting-label {
+    font-weight:700; font-size:15px; letter-spacing:.02em;
+  }
+  .setting-desc {
+    font-size:11px; opacity:.7; font-weight:500;
+  }
+
+  /* Switch toggle */
+  .switch {
+    position:relative; width:48px; height:26px; flex-shrink:0;
+    cursor:pointer;
+  }
+  .switch input { opacity:0; width:0; height:0; position:absolute; }
+  .slider {
+    position:absolute; inset:0; background:#ddd;
+    border:2px solid var(--ink); border-radius:999px;
+    transition:background .2s cubic-bezier(.34,1.5,.64,1);
+    box-shadow:inset 0 2px 4px rgba(0,0,0,.15);
+  }
+  .slider::before {
+    content:''; position:absolute; height:16px; width:16px;
+    left:3px; top:3px; background:#fff;
+    border:2px solid var(--ink); border-radius:50%;
+    box-shadow:0 2px 0 var(--ink);
+    transition:transform .2s cubic-bezier(.34,1.5,.64,1), background .2s;
+  }
+  .switch input:checked + .slider {
+    background:var(--coral);
+  }
+  .switch input:checked + .slider::before {
+    transform:translateX(20px);
+    background:var(--sun);
+  }
+  .switch input:focus-visible + .slider {
+    outline:3px solid var(--sun); outline-offset:2px;
+  }
+
+  /* Range slider */
+  .range-wrap {
+    display:flex; align-items:center; gap:10px; width:130px;
+  }
+  .range-input {
+    width:100%; accent-color:var(--coral); cursor:pointer;
+  }
+  .range-val {
+    font-size:12px; font-weight:700; min-width:32px; text-align:right;
+  }
+
+  .settings-done {
+    display:block; width:100%;
+    padding:12px 20px; border-radius:999px;
+    border:3px solid var(--ink); background:var(--sun); color:var(--ink);
+    font-family:inherit; font-size:15px; font-weight:700;
+    text-transform:uppercase; letter-spacing:.12em; cursor:pointer;
+    box-shadow:0 4px 0 var(--ink);
+    text-align:center;
+    transition:transform .12s, box-shadow .12s;
+  }
+  .settings-done:hover { transform:translateY(-2px); box-shadow:0 6px 0 var(--ink); }
+  .settings-done:active { transform:translateY(2px); box-shadow:0 1px 0 var(--ink); }
+
+  .btn:focus-visible, .btn.sub:focus-visible, .settings-done:focus-visible, .settings-close:focus-visible {
+    outline:3.5px solid var(--coral); outline-offset:3px;
+  }
+
+  /* ---------- motion ---------- */
+  @media (prefers-reduced-motion: no-preference) {
+    .glove-bob { animation:bob 3.2s ease-in-out infinite; }
+    .glove-shadow { animation:shrink 3.2s ease-in-out infinite; }
+    .glove-wrap.jab .glove-jab { animation:jab .5s cubic-bezier(.3,1.6,.5,1); }
+    .glove-wrap.jab .glove-bob { animation-play-state:paused; }
+  }
+  @keyframes bob {
+    0%,100% { transform:rotate(-6deg) translateY(0); }
+    50%     { transform:rotate(-2.5deg) translateY(-2.4%); }
+  }
+  @keyframes shrink {
+    0%,100% { transform:translateX(-50%) scaleX(1); opacity:1; }
+    50%     { transform:translateX(-50%) scaleX(.86); opacity:.6; }
+  }
+  @keyframes jab {
+    0%   { transform:scale(1) translateY(0); }
+    35%  { transform:scale(1.22) translateY(-4%); }
+    100% { transform:scale(1) translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation:none !important; transition:none !important; }
+  }
 </style>
 </head>
 <body>
-  <div class="stage">
-    <div class="gloves" aria-hidden="true">
-      <div class="glove l"><svg viewBox="0 0 96 96"><path d="M30 40 C18 40 12 52 14 64 C16 78 28 88 46 88 C64 88 80 78 82 60 C84 44 76 30 62 28 L58 22 C56 16 48 14 42 18 C40 10 30 8 26 14 C22 20 26 28 30 32 Z" fill="#FF6B57" stroke="#2B2118" stroke-width="4" stroke-linejoin="round"/><rect x="26" y="70" width="44" height="18" rx="8" fill="#fff" stroke="#2B2118" stroke-width="4"/><path d="M34 74 v10 M44 74 v10 M54 74 v10" stroke="#2B2118" stroke-width="3" stroke-linecap="round"/></svg></div>
-      <div class="glove r"><svg viewBox="0 0 96 96"><path d="M30 40 C18 40 12 52 14 64 C16 78 28 88 46 88 C64 88 80 78 82 60 C84 44 76 30 62 28 L58 22 C56 16 48 14 42 18 C40 10 30 8 26 14 C22 20 26 28 30 32 Z" fill="#5DA9E9" stroke="#2B2118" stroke-width="4" stroke-linejoin="round"/><rect x="26" y="70" width="44" height="18" rx="8" fill="#fff" stroke="#2B2118" stroke-width="4"/><path d="M34 74 v10 M44 74 v10 M54 74 v10" stroke="#2B2118" stroke-width="3" stroke-linecap="round"/></svg></div>
+  <canvas class="ring-canvas" id="ring-canvas"></canvas>
+
+  <main class="stage">
+    <div class="logo-container">
+      <div class="comic-halftone" aria-hidden="true">
+        <svg viewBox="0 0 600 220" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Halftone dot clusters left and right -->
+          <g fill="#FFC53D" opacity="0.88">
+            <circle cx="85" cy="55" r="3.5" />
+            <circle cx="98" cy="45" r="4.5" />
+            <circle cx="115" cy="40" r="5.5" />
+            <circle cx="135" cy="38" r="6" />
+            <circle cx="80" cy="75" r="4" />
+            <circle cx="95" cy="65" r="5" />
+            <circle cx="112" cy="58" r="6.5" />
+            <circle cx="70" cy="98" r="3" />
+            <circle cx="84" cy="88" r="4" />
+            <circle cx="100" cy="80" r="5" />
+            
+            <circle cx="470" cy="50" r="5" />
+            <circle cx="490" cy="58" r="6" />
+            <circle cx="510" cy="72" r="5" />
+            <circle cx="525" cy="90" r="4" />
+            <circle cx="485" cy="75" r="5.5" />
+            <circle cx="505" cy="92" r="4.5" />
+            <circle cx="465" cy="95" r="4" />
+            <circle cx="478" cy="115" r="3.5" />
+          </g>
+          <!-- Comic Sparkle Stars -->
+          <g transform="translate(62, 120)">
+            <path d="M0 -15 Q0 0 15 0 Q0 0 0 15 Q0 0 -15 0 Q0 0 0 -15 Z" fill="#5DA9E9" stroke="#2B2118" stroke-width="2.5" />
+          </g>
+          <g transform="translate(125, 16)">
+            <path d="M0 -10 Q0 0 10 0 Q0 0 0 10 Q0 0 -10 0 Q0 0 0 -10 Z" fill="#FFC53D" stroke="#2B2118" stroke-width="2" />
+          </g>
+          <g transform="translate(488, 25)">
+            <path d="M0 -16 Q0 0 16 0 Q0 0 0 16 Q0 0 -16 0 Q0 0 0 -16 Z" fill="#FFC53D" stroke="#2B2118" stroke-width="2.5" />
+          </g>
+          <g transform="translate(532, 68)">
+            <path d="M0 -11 Q0 0 11 0 Q0 0 0 11 Q0 0 -11 0 Q0 0 0 -11 Z" fill="#5DA9E9" stroke="#2B2118" stroke-width="2" />
+          </g>
+        </svg>
+      </div>
+      <h1 class="logo-title">SCRAP<span class="bang">!</span></h1>
     </div>
-    <div class="belt">WEBCAM · HAND-TRACKED</div>
-    <h1>BOUT <span>NIGHT</span></h1>
-    <p class="tag">your hands are the gloves — punch at the camera</p>
-    <nav class="menu">
-      <a class="btn main" href="./boxing.html">Enter the Ring<small>fight the champ</small></a>
-      <a class="btn alt" href="./lineup.html">Choose Your Fighter<small>pick who you're up against</small></a>
-    </nav>
-    <div class="how">
-      <div><b>Hands up</b>fists = guards up</div>
-      <div><b>Punch</b>throw toward the camera</div>
-      <div><b>Dodge</b>lean your head, feet stay put</div>
-      <div><b>Step</b>lean toward or away from the camera</div>
+
+    <div class="menu-group">
+      <label class="tut-check" for="tut-toggle">
+        <input type="checkbox" id="tut-toggle" class="tut-input">
+        <span class="tut-box" aria-hidden="true">
+          <svg viewBox="0 0 16 16"><path d="M3.2 8.2 l3.2 3.4 l6.4 -7.2"/></svg>
+        </span>
+        <span class="tut-label">Start in tutorial</span>
+      </label>
+
+      <nav class="menu-row">
+        <a class="btn main" id="enter-btn" href="./boxing.html">Enter the Ring</a>
+        <a class="btn alt" href="./lineup.html">Choose Your Fighter</a>
+        <button type="button" class="btn-gear" id="settings-open-btn" aria-label="Settings" title="Game Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.45.17-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+          </svg>
+        </button>
+      </nav>
     </div>
-    <div class="foot">c — recenter · w/s — step in mouse mode</div>
+  </main>
+
+  <!-- Centered Settings Menu -->
+  <div class="settings-overlay" id="settings-modal" aria-hidden="true">
+    <div class="settings-card" role="dialog" aria-modal="true" aria-label="Settings">
+      <div class="settings-header">
+        <h2 class="settings-title">SETTINGS</h2>
+        <button class="settings-close" id="settings-close-btn" type="button" aria-label="Close Settings">✕</button>
+      </div>
+
+      <div class="settings-list">
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Sound Effects</span>
+            <span class="setting-desc">Procedural punches, whooshes, bell</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-sound" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Volume</span>
+            <span class="setting-desc">Master audio level</span>
+          </div>
+          <div class="range-wrap">
+            <input type="range" class="range-input" id="setting-volume" min="0" max="100" value="80">
+            <span class="range-val" id="setting-volume-val">80%</span>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Mirror Camera</span>
+            <span class="setting-desc">Flip video like a mirror</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-mirror" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Perf HUD</span>
+            <span class="setting-desc">Show FPS & tracking latency</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-fps">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Start in Tutorial</span>
+            <span class="setting-desc">Warm up before real fights</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-tutorial">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <button type="button" class="settings-done" id="settings-done-btn">Done</button>
+    </div>
   </div>
+
+<script type="module">
+  import * as THREE from 'three';
+  import { buildBoxer, VARIANTS } from './shared/boxing/protoBoxer.js';
+  import { buildScene } from './shared/boxing/scene.js';
+
+  // tutorial checkmark syncs with Enter the Ring destination
+  const tutToggle = document.getElementById('tut-toggle');
+  const enterBtn = document.getElementById('enter-btn');
+  function syncTutorial() {
+    enterBtn.href = tutToggle.checked ? './boxing.html?practice=1' : './boxing.html';
+  }
+  try {
+    if (localStorage.getItem('boxing:tutorial') === '1') {
+      tutToggle.checked = true;
+    }
+  } catch {}
+  syncTutorial();
+  tutToggle.addEventListener('change', () => {
+    syncTutorial();
+    try {
+      localStorage.setItem('boxing:tutorial', tutToggle.checked ? '1' : '0');
+    } catch {}
+  });
+
+  // Settings modal logic
+  const settingsModal = document.getElementById('settings-modal');
+  const settingsOpenBtn = document.getElementById('settings-open-btn');
+  const settingsCloseBtn = document.getElementById('settings-close-btn');
+  const settingsDoneBtn = document.getElementById('settings-done-btn');
+
+  const settingSound = document.getElementById('setting-sound');
+  const settingVolume = document.getElementById('setting-volume');
+  const settingVolumeVal = document.getElementById('setting-volume-val');
+  const settingMirror = document.getElementById('setting-mirror');
+  const settingFps = document.getElementById('setting-fps');
+  const settingTutorial = document.getElementById('setting-tutorial');
+
+  function openSettings() {
+    settingsModal.classList.add('open');
+    settingsModal.setAttribute('aria-hidden', 'false');
+  }
+  function closeSettings() {
+    settingsModal.classList.remove('open');
+    settingsModal.setAttribute('aria-hidden', 'true');
+  }
+
+  settingsOpenBtn.addEventListener('click', openSettings);
+  settingsCloseBtn.addEventListener('click', closeSettings);
+  settingsDoneBtn.addEventListener('click', closeSettings);
+  settingsModal.addEventListener('click', (e) => {
+    if (e.target === settingsModal) closeSettings();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && settingsModal.classList.contains('open')) closeSettings();
+  });
+
+  // Load saved settings
+  try {
+    if (localStorage.getItem('boxing:sound') !== null) {
+      settingSound.checked = localStorage.getItem('boxing:sound') === '1';
+    }
+    if (localStorage.getItem('boxing:volume') !== null) {
+      settingVolume.value = localStorage.getItem('boxing:volume');
+      settingVolumeVal.textContent = settingVolume.value + '%';
+    }
+    if (localStorage.getItem('boxing:mirror') !== null) {
+      settingMirror.checked = localStorage.getItem('boxing:mirror') === '1';
+    }
+    if (localStorage.getItem('boxing:fps') !== null) {
+      settingFps.checked = localStorage.getItem('boxing:fps') === '1';
+    }
+    settingTutorial.checked = tutToggle.checked;
+  } catch {}
+
+  // Save settings on change
+  settingSound.addEventListener('change', () => {
+    try { localStorage.setItem('boxing:sound', settingSound.checked ? '1' : '0'); } catch {}
+  });
+  settingVolume.addEventListener('input', () => {
+    settingVolumeVal.textContent = settingVolume.value + '%';
+    try { localStorage.setItem('boxing:volume', settingVolume.value); } catch {}
+  });
+  settingMirror.addEventListener('change', () => {
+    try { localStorage.setItem('boxing:mirror', settingMirror.checked ? '1' : '0'); } catch {}
+  });
+  settingFps.addEventListener('change', () => {
+    try { localStorage.setItem('boxing:fps', settingFps.checked ? '1' : '0'); } catch {}
+  });
+  settingTutorial.addEventListener('change', () => {
+    tutToggle.checked = settingTutorial.checked;
+    syncTutorial();
+    try { localStorage.setItem('boxing:tutorial', tutToggle.checked ? '1' : '0'); } catch {}
+  });
+  tutToggle.addEventListener('change', () => {
+    settingTutorial.checked = tutToggle.checked;
+  });
+
+  // 3D Animated Ring & Boxing Characters
+  (function init3D() {
+    const canvas = document.getElementById('ring-canvas');
+    if (!canvas) return;
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      alpha: true,
+      antialias: true,
+      powerPreference: 'high-performance',
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.90;
+
+    const sceneObj = buildScene(THREE, renderer, { low: false });
+    const scene = sceneObj.scene;
+    scene.background = new THREE.Color(0x0c101a);
+    scene.fog = new THREE.Fog(0x0c101a, 8, 22);
+
+    // Remove arena outer wall and generic crowd; keep floor dark
+    const toRemove = [];
+    scene.traverse(o => {
+      if (o.geometry?.type === 'CylinderGeometry' && o.material?.side === THREE.BackSide) {
+        toRemove.push(o);
+      }
+      if (o.isInstancedMesh) {
+        toRemove.push(o);
+      }
+      if (o.geometry?.type === 'CircleGeometry' && o.material) {
+        o.material.color.set(0x080c14);
+      }
+    });
+    toRemove.forEach(o => o.parent?.remove(o));
+
+    // Isometric diamond orientation matching concept art
+    const ringGroup = sceneObj.ring.group;
+    ringGroup.rotation.y = Math.PI * 0.75;
+    ringGroup.scale.set(0.74, 0.74, 0.74);
+
+    // Style the ring skirt and corner posts like the toy boxing ring
+    const matFlat = (c) => new THREE.MeshLambertMaterial({ color: c });
+    const colWhite = 0xfaf5ec;
+    const colCoral = 0xff6b57;
+    const colBlue = 0x5da9e9;
+    const colApron = 0x2e65cf;
+
+    // Apron skirt base: toy blue
+    ringGroup.traverse(o => {
+      if (o.isMesh && o.geometry?.type === 'BoxGeometry' && o.geometry.parameters?.height === 0.55) {
+        o.material = matFlat(colApron);
+      }
+    });
+
+    // Style 4 corner posts, caps, and turnbuckle pads using world coordinates
+    ringGroup.updateMatrixWorld(true);
+    const tmpV = new THREE.Vector3();
+
+    ringGroup.traverse(o => {
+      if (!o.isMesh) return;
+      const isPost = o.geometry?.type === 'CylinderGeometry' && o.geometry.parameters?.radiusTop < 0.1;
+      const isCap = o.geometry?.type === 'SphereGeometry';
+      const isPad = o.geometry?.type === 'BoxGeometry' && o.geometry.parameters?.width === 0.24;
+
+      if (isPost || isCap || isPad) {
+        o.getWorldPosition(tmpV);
+        if (tmpV.x < -1.1) {
+          o.material = matFlat(colCoral); // Left corner: Coral Red
+        } else if (tmpV.x > 1.1) {
+          o.material = matFlat(colBlue);  // Right corner: Sky Blue
+        } else {
+          o.material = matFlat(colWhite); // Front & Back corners: Crisp White
+        }
+      }
+    });
+
+    // Ensure ropes are visible
+    if (sceneObj.ring.ropes) {
+      sceneObj.ring.ropes.forEach(r => {
+        r.visible = true;
+      });
+    }
+
+    // ---------- Spotlight & Calibrated Exposure ----------
+    // Dark moody ambient fill for comfortable normal exposure (no blown-out whites)
+    scene.add(new THREE.AmbientLight(0x2e384c, 0.55));
+
+    // Overhead theatrical spotlight focused directly onto Pip & the Rival
+    const spot = new THREE.SpotLight(0xfff5e6, 32);
+    spot.position.set(0, 5.8, 0.1);
+    spot.target.position.set(0, 0.40, 0);
+    spot.angle = 0.42;
+    spot.penumbra = 0.72;
+    spot.decay = 1.0;
+    spot.distance = 15;
+    spot.castShadow = true;
+    spot.shadow.mapSize.set(1024, 1024);
+    spot.shadow.bias = -0.001;
+    scene.add(spot, spot.target);
+
+    // Visible theatrical spotlight beam cone
+    const beamGeo = new THREE.CylinderGeometry(0.22, 2.35, 5.4, 32, 1, true);
+    beamGeo.translate(0, -2.7, 0);
+    const beamMat = new THREE.MeshBasicMaterial({
+      color: 0xfff4db,
+      transparent: true,
+      opacity: 0.18,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const beam = new THREE.Mesh(beamGeo, beamMat);
+    beam.position.copy(spot.position);
+    beam.lookAt(spot.target.position);
+    beam.rotateX(Math.PI / 2);
+    scene.add(beam);
+
+    // Subtle colored rim lights for dramatic separation
+    const rimL = new THREE.PointLight(0xff6b57, 3.5, 6.0);
+    rimL.position.set(-2.8, 1.8, -0.8);
+    const rimR = new THREE.PointLight(0x5da9e9, 3.5, 6.0);
+    rimR.position.set(2.8, 1.8, -0.8);
+    scene.add(rimL, rimR);
+
+    // Soft crowd fill lights to illuminate spectator bleachers on left and right
+    const crowdFillL = new THREE.PointLight(0x7da4d9, 6.0, 8.0);
+    crowdFillL.position.set(-3.8, 2.2, -1.0);
+    const crowdFillR = new THREE.PointLight(0x7da4d9, 6.0, 8.0);
+    crowdFillR.position.set(3.8, 2.2, -1.0);
+    scene.add(crowdFillL, crowdFillR);
+
+    // ---------- Character Audience (Left & Right Bleachers Only - No Bottom) ----------
+    const crowdGroup = new THREE.Group();
+    scene.add(crowdGroup);
+
+    const benchMat = new THREE.MeshLambertMaterial({ color: 0x161e2e });
+    // Tiers strictly flanking the ring on left & right, staying away from bottom (z <= 0.5)
+    const tiers = [
+      { xDist: 2.95, y: 0.35, zMin: -2.8, zMax: 0.45 },
+      { xDist: 3.70, y: 0.85, zMin: -3.1, zMax: 0.45 },
+      { xDist: 4.45, y: 1.35, zMin: -3.4, zMax: 0.45 },
+    ];
+
+    tiers.forEach(t => {
+      const len = t.zMax - t.zMin + 0.6;
+      const midZ = (t.zMin + t.zMax) / 2;
+      const bL = new THREE.Mesh(new THREE.BoxGeometry(0.70, 0.18, len), benchMat);
+      bL.position.set(-t.xDist, t.y - 0.1, midZ);
+      const bR = new THREE.Mesh(new THREE.BoxGeometry(0.70, 0.18, len), benchMat);
+      bR.position.set(t.xDist, t.y - 0.1, midZ);
+      crowdGroup.add(bL, bR);
+    });
+
+    const crowdColors = [0xff6b57, 0xffc53d, 0x4fb06d, 0x5da9e9, 0xb565d8, 0xfff8ec, 0xff9a3c];
+    const spectatorTypes = ['bubble', 'blocky', 'bean'];
+    const spectators = [];
+
+    function makeSpectator(type, colHex) {
+      const g = new THREE.Group();
+      let head;
+      if (type === 'blocky') {
+        head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.32), new THREE.MeshLambertMaterial({ color: colHex }));
+      } else if (type === 'bean') {
+        head = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.14, 8, 12), new THREE.MeshLambertMaterial({ color: colHex }));
+      } else {
+        head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), new THREE.MeshLambertMaterial({ color: colHex }));
+      }
+      g.add(head);
+
+      const eyeGeo = new THREE.SphereGeometry(0.032, 6, 6);
+      const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111622 });
+      const e1 = new THREE.Mesh(eyeGeo, eyeMat);
+      const e2 = new THREE.Mesh(eyeGeo, eyeMat);
+      e1.position.set(-0.065, 0.03, 0.16);
+      e2.position.set(0.065, 0.03, 0.16);
+      g.add(e1, e2);
+
+      if (type === 'bubble') {
+        const sprout = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.11, 5), new THREE.MeshLambertMaterial({ color: 0x4fb06d }));
+        sprout.position.set(0, 0.21, 0);
+        g.add(sprout);
+      } else if (type === 'blocky') {
+        const band = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.065, 0.34), new THREE.MeshLambertMaterial({ color: 0xff6b57 }));
+        band.position.set(0, 0.07, 0);
+        g.add(band);
+      }
+      return g;
+    }
+
+    let charIdx = 0;
+    tiers.forEach(t => {
+      for (let z = t.zMin; z <= t.zMax; z += 0.52) {
+        // Left side spectator
+        const cTypeL = spectatorTypes[charIdx % spectatorTypes.length];
+        const colL = crowdColors[charIdx % crowdColors.length];
+        const specL = makeSpectator(cTypeL, colL);
+        specL.position.set(-t.xDist + (Math.random() - 0.5) * 0.10, t.y + 0.18, z + (Math.random() - 0.5) * 0.08);
+        specL.lookAt(0, 0.5, 0);
+        crowdGroup.add(specL);
+        spectators.push({
+          group: specL, y0: specL.position.y,
+          ph: Math.random() * 6.28, sp: 2.4 + Math.random() * 2.2,
+          amp: 0.04 + Math.random() * 0.04
+        });
+        charIdx++;
+
+        // Right side spectator
+        const cTypeR = spectatorTypes[charIdx % spectatorTypes.length];
+        const colR = crowdColors[charIdx % crowdColors.length];
+        const specR = makeSpectator(cTypeR, colR);
+        specR.position.set(t.xDist + (Math.random() - 0.5) * 0.10, t.y + 0.18, z + (Math.random() - 0.5) * 0.08);
+        specR.lookAt(0, 0.5, 0);
+        crowdGroup.add(specR);
+        spectators.push({
+          group: specR, y0: specR.position.y,
+          ph: Math.random() * 6.28, sp: 2.4 + Math.random() * 2.2,
+          amp: 0.04 + Math.random() * 0.04
+        });
+        charIdx++;
+      }
+    });
+
+    // Boxer 1: PIP (Bubble) - Coral gloves, gold shorts (scaled up for prominent focus)
+    const p1 = buildBoxer(THREE, { variant: 'bubble' });
+    p1.group.scale.setScalar(1.15);
+    p1.group.position.set(-0.76, 0, 0.05);
+    p1.group.rotation.y = Math.PI / 2 - 0.22;
+    scene.add(p1.group);
+
+    // Boxer 2: Rival (Blocky, or chosen contender from lineup)
+    let rivalVariant = 'blocky';
+    try {
+      const saved = localStorage.getItem('boxing:npc');
+      if (saved && saved.startsWith('proto:')) {
+        const v = saved.split(':')[1];
+        if (VARIANTS.includes(v) && v !== 'bubble') rivalVariant = v;
+      }
+    } catch {}
+    const p2 = buildBoxer(THREE, { variant: rivalVariant });
+    p2.group.scale.setScalar(1.15);
+    p2.group.position.set(0.76, 0, 0.05);
+    p2.group.rotation.y = -Math.PI / 2 + 0.22;
+    scene.add(p2.group);
+
+    // Perspective camera with elevated isometric tilt
+    const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 50);
+    function updateCamera() {
+      const aspect = window.innerWidth / window.innerHeight;
+      camera.aspect = aspect;
+      const zDist = aspect < 1 ? Math.max(5.8, 5.8 / aspect * 0.95) : 5.75;
+      const yDist = aspect < 1 ? 3.5 : 3.3;
+      camera.position.set(0, yDist, zDist);
+      camera.lookAt(0, 0.52, 0);
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight, false);
+    }
+    updateCamera();
+    window.addEventListener('resize', updateCamera);
+
+    // Sparring / bob-and-weave animation loop
+    let t = 0;
+    let jabTimer = 2.5;
+    let jabAttacker = 0;
+    let jabProgress = 0;
+
+    function renderFrame() {
+      requestAnimationFrame(renderFrame);
+      const dt = 0.016;
+      t += dt;
+
+      jabTimer -= dt;
+      if (jabTimer <= 0) {
+        jabAttacker = jabAttacker === 1 ? 2 : 1;
+        jabProgress = 0;
+        jabTimer = 3.2 + Math.random() * 1.6;
+      }
+
+      if (jabAttacker === 1) {
+        jabProgress += dt * 3.2;
+        if (jabProgress < 1.0) {
+          p1.pose('jab', jabProgress);
+          p2.pose('block', jabProgress);
+        } else {
+          jabAttacker = 0;
+        }
+      } else if (jabAttacker === 2) {
+        jabProgress += dt * 3.2;
+        if (jabProgress < 1.0) {
+          p2.pose('jab', jabProgress);
+          p1.pose('block', jabProgress);
+        } else {
+          jabAttacker = 0;
+        }
+      }
+
+      if (jabAttacker === 0) {
+        // Natural boxing idle bobbing
+        const idle1 = (Math.sin(t * 3.6) + 1) * 0.5;
+        const idle2 = (Math.cos(t * 3.4) + 1) * 0.5;
+        p1.pose('idle', idle1);
+        p2.pose('idle', idle2);
+      }
+
+      // Animate character audience bobbing with crowd excitement
+      spectators.forEach(s => {
+        const cheer = jabAttacker !== 0 ? 0.07 : 0;
+        s.group.position.y = s.y0 + Math.sin(t * s.sp + s.ph) * (s.amp + cheer);
+      });
+
+      // Subtle pulse and tracking for spotlight beam
+      beamMat.opacity = 0.11 + Math.sin(t * 1.8) * 0.025;
+      const targetX = jabAttacker === 1 ? -0.18 : jabAttacker === 2 ? 0.18 : 0;
+      spot.target.position.x = THREE.MathUtils.lerp(spot.target.position.x, targetX, 0.06);
+
+      p1.tick(dt);
+      p2.tick(dt);
+
+      renderer.render(scene, camera);
+    }
+    renderFrame();
+  })();
+</script>
 </body>
 </html>

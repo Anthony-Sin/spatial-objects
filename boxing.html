@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>storywood scrap — pip's punch-out</title>
+<title>scrap! — pip's punch-out</title>
 <link rel="icon" href="data:,">
 <script type="importmap">
 { "imports": {
@@ -28,8 +28,33 @@
     box-shadow: 0 6px 0 rgba(43,33,24,.45), 0 14px 34px rgba(0,0,0,.45); }
   .card .who { font-size: 10px; letter-spacing: .3em; text-transform: uppercase;
     color: var(--coral); font-weight: 700; }
-  .card .job { font-weight: 700; font-size: 20px; margin: 3px 0 8px; letter-spacing: .04em; }
-  .card .job .clock { float: right; color: var(--sky); }
+  .card { min-width: 280px; }
+
+  /* round + clock — one plate, top centre, like every fight broadcast */
+  .timer { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 20;
+    text-align: center; color: var(--ink); background: var(--paper);
+    border: 2.5px solid var(--ink); border-radius: 16px; padding: 4px 18px 6px;
+    box-shadow: 0 5px 0 rgba(43,33,24,.45), 0 12px 28px rgba(0,0,0,.4); }
+  .timer .rd { font-size: 10px; font-weight: 800; letter-spacing: .3em; color: var(--coral); }
+  .timer .clock { font-size: 26px; font-weight: 800; line-height: 1; letter-spacing: .04em; }
+
+  /* PIP's nameplate floats over its head (positioned every frame from 3D) —
+     name, health and the incoming-punch cue all live where you're looking */
+  .nameplate { position: fixed; left: 0; top: 0; z-index: 18; pointer-events: none;
+    width: 190px; transform: translate(-50%, -100%); text-align: center;
+    transition: opacity .25s; will-change: transform; }
+  .nameplate.off { opacity: 0; }
+  .nameplate .nm { display: inline-block; margin-bottom: 4px; padding: 1px 10px;
+    font-size: 11px; font-weight: 800; letter-spacing: .22em; color: var(--paper);
+    background: var(--ink); border-radius: 99px; }
+  .nameplate .nm .gas { display: none; color: var(--sun); margin-left: 6px; }
+  .nameplate .nm .gas.on { display: inline; }
+  .nameplate .bar { height: 12px; border: 2.5px solid var(--ink); border-radius: 8px;
+    background: rgba(43,33,24,.35); overflow: hidden; box-shadow: 0 3px 0 rgba(43,33,24,.5); }
+  .nameplate .bar i { display: block; height: 100%; background: var(--sky);
+    transform-origin: left; transition: transform .18s cubic-bezier(.34,1.56,.64,1); }
+  .nameplate .bar i.ghost { margin-top: -12px; background: rgba(255,248,236,.55);
+    transition: transform .6s ease .25s; }
   .hp-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
   .hp-row .lbl { width: 44px; font-size: 10px; font-weight: 700; letter-spacing: .18em;
     text-transform: uppercase; }
@@ -43,7 +68,7 @@
   .hp-row.stam .track { height: 7px; }
   .hp-row.stam .track i { background: var(--sun); }
 
-  .score { position: fixed; top: 88px; right: 30px; z-index: 20; text-align: right; }
+  .score { position: fixed; top: 18px; right: 28px; z-index: 20; text-align: right; }
   .score .n { font-weight: 700; font-size: 38px; color: var(--sun);
     text-shadow: 0 2px 0 var(--ink), 0 4px 14px rgba(0,0,0,.55); }
   .score .l { font-size: 9px; letter-spacing: .3em; text-transform: uppercase;
@@ -60,7 +85,7 @@
   .score .counter.on { display: block; }
 
   /* event feed — stacked paper pills under the score */
-  .feed { position: fixed; top: 240px; right: 30px; z-index: 20; display: flex;
+  .feed { position: fixed; top: 150px; right: 28px; z-index: 20; display: flex;
     flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none; }
   .feed div { background: var(--paper); color: var(--ink); border: 2px solid var(--ink);
     border-radius: 999px; padding: 3px 12px; font-size: 10.5px; font-weight: 700;
@@ -77,56 +102,25 @@
     background: rgba(43,33,24,.7); padding: 4px 8px; }
   .peep canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 
-  .legend { position: fixed; right: 30px; bottom: 30px; z-index: 20; text-align: right;
-    font-size: 13px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
-    color: var(--paper); line-height: 2;
-    background: rgba(43,33,24,.78); border: 2.5px solid var(--ink); border-radius: 16px;
-    padding: 10px 16px; box-shadow: 0 5px 0 rgba(43,33,24,.5), 0 12px 28px rgba(0,0,0,.5);
-    backdrop-filter: blur(3px); }
-  .legend b { color: var(--sun); font-weight: 700;
-    text-shadow: 0 1px 0 var(--ink); }
-
-  .entrance { display: none; position: fixed; right: 24px; bottom: 24px; z-index: 25;
-    width: min(360px, calc(100vw - 48px)); padding: 16px 18px;
-    color: var(--paper); background: linear-gradient(140deg, #243a5b, #171c2a);
-    border: 3px solid var(--paper); border-radius: 18px;
-    box-shadow: 0 6px 0 var(--ink), 0 16px 35px rgba(0,0,0,.55); }
-  .entrance.on { display: block; }
-  .entrance .eyebrow { color: var(--sun); font-size: 10px; font-weight: 800;
-    letter-spacing: .28em; text-transform: uppercase; }
-  .entrance .name { margin-top: 3px; font-size: 30px; font-weight: 900;
-    line-height: 1; letter-spacing: .06em; text-shadow: 0 3px 0 var(--ink); }
-  .entrance .sign { margin: 10px 0 8px; color: var(--sun); font-size: 14px;
-    font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-  .entrance .hint { font-size: 11px; line-height: 1.35; opacity: .9; }
-  .entrance .actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 11px; }
-  .entrance button { border: 2px solid var(--ink); border-radius: 8px;
-    padding: 5px 8px; background: var(--paper); color: var(--ink);
-    font-family: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
-  .entrance button:hover, .entrance button:focus-visible { background: var(--sun); }
-  .entrance button.skip { margin-left: auto; background: var(--coral); color: var(--paper); }
-
   .peep[hidden] { display: none !important; }
-  /* fight declutter: instructions hide once gloves are up (webcam stays) */
-  body.fighting .legend, body.entrancing .legend { display: none !important; }
   /* contrast: dark outline behind all paper-light HUD text over bright scene */
-  .legend, .score .l, .feed div, .tele, .flash {
+  .score .l, .feed div, .tele, .flash {
     text-shadow: 0 1px 2px rgba(20,14,8,.95), 0 0 10px rgba(20,14,8,.6); }
 
   /* attack and hit callouts stay at the edge, leaving the opponent clear */
-  .tele { position: fixed; top: 55%; right: 24px; z-index: 30;
-    transform: translateX(30px) scale(.9); padding: 9px 15px;
-    border: 3px solid var(--ink); border-radius: 14px; background: var(--coral);
-    color: var(--paper); font-weight: 800; font-size: 14px;
-    text-align: right; pointer-events: none; opacity: 0;
-    box-shadow: 0 5px 0 rgba(43,33,24,.5); transition: transform .12s, opacity .12s; }
-  .tele.on { transform: translateX(0) scale(1); opacity: 1; }
-  .flash { position: fixed; top: 66%; right: 24px; z-index: 30;
+  .tele { display: inline-block; margin-top: 6px; white-space: nowrap;
+    transform: translateY(6px) scale(.85); padding: 5px 11px;
+    border: 2.5px solid var(--ink); border-radius: 12px; background: var(--coral);
+    color: var(--paper); font-weight: 800; font-size: 12px; letter-spacing: .04em;
+    opacity: 0; box-shadow: 0 4px 0 rgba(43,33,24,.5); transition: transform .12s, opacity .12s; }
+  .tele.on { transform: none; opacity: 1; }
+  /* POW!/TAGGED! pop beside PIP's head (positioned with the nameplate) */
+  .flash { position: fixed; left: 0; top: 0; z-index: 30; white-space: nowrap;
     font-weight: 800; font-size: 34px; color: var(--sun); letter-spacing: .06em;
     text-shadow: 0 3px 0 var(--ink), 0 6px 22px rgba(0,0,0,.7);
     opacity: 0; transition: opacity .35s; pointer-events: none; }
-  .count { position: fixed; top: 46%; right: 28px; z-index: 30;
-    display: none; color: var(--paper); text-align: right; pointer-events: none;
+  .count { position: fixed; top: 44%; left: 50%; transform: translate(-50%,-50%); z-index: 30;
+    display: none; color: var(--paper); text-align: center; pointer-events: none;
     font-size: clamp(42px, 7vw, 88px); font-weight: 800; line-height: .85;
     text-shadow: 0 5px 0 var(--ink), 0 10px 24px rgba(0,0,0,.6); }
   .count.on { display: block; }
@@ -137,6 +131,42 @@
   .vin { position: fixed; inset: 0; z-index: 15; pointer-events: none; opacity: 0;
     background: radial-gradient(ellipse at center, transparent 42%,
       rgba(200,26,14,.45) 74%, rgba(150,8,6,.75) 100%); }
+
+  /* 30-second tutorial coach — sits low-centre, under PIP, above your gloves */
+  .tutor { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%) translateY(20px);
+    z-index: 33; width: min(520px, calc(100vw - 32px)); padding: 10px 18px 12px; text-align: center;
+    background: var(--paper); color: var(--ink); border: 3px solid var(--ink); border-radius: 18px;
+    box-shadow: 0 6px 0 rgba(43,33,24,.5), 0 16px 36px rgba(0,0,0,.45);
+    opacity: 0; pointer-events: none; transition: opacity .2s, transform .25s cubic-bezier(.34,1.56,.64,1); }
+  .tutor.on { opacity: 1; transform: translateX(-50%); }
+  .tutor.nice { background: var(--leaf); color: var(--paper); }
+  .tut-head { display: flex; align-items: center; gap: 8px; font-size: 10px; font-weight: 800;
+    letter-spacing: .26em; color: var(--coral); }
+  .tutor.nice .tut-head { color: var(--paper); }
+  .tut-pips { margin-left: auto; display: flex; gap: 5px; }
+  .tut-pips i { width: 22px; height: 7px; border-radius: 4px; border: 1.5px solid var(--ink);
+    background: rgba(43,33,24,.08); }
+  .tut-pips i.cur { background: var(--sun); }
+  .tut-pips i.ok { background: var(--leaf); }
+  .tut-title { margin-top: 4px; font-size: 24px; font-weight: 900; letter-spacing: .05em; }
+  .tut-how { font-size: 13px; font-weight: 600; opacity: .8; min-height: 1.2em; }
+  .tut-cue { margin-top: 4px; min-height: 22px; font-size: 18px; font-weight: 900; color: var(--coral);
+    letter-spacing: .08em; }
+  .tut-time { margin-top: 6px; height: 5px; border-radius: 3px; background: rgba(43,33,24,.12); overflow: hidden; }
+  .tut-time i { display: block; height: 100%; background: var(--sky); transform-origin: left; }
+
+  /* 3-2-1 before every round */
+  .countdown { position: fixed; left: 50%; top: 42%; z-index: 32; pointer-events: none;
+    transform: translate(-50%,-50%); text-align: center; display: none; }
+  .countdown.on { display: block; }
+  .countdown .rnd { font-size: 14px; font-weight: 800; letter-spacing: .4em; color: var(--sun);
+    text-shadow: 0 2px 0 var(--ink); }
+  .countdown .n { font-size: clamp(90px, 16vw, 190px); font-weight: 900; line-height: .9;
+    color: var(--paper); -webkit-text-stroke: 3px var(--ink);
+    text-shadow: 0 8px 0 var(--ink), 0 16px 40px rgba(0,0,0,.6); }
+  .countdown .n.pop { animation: cpop .9s cubic-bezier(.2,1.6,.4,1) both; }
+  @keyframes cpop { 0% { transform: scale(1.9); opacity: 0; } 25% { transform: scale(1); opacity: 1; }
+    80% { opacity: 1; } 100% { transform: scale(.85); opacity: .15; } }
 
   /* big center callouts — PERFECT! / PUNCH NOW! — the moments that matter */
   .callout { position: fixed; left: 50%; top: 17%; z-index: 31; pointer-events: none;
@@ -154,34 +184,37 @@
   body.slowmo #world { filter: saturate(.55) contrast(1.15) brightness(1.08); }
 
   /* end-of-fight card */
-  .endcard { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(0);
-    z-index: 35; background: var(--paper); color: var(--ink); border: 3px solid var(--ink);
-    border-radius: 24px; padding: 26px 40px; text-align: center;
-    box-shadow: 0 8px 0 rgba(43,33,24,.5), 0 20px 50px rgba(0,0,0,.5);
-    transition: transform .3s cubic-bezier(.34,1.56,.64,1); }
-  .endcard.on { transform: translate(-50%,-50%) scale(1) rotate(-1.5deg); }
-  .endcard .big { font-size: 34px; font-weight: 700; }
-  .endcard .sub { font-size: 12px; letter-spacing: .2em; text-transform: uppercase;
-    color: rgba(43,33,24,.6); margin: 6px 0 16px; }
-  .replay { padding: 10px 22px; color: var(--paper); background: var(--leaf);
-    border: 2.5px solid var(--ink); border-radius: 14px; font: 700 13px inherit;
-    letter-spacing: .1em; text-transform: uppercase; cursor: pointer;
-    box-shadow: 0 4px 0 var(--ink); text-decoration: none; display: inline-block; }
-  .replay.menu { background: var(--sky); margin-left: 10px; }
-  .replay:hover { background: var(--coral); }
-  .replay:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--ink); }
+  .endcard { position: fixed; bottom: 32px; left: 50%; transform: translate(-50%, 20px) scale(.8);
+    transform-origin: center bottom; z-index: 35; background: var(--paper); color: var(--ink); border: 3.5px solid var(--ink);
+    border-radius: 28px; padding: clamp(18px, 3vmin, 28px) clamp(24px, 4vmin, 44px); text-align: center;
+    box-shadow: 0 10px 0 var(--ink), 0 24px 60px rgba(0,0,0,.5);
+    opacity: 0; pointer-events: none;
+    transition: transform .35s cubic-bezier(.34,1.56,.64,1), opacity .2s ease; }
+  .endcard.on { transform: translate(-50%, 0) scale(1) rotate(-1deg); opacity: 1; pointer-events: auto; }
+  .endcard .big { font-size: clamp(38px, 6vmin, 58px); font-weight: 800; line-height: .95;
+    letter-spacing: .03em; color: var(--coral); text-shadow: .04em .04em 0 var(--ink); }
+  .endcard.lose .big { color: var(--ink); text-shadow: none; }
+  .endcard .sub { margin: 10px 0 18px; font-size: clamp(13px, 1.8vmin, 16px); font-weight: 700;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--ink); opacity: .8; }
+  .endcard .actions { display: flex; gap: 12px; justify-content: center; align-items: center; flex-wrap: wrap; }
+  .replay { padding: clamp(11px, 1.8vmin, 16px) clamp(22px, 3vmin, 34px);
+    border: 3px solid var(--ink); border-radius: 999px; font: 800 clamp(13px, 1.7vmin, 16px) inherit;
+    letter-spacing: .12em; text-transform: uppercase; cursor: pointer; text-decoration: none; display: inline-block;
+    box-shadow: 0 5px 0 var(--ink);
+    transition: transform .15s cubic-bezier(.34,1.7,.5,1), box-shadow .15s, background .15s; }
+  .replay:hover { transform: translateY(-3px) rotate(-1deg); box-shadow: 0 8px 0 var(--ink); }
+  .replay:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+  .replay.main { background: var(--coral); color: #fff; }
+  .replay.menu { background: #fff; color: var(--ink); }
 
   @media (max-width: 700px) {
-    .card { top: 12px; left: 14px; width: calc(100% - 28px); min-width: 0; padding: 10px 12px; }
-    .card .job { font-size: 16px; }
-    .score { top: 158px; right: 14px; }
+    .card { top: 76px; left: 14px; width: calc(100% - 28px); min-width: 0; padding: 8px 12px; }
+    .timer { top: 10px; }
+    .score { top: 180px; right: 14px; }
     .score .n { font-size: 24px; }
-    .tele, .flash { right: 14px; font-size: 13px; }
-    .feed { top: 310px; right: 14px; }
+    .flash { font-size: 22px; }
+    .feed { top: 280px; right: 14px; }
     .peep { left: 14px; bottom: 14px; width: 116px; }
-    .legend { right: 14px; bottom: 14px; font-size: 9px; line-height: 1.6; max-width: 55vw; }
-    .entrance { left: 14px; right: 14px; bottom: 138px; width: auto; padding: 12px; }
-    .entrance .name { font-size: 23px; }
     .callout { top: 36%; }
   }
 </style>
@@ -191,17 +224,22 @@
   <canvas id="hands"></canvas>
 
   <div class="card">
-    <div class="who">BOUT CARD · <span data-npcname>PIP</span> VS YOU</div>
-    <div class="job"><span data-round>ROUND 1</span><span class="clock" data-time>1:30</span></div>
+    <div class="who">THE ROOKIE · <span data-npcname>PIP</span>'S CHALLENGER</div>
     <div class="hp-row you"><div class="lbl">YOU</div><div class="track"><i data-php></i></div></div>
     <div class="hp-row stam"><div class="lbl">STAM</div><div class="track"><i data-stam></i></div></div>
-    <div class="hp-row npc"><div class="lbl" data-npclbl>PIP</div><div class="track"><i data-nhp></i></div></div>
   </div>
+  <div class="timer"><div class="rd" data-round>RINGSIDE</div><div class="clock" data-time>1:30</div></div>
+  <div class="nameplate off" data-plate>
+    <div><span class="nm"><span data-npclbl>PIP</span><span class="gas" data-npcgas>· WINDED</span></span></div>
+    <div class="bar"><i class="ghost" data-nhpghost></i><i data-nhp></i></div>
+    <div class="tele" data-tele></div>
+  </div>
+  <div class="tutor" data-tutor></div>
+  <div class="countdown" data-countdown><div class="rnd" data-cdround>ROUND 1</div><div class="n" data-cdn>3</div></div>
 
   <div class="score"><div class="n" data-score>0</div><div class="l">ringside pts</div><div class="combo" data-combo></div><div class="counter" data-counter>COUNTER READY</div></div>
   <div class="feed" data-feed></div>
   <div class="vin" data-vin></div>
-  <div class="tele" data-tele></div>
   <div class="flash" data-flash></div>
   <div class="callout" data-callout></div>
   <div class="count" data-count><span>1</span><small>DOWN FOR THE COUNT</small></div>
@@ -209,8 +247,10 @@
   <div class="endcard" data-end>
     <div class="big" data-endtitle>YOU WIN!</div>
     <div class="sub" data-endsub></div>
-    <button class="replay" data-replay>Run it back</button>
-    <a class="replay menu" href="./">Return to menu</a>
+    <div class="actions">
+      <button class="replay main" data-replay>Run it back</button>
+      <a class="replay menu" href="./">Return to menu</a>
+    </div>
   </div>
 
   <div class="peep">
@@ -219,27 +259,6 @@
     <div class="tag" data-peep>face · —</div>
   </div>
 
-  <div class="entrance" data-entrance>
-    <div class="eyebrow">LIVE FROM STORYWOOD · RED CORNER</div>
-    <div class="name">THE ROOKIE</div>
-    <div class="sign" data-entrance-sign>SHOW THE CROWD A SIGN</div>
-    <div class="hint">Open palm to wave · two palms to hype · point to call them out · two fingers for victory · two fists to square up</div>
-    <div class="actions">
-      <button type="button" data-sign="wave">1 Wave</button>
-      <button type="button" data-sign="hype">2 Hype</button>
-      <button type="button" data-sign="point">3 Point</button>
-      <button type="button" data-sign="ready">4 Ready</button>
-      <button type="button" class="skip" data-skip-intro>Skip · Enter</button>
-    </div>
-  </div>
-
-  <div class="legend">
-    <div><b>punch</b> — thrust a fist at the camera · <b>guard</b> — gloves up by your face</div>
-    <div><b>slip</b> — lean left/right as it swings · <b>duck</b> — drop your head (not vs uppercuts!)</div>
-    <div><b>dodge late</b> = PERFECT → it's dizzy, unload on it · <b>step</b> — toward / away from camera</div>
-    <div><b>keys</b> — <b>a/d ←/→</b> slip · <b>space</b> duck · <b>w/s</b> step · mouse L/R = gloves</div>
-    <div><b>c</b> — recenter · <b>m</b> — mute</div>
-  </div>
 
   <script type="module">
     import * as THREE from 'three';
@@ -254,6 +273,8 @@
     const audioModP = import('./shared/boxing/audio.js');
 
     const params = new URLSearchParams(location.search);
+    const practice = !!(params.get('practice') || params.get('tutorial'));   // endless spar — nobody goes down
+    const tutorialMode = practice;          // ?practice=1 / ?tutorial=1 → the 30s guided tutorial
     const $ = (s) => document.querySelector(s);
     const status = $('[data-peep]');   // boot/face status lives on the webcam tag now
     const el = {
@@ -261,9 +282,11 @@
       nhp: $('[data-nhp]'), stam: $('[data-stam]'), score: $('[data-score]'), combo: $('[data-combo]'), counter: $('[data-counter]'), feed: $('[data-feed]'),
       tele: $('[data-tele]'), flash: $('[data-flash]'), count: $('[data-count]'), end: $('[data-end]'),
       callout: $('[data-callout]'), world: $('#world'),
-      vin: $('[data-vin]'), entrance: $('[data-entrance]'), entranceSign: $('[data-entrance-sign]'),
+      vin: $('[data-vin]'),
       endTitle: $('[data-endtitle]'), endSub: $('[data-endsub]'),
       npcName: $('[data-npcname]'), npcLbl: $('[data-npclbl]'), peep: $('[data-peep]'),
+      plate: $('[data-plate]'), nhpGhost: $('[data-nhpghost]'), npcGas: $('[data-npcgas]'),
+      countdown: $('[data-countdown]'), cdRound: $('[data-cdround]'), cdN: $('[data-cdn]'),
     };
 
     /* ================= renderer / stage ================= */
@@ -333,9 +356,19 @@
     const mitt = await mittP;
     let game = null;
     window.__boxing = { THREE, scene, cam, log: [] };
+    let tutor = null;
     try {
       const { createGame } = await gameModP;
-      game = await createGame({ THREE, renderer: ren, cam, world, hands, face });
+      game = await createGame({ THREE, renderer: ren, cam, world, hands, face,
+        skipIntro: true,
+        fightOpts: { practice, ai: !tutorialMode } });   // tutorial scripts PIP itself
+      game.skipIntro();                     // straight to the fight countdown (no walk-on intro / fighting pose)
+      if (tutorialMode) {
+        const { Tutorial } = await import('./shared/boxing/tutorial.js');
+        document.body.classList.add('tutorial');
+        tutor = new Tutorial({ fight: game.fight, sim: game.sim, root: $('[data-tutor]'),
+          onDone: passed => showTutorialEnd(passed) });
+      }
       const nm = (game.fight.state.npc.name || game.npc.name || 'PIP').toUpperCase();
       el.npcName.textContent = nm;
       el.npcLbl.textContent = nm.split(' ')[0];   // tiny row label gets the short name
@@ -354,6 +387,10 @@
     try {
       const { BoxingAudio } = await audioModP;
       audio = new BoxingAudio();
+      if (localStorage.getItem('boxing:sound') === '0') audio.muted = true;
+      if (localStorage.getItem('boxing:volume') !== null) {
+        audio.setVolume(Number(localStorage.getItem('boxing:volume')) / 100);
+      }
       const un = () => audio.unlock();
       addEventListener('pointerdown', un, { once: true });
       addEventListener('keydown', un, { once: true });
@@ -371,9 +408,6 @@
       'player-blocked': () => 'BLOCKED IT',
       'player-dodged': (s, lb) => lb?.perfect ? 'PERFECT DODGE — UNLOAD!' : 'DODGED · COUNTER!',
       'counter': () => 'COUNTER! +35% POWER',
-      'ko': () => 'K.O.!',
-      'win': () => 'YOU WIN!',
-      'lose': () => 'DOWN FOR THE COUNT',
     };
     const FLASH = {
       'player-hit': 'POW!', 'npc-hit': 'POW!', 'player-hit-taken': 'TAGGED!',
@@ -389,16 +423,33 @@
     const feed = (t) => {
       const d = document.createElement('div'); d.textContent = t;
       el.feed.prepend(d);
-      while (el.feed.children.length > 3) el.feed.lastChild.remove();
+      while (el.feed.children.length > 2) el.feed.lastChild.remove();   // just the latest beats
     };
     let ended = false;
     const showEnd = (win, st) => {
       if (ended) return; ended = true;
+      document.body.classList.add('ended');
+      el.feed.innerHTML = '';
+      el.end.classList.toggle('lose', !win);
       el.endTitle.textContent = win ? 'YOU WIN!' : 'DOWN GOES YOU';
-      el.endSub.textContent = `${st.npc.name || 'PIP'} · score ${st.player.score}`;
+      const name = (st.npc.name || 'PIP').toUpperCase();
+      const score = (st.player.score || 0).toLocaleString();
+      el.endSub.textContent = win ? `${name} DEFEATED · ${score} PTS` : `ROUND ${st.round || 1} · ${score} PTS`;
       el.end.classList.add('on');
     };
     $('[data-replay]').onclick = () => location.reload();
+    // tutorial wrap-up reuses the end card: straight into the real fight
+    function showTutorialEnd(passed) {
+      if (ended) return; ended = true;
+      document.body.classList.add('ended');
+      el.feed.innerHTML = '';
+      el.endTitle.textContent = "YOU'RE READY!";
+      el.endSub.textContent = `BASICS · ${passed.length} / 4 NAILED`;
+      const go = $('[data-replay]');
+      go.textContent = 'Fight the champ →';
+      go.onclick = () => { location.href = './boxing.html'; };
+      el.end.classList.add('on');
+    }
 
     const clock = (t) => `${Math.floor(t / 60)}:${String(Math.max(0, Math.ceil(t % 60))).padStart(2, '0')}`;
     /* HUD DOM writes are expensive — dirty-check everything: textContent only
@@ -412,24 +463,54 @@
       if (hLast[k] !== on) { hLast[k] = on; elm.classList.toggle('on', on); } };
     const togN = (k, on) => { on = !!on;
       if (hLast[k] !== on) { hLast[k] = on; document.body.classList.toggle(k, on); } };
-    const signText = { wave: 'WAVING TO THE CROWD', hype: 'HYPE THE CROWD!',
-      point: 'CALLING THEM OUT', ready: 'GLOVES UP!', victory: 'VICTORY SIGN!' };
+    /* PIP's nameplate rides 3D → screen: projected above the head each frame,
+       eased so footwork glides it instead of jittering it. The POW!-style
+       flash pops just beside it — where your eyes already are. */
+    const plateV = new THREE.Vector3(), plate = { x: -999, y: -999 };
+    const placePlate = (st) => {
+      const n = game?.npc;
+      const show = !!n?.group.visible && st.phase !== 'intro' && st.phase !== 'win' && st.phase !== 'lose';
+      if (hLast.plateShow !== show) { hLast.plateShow = show; el.plate.classList.toggle('off', !show); }
+      if (!show) return;
+      plateV.set(n.group.position.x, (n.height || 1.3) + .2, n.group.position.z).project(cam);
+      if (plateV.z > 1) return;
+      const tx = (plateV.x + 1) * innerWidth / 2;
+      // the plate is anchored by its BOTTOM edge and grows ~71px upward
+      // (name + bar + tele, all always in layout) — clamp low enough that
+      // its top edge can never slide under the timer plate (~bottom 73px)
+      const ty = Math.max(152, (1 - plateV.y) * innerHeight / 2);
+      if (plate.x < -900) { plate.x = tx; plate.y = ty; }
+      plate.x += (tx - plate.x) * .25; plate.y += (ty - plate.y) * .25;
+      const pxr = Math.round(plate.x), pyr = Math.round(plate.y);
+      if (hLast.plX !== pxr || hLast.plY !== pyr) {
+        hLast.plX = pxr; hLast.plY = pyr;
+        el.plate.style.transform = `translate(${pxr}px, ${pyr}px) translate(-50%, -100%)`;
+        el.flash.style.transform = `translate(${pxr + 110}px, ${pyr + 10}px)`;
+      }
+    };
     const hud = (out) => {
       const st = out.state;
       const intro = st.phase === 'intro';
-      togN('fighting', !intro);
-      togN('entrancing', intro);
-      tog('entranceOn', el.entrance, intro);
-      if (intro) txt('entranceSign', el.entranceSign, out.entranceWaiting
-        ? 'GETTING YOUR HANDS READY…'
-        : signText[out.entranceSign] || 'SHOW THE CROWD A SIGN');
+      togN('fighting', !intro && st.phase !== 'countdown');
       bar('php', el.php, st.player.hp / (st.player.maxHp || 100));
-      bar('nhp', el.nhp, st.npc.hp / (st.npc.maxHp || 100));
+      const nf = st.npc.hp / (st.npc.maxHp || 100);
+      bar('nhp', el.nhp, nf);
+      bar('nhpG', el.nhpGhost, nf);                 // lagging white chunk shows the bite
+      tog('npcGas', el.npcGas, st.npc.gassed && st.phase === 'fighting');
       bar('stam', el.stam, st.player.stamina);
-      const rd = intro ? 'RINGSIDE' : st.round;   // compare the number — the string only builds on change
-      if (hLast.rd !== rd) { hLast.rd = rd; el.round.textContent = intro ? 'RINGSIDE' : `ROUND ${rd}`; }
+      placePlate(st);
+      // 3-2-1: the big number pops in fresh every second
+      const cd = st.phase === 'countdown' ? st.countdown : 0;
+      tog('cdOn', el.countdown, cd > 0);
+      if (cd && hLast.cd !== cd) {
+        hLast.cd = cd; el.cdN.textContent = cd;
+        el.cdRound.textContent = tutorialMode ? 'TUTORIAL' : `ROUND ${st.round}`;
+        el.cdN.classList.remove('pop'); void el.cdN.offsetWidth; el.cdN.classList.add('pop');
+      } else if (!cd) hLast.cd = 0;
+      const rd = intro ? 'RINGSIDE' : tutorialMode ? 'TUTORIAL' : st.round;   // compare the number — the string only builds on change
+      if (hLast.rd !== rd) { hLast.rd = rd; el.round.textContent = typeof rd === 'string' ? rd : `ROUND ${rd} / 3`; }
       const clk = Math.ceil(st.timeLeft);           // seconds change ~1/s, not per frame
-      if (hLast.clk !== clk) { hLast.clk = clk; el.time.textContent = clock(st.timeLeft); }
+      if (hLast.clk !== clk) { hLast.clk = clk; el.time.textContent = tutorialMode ? '∞' : clock(st.timeLeft); }
       txt('score', el.score, st.player.score);
       if (hLast.combo !== st.player.combo) { hLast.combo = st.player.combo;
         el.combo.textContent = `${st.player.combo} HIT COMBO`; }
@@ -454,11 +535,13 @@
         txt('teleTxt', el.tele, tg.combo ? `COMBO ×${tg.combo + 1} — ${how}` : how);
       }
       for (const e of out.events) {
-        window.__boxing.log.push(e);
+        const lg = window.__boxing.log;
+        if (lg.length < 4000) lg.push(e);          // debug trace — cap long sessions
         const f = FEED[e]; if (f) feed(f(st, st.lastBlow));
         if (FLASH[e]) flash(FLASH[e]);
         if (e === 'player-hit-taken' || (e === 'ko' && st.phase === 'playerdown')) vinT = performance.now();
         if (e === 'perfect-dodge') callout('PERFECT!', 'perfect', 650);
+        if (e === 'round-start') callout('FIGHT!', '', 750);
         if (e === 'player-hit-taken' && st.lastBlow?.reason === 'ducked-into') callout('DUCKED INTO IT!', '', 800);
         if (e === 'win') showEnd(true, st);
         if (e === 'lose') showEnd(false, st);
@@ -468,10 +551,14 @@
       if (st.npc.action === 'stunned' && st.phase === 'fighting' && now > calloutT)
         callout('PUNCH! PUNCH!', 'flurry', 120);
       else if (calloutT && now > calloutT) { el.callout.className = 'callout'; calloutT = 0; }
-      togN('slowmo', (out.slow ?? 1) < .9);
+      // fullscreen CSS filters re-run per composited frame on the live canvas —
+      // the biggest single per-frame GPU cost on weak iGPUs, and they fire
+      // exactly during hit/slow-mo moments; vin pulse + flash carry the juice
+      togN('slowmo', !weakGpu && (out.slow ?? 1) < .9);
       // rung bell: crisp while the glove is planted in your face, THEN the
       // world smears as you reel back from it — harder on heavy shots
-      const blur = st.phase === 'fighting' && !(out.holdT > 0) ? Math.min(3.5, st.player.hurtT * 9) : 0;
+      const blur = !weakGpu && st.phase === 'fighting' && !(out.holdT > 0)
+        ? Math.min(3.5, st.player.hurtT * 9) : 0;
       const bq = Math.round(blur * 4) / 4;
       if (hLast.blur !== bq) { hLast.blur = bq; el.world.style.filter = bq ? `blur(${bq}px)` : ''; }
       if (flashT && performance.now() - flashT > 1100) { el.flash.style.opacity = 0; flashT = 0; }
@@ -522,7 +609,7 @@
       if (mouse.r) mouseArr.push(synth(synthR, mouse.rx, mouse.ry, spanFor(mouse.tR)));
       return MOUSE_HS;
     };
-    const mFace = { found: true, nose: { x: .5, y: .45 }, size: .3, center: { x: .5, y: .45 } };
+    const mFace = { found: true, manual: true, nose: { x: .5, y: .45 }, size: .3, center: { x: .5, y: .45 } };
     const mouseFace = () => { mFace.nose.x = mFace.center.x = .5 + mouse.sway * .38; return mFace; };
     const mouseLive = () => mouse.l || mouse.r || mouse.swaying;
 
@@ -547,28 +634,31 @@
     };
     cvs.addEventListener('pointerup', releaseMouse);
     cvs.addEventListener('pointercancel', releaseMouse);
-    const moveKeys = { forward: false, back: false, left: false, right: false, duck: false };
+    const moveKeys = { forward: false, back: false, left: false, right: false, duck: false, guard: false };
     Object.defineProperty(window.__boxing, 'moveKeys', { get: () => moveKeys });
-    const DODGE_KEYS = { a: 'left', A: 'left', ArrowLeft: 'left', d: 'right', D: 'right', ArrowRight: 'right', ' ': 'duck' };
+    const DODGE_KEYS = { a: 'left', A: 'left', ArrowLeft: 'left', d: 'right', D: 'right', ArrowRight: 'right', ' ': 'duck',
+      f: 'guard', F: 'guard' };
     let dodgeTap = 0, duckTap = false;
     const entranceInput = { sign: null, until: 0 };
-    const entrancePose = sign => { entranceInput.sign = sign; entranceInput.until = performance.now() + 1000; };
+    // emotes are a post-fight victory lap (or a sheepish wave after a loss)
+    const entrancePose = sign => { entranceInput.sign = sign; entranceInput.until = performance.now() + 1800; };
     document.querySelectorAll('[data-sign]').forEach(button =>
       button.addEventListener('click', () => entrancePose(button.dataset.sign)));
-    $('[data-skip-intro]').addEventListener('click', () => game?.skipIntro());
+    $('[data-skip-intro]')?.addEventListener('click', () => game?.skipIntro());
     addEventListener('keydown', e => {
-      if (game?.fight.state.phase === 'intro') {
-        const signs = { '1': 'wave', '2': 'hype', '3': 'point', '4': 'ready', '5': 'victory' };
+      const ph = game?.fight.state.phase;
+      if (ph === 'intro' && e.key === 'Enter') { game.skipIntro(); e.preventDefault(); }
+      if (ph === 'win' || ph === 'lose') {
+        const signs = { '1': 'wave', '2': 'hype', '3': 'point', '4': 'victory', '5': 'ready' };
         if (signs[e.key]) { entrancePose(signs[e.key]); e.preventDefault(); }
-        if (e.key === 'Enter') { game.skipIntro(); e.preventDefault(); }
       }
       if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { moveKeys.forward = true; e.preventDefault(); }
       if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { moveKeys.back = true; e.preventDefault(); }
       if (DODGE_KEYS[e.key] && !e.repeat) {
         const k = DODGE_KEYS[e.key];
         moveKeys[k] = true; e.preventDefault();
-        if (k !== 'duck') dodgeTap = k === 'left' ? -1 : 1;   // latched — a sub-frame tap still slips
-        else duckTap = true;
+        if (k === 'left' || k === 'right') dodgeTap = k === 'left' ? -1 : 1;   // latched — a sub-frame tap still slips
+        else if (k === 'duck') duckTap = true;
       }
       if (e.key === 'c' || e.key === 'C') { game?.calibrate(); mouse.sway = 0; }
       if (e.key === 'm' || e.key === 'M') { if (audio) { audio.unlock(); audio.muted = !audio.muted; } }
@@ -610,12 +700,6 @@
     const found = { left: null, right: null };
     const mittPos = { x: 0, y: 0, size: 0, ang: 0 };
     const mittOpts = { side: 'left', kind: 'fist', reach: 1, squash: 0, dim: 1, lm: null };
-    const meter = (v, x) => {
-      hx.beginPath(); hx.roundRect(x - 40, hc.height - 26, 80, 10, 5);
-      hx.fillStyle = 'rgba(43,33,24,.55)'; hx.fill();
-      hx.beginPath(); hx.roundRect(x - 40, hc.height - 26, 80 * Math.min(1, v), 10, 5);
-      hx.fillStyle = v >= .6 ? '#ffc53d' : 'rgba(255,248,236,.5)'; hx.fill();
-    };
     const wrapAng = (a) => ((a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
     const blockFx = { t: -9, side: 'right' };        // white shield burst on a caught block
     const hitFx = { t: -9, x: .5, y: .5, heavy: false };   // comic impact frame when you get tagged
@@ -644,6 +728,8 @@
       hx.fill();
       hx.globalAlpha = 1;
     };
+    const KEY_GUARD = { left: 1, right: 1 };
+    const liveGuard = () => moveKeys.guard ? KEY_GUARD : game?.tracker?.guard || {};   // F key shows too
     const drawOverlay = (hs, dt, out) => {
       const nowS = performance.now() / 1000;
       const k = 1;  // direct hand-to-glove mapping; tracker cadence sets the update rate
@@ -720,7 +806,7 @@
         const squash = Math.max(0, Math.min(1, (g.reach - 1.04) * 2.4));
         // "this side is covered" — a soft shield glow behind the mitt while
         // its guard is up; the threatened-side chevron reads against this
-        const guardNow = game?.tracker?.guard || {};
+        const guardNow = liveGuard();
         if ((guardNow[side] || 0) >= .55) {
           hx.beginPath(); hx.arc(g.x, g.y, g.size * .72, 0, Math.PI * 2);
           hx.fillStyle = `rgba(255,248,236,${.12 + (guardNow[side] - .55) * .35})`; hx.fill();
@@ -743,10 +829,6 @@
         mittOpts.dim = g.dim; mittOpts.lm = g.lastP;
         mitt?.draw(hx, mittPos, mittOpts);
       }
-      // guard meters — two little shields at the bottom corners
-      const g = game?.tracker.guard;
-      if (g) { meter(g.left, hc.width * .18); meter(g.right, hc.width * .82); }
-
       /* ---- fight-read cues ------------------------------------------------
          telegraph: which side to cover. telegraph.side names the NPC's glove;
          it lands on the player's OPPOSITE side. The chevron pulses faster as
@@ -765,7 +847,7 @@
       }
       drawImpact(nowS);
       const tel = out?.telegraph;
-      const g2 = game?.tracker?.guard || {};
+      const g2 = liveGuard();
       if (tel && out?.state?.phase === 'fighting') {
         const side = tel.side === 'left' ? 'right' : 'left';
         const u = Math.min(1, tel.t01 || 0);
@@ -817,21 +899,32 @@
     // The entrance boxer uses the exact same landmark-shaped mitt renderer
     // as the fight. Its 3D hand anchors follow the camera hands; the mitts
     // are projected onto those anchors so they stay attached during the pan.
+    // The mitt is sized from the glove anchor's real world radius so it sits
+    // at the end of the stub arm at any camera distance.
     const entrancePoint = new THREE.Vector3();
+    const entranceEdge = new THREE.Vector3();
+    const entranceRight = new THREE.Vector3();
     const drawEntranceGloves = hs => {
       hx.clearRect(0, 0, hc.width, hc.height);
       const avatar = game?.playerAvatar;
       if (!avatar?.group.visible || !mitt) return;
       avatar.group.updateMatrixWorld(true);
       cam.updateMatrixWorld();
+      entranceRight.setFromMatrixColumn(cam.matrixWorld, 0);   // camera +X in world
+      const gRad = avatar.parts.gloveL.children[0]?.geometry?.boundingSphere?.radius || .2;
       for (const side of GLOVE_SIDES) {
         const node = avatar.parts[side === 'left' ? 'gloveL' : 'gloveR'];
-        node.getWorldPosition(entrancePoint).project(cam);
+        node.getWorldPosition(entrancePoint);
+        entranceEdge.copy(entrancePoint).addScaledVector(entranceRight, gRad);
+        entrancePoint.project(cam);
         if (entrancePoint.z < -1 || entrancePoint.z > 1) continue;
+        entranceEdge.project(cam);
         const hnd = (hs.hands || []).find(h => h?.side === side && h.lm?.length >= 21);
         mittPos.x = (entrancePoint.x + 1) * hc.width * .5;
         mittPos.y = (1 - entrancePoint.y) * hc.height * .5;
-        mittPos.size = 48;
+        mittPos.size = Math.min(96, Math.max(30, Math.hypot(
+          (entranceEdge.x - entrancePoint.x) * hc.width,
+          (entranceEdge.y - entrancePoint.y) * hc.height) * .55));
         mittPos.ang = 0;
         mittOpts.side = side; mittOpts.kind = hnd?.kind || 'fist';
         mittOpts.reach = 1; mittOpts.squash = 0; mittOpts.dim = 1;
@@ -842,7 +935,23 @@
             P[i].y = hnd.lm[i].y * hc.height;
           }
           mittOpts.lm = P;
-        } else mittOpts.lm = null;
+          // seat the mitt's WRIST on the anchor — the cuff lands exactly on
+          // the stub arm's tip instead of the arm poking into the palm's core.
+          // Mirrors the renderer's own rescale: k = size*1.35 / lm0→lm9 span
+          let cx = 0, cy = 0;
+          for (const i of [0, 1, 5, 9, 13, 17]) { cx += P[i].x; cy += P[i].y; }
+          cx /= 6; cy /= 6;
+          const k = mittPos.size * 1.35
+            / (Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y) || 1);
+          mittPos.x += (cx - P[0].x) * k;
+          mittPos.y += (cy - P[0].y) * k;
+        } else {
+          mittOpts.lm = null;
+          // same wrist-seat for the fallback fist cloud (unit space:
+          // wrist (0,1.15), palm centroid ≈ (.12,.29))
+          mittPos.x += .12 * mittPos.size;
+          mittPos.y += (.29 - 1.15) * mittPos.size;
+        }
         mitt.draw(hx, mittPos, mittOpts);
       }
     };
@@ -870,7 +979,7 @@
     addEventListener('resize', resize); resize();
 
     const EMPTY_HS = { hands: [], pinch: null, point: null, orbit: null, zoom: null, spread: null };
-    const controls = { step: 0, sign: null, waitForHands: false, dodge: 0, duck: 0 };    // persistent input
+    const controls = { step: 0, sign: null, waitForHands: false, dodge: 0, duck: 0, mittOk: !!mitt };    // persistent input
     let last = performance.now(), fpsN = 0, fpsT = last, orbitT = 0, frameI = 0;
     function loop() {
       requestAnimationFrame(loop);
@@ -884,6 +993,7 @@
         controls.step = Number(moveKeys.forward) - Number(moveKeys.back);
         controls.dodge = dodgeTap || Number(moveKeys.right) - Number(moveKeys.left);   // game.js edge-triggers
         controls.duck = moveKeys.duck || duckTap ? 1 : 0;
+        controls.guard = moveKeys.guard;                     // F = both gloves up
         dodgeTap = 0; duckTap = false;
         controls.sign = performance.now() < entranceInput.until ? entranceInput.sign : null;
         controls.waitForHands = !noTrack && !!(video.srcObject || video.src) && handStatus === 'loading';
@@ -904,11 +1014,14 @@
         cam.position.set(Math.sin(orbitT * .2) * 5, 2.2, Math.cos(orbitT * .2) * 5);
         cam.lookAt(0, .9, 0);
       }
-      if (game?.fight.state.phase === 'intro') drawEntranceGloves(hs);
+      const ph = game?.fight.state.phase;
+      // third-person shots (walk-on, post-fight emotes) draw mitts on the avatar
+      if (ph === 'intro' || ((ph === 'win' || ph === 'lose') && game.playerAvatar.group.visible)) drawEntranceGloves(hs);
       else drawOverlay(hs, dt, out);
+      if (tutor) tutor.update(out, performance.now() / 1000);
       // NPC animates every frame, but a blob-soft shadow at 30Hz reads the
-      // same — the 1024² pass runs every other frame instead
-      if (frameI++ & 1) ren.shadowMap.needsUpdate = true;
+      // same — the 1024² pass runs every other frame instead (20Hz on iGPU)
+      if (frameI++ % (weakGpu ? 3 : 2) === 1) ren.shadowMap.needsUpdate = true;
       ren.render(scene, cam);
       if (++fpsN === 60) { const f = Math.round(60000 / (now - fpsT)); fpsN = 0; fpsT = now;
         if (!noTrack && (video.srcObject || video.src)) {

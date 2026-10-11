@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node server.mjs",
     "perf": "node test/fps-probe.mjs",
-    "test": "node test/boxing-fight.mjs && node test/boxing-ring.mjs && node test/boxing-fists.mjs && node test/boxing-hands.mjs && node test/boxing-proto.mjs && node test/boxing-audio.mjs",
+    "test": "node test/boxing-fight.mjs && node test/boxing-ring.mjs && node test/boxing-fists.mjs && node test/boxing-hands.mjs && node test/boxing-proto.mjs && node test/boxing-audio.mjs && node test/boxing-tutorial.mjs",
     "test:e2e": "node test/boxing-page.mjs"
   },
   "dependencies": {

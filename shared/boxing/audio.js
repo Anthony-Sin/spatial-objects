@@ -18,6 +18,7 @@
 
 export const EVENT_SFX = {
   'round-start': 'bell',
+  'countdown': 'thud',          // 3-2-1 ticks — a dull glove-tap thump each second
   'player-punch': 'whoosh',     // airier if lastBlow.result === 'miss'
   'player-miss': 'whoosh',
   'npc-punch': 'whoosh',
@@ -121,6 +122,8 @@ export class BoxingAudio {
         return this.play('dodge', { perfect: true });
       case 'round-start':
         return this.play('bell', { times: 3 });
+      case 'countdown':
+        return this.play('thud', { beep: state?.countdown || 1 });
       case 'ko':
         this._crowdLevel = 1;
         return this.play('ko');
@@ -196,6 +199,8 @@ export class BoxingAudio {
   _thud(o) {   // blocked: dull glove-on-glove thump, no snap
     this._tone({ type: 'sine', f0: 150, f1: 65, dur: .09, peak: .32, delay: o.delay });
     this._noise({ f0: 500, f1: 220, dur: .06, peak: .18, type: 'lowpass', delay: o.delay });
+    // countdown: a referee-clock beep that climbs as it nears zero (3 → 1)
+    if (o.beep) this._fm({ f: 660 + (3 - Math.min(3, o.beep)) * 110, ratio: 1, idx: .6, dur: .16, peak: .16, delay: o.delay });
   }
 
   _dodge(o) {   // airy slip whoosh — faster, thinner, brighter tail

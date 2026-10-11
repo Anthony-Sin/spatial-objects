@@ -119,6 +119,15 @@ const settle = (ft, h, f = fc(), n = 30) => { for (let i = 0; i < n; i++) ft.upd
   check('nose drops well below neutral → duck', ft.duck > .7, ft.duck.toFixed(2));
   for (let i = 0; i < 30; i++) ft.update(hs(), fc(.38, .4), DT);
   check('head back up → duck releases', ft.duck < .1, ft.duck.toFixed(2));
+  {   // sitting off-centre must NOT read as a lean; slow drift is absorbed, real leans are not
+    const ac = new FistTracker();
+    for (let i = 0; i < 30; i++) ac.update(hs(), fc(.62), DT);
+    check('off-centre seat → no phantom lean', Math.abs(ac.sway) < .05, ac.sway.toFixed(2));
+    for (let i = 0; i < 300; i++) ac.update(hs(), fc(.62 + .03 * i / 300), DT);   // 5s posture creep
+    check('slow posture drift is absorbed', Math.abs(ac.sway) < .2, ac.sway.toFixed(2));
+    for (let i = 0; i < 120; i++) ac.update(hs(), fc(.8), DT);                   // 2s held lean
+    check('a real held lean is not eaten by auto-centre', ac.sway > .9, ac.sway.toFixed(2));
+  }
   // calibrate also re-norms depth: settle, grow the hand, calibrate → reach 1
   settle(ft, hand('left', .4, .55, 1.6), fc(.38), 20);
   drain(ft);

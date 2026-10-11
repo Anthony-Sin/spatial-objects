@@ -59,9 +59,10 @@ export async function createGame(opts = {}) {
   const HEAD = (npc.headY ?? 1.0) * .85;
 
   const fx = makeFx(THREE, world.scene, cam);
-  let camSway = 0, shakeT = 0, dodged = false, tNow = 0;
+  let camSway = 0, shakeT = 0, dodged = false;
+  let skipRequested = !!opts.skipIntro;
+  let tNow = skipRequested ? FIGHT_TUNING.introT : 0;
   let introStartedAt = typeof performance !== 'undefined' ? performance.now() : 0;
-  let skipRequested = false;
   let downCamT = 0;
   let neutralFaceSize = 0, lastFaceSize = 0, depthStep = 0;
   let push = 0, pushUp = 0;                       // camera shove-back + uppercut launch
@@ -72,11 +73,14 @@ export async function createGame(opts = {}) {
   let dodgeX = 0, dodgeY = 0;                     // eased camera slip / duck offset
   let prevDodgeKey = 0;
   let swingRes = null;                            // live npc swing: null → 'landed'|'dodged'
+  let outroT = 0;                                 // seconds since the final bell
+  let lookX = null;                               // damped head-turn target (world x)
   const SLOW_LEN = .55, SLOW_SCALE = .22;
   const strike = { reach: null, y: null };        // npc punch target (npc-local)
   const hitPos = new THREE.Vector3();
   const NO_PUNCHES = [];                          // shared empty — splice only when non-empty
   const EMPTY_HS = { hands: [] };
+  const GUARD_UP = { left: 1, right: 1 };
   const INTRO_POSE = { hype: 'celebrate', ready: 'block', wave: 'wave',
     point: 'point', victory: 'victory' };
   /* Entrance beats (of introU): you pose ALONE in the ring first; the
@@ -84,8 +88,10 @@ export async function createGame(opts = {}) {
      walk-on covers the middle of the intro, first-person blend unchanged. */
   const ENTER_AT = .5, ENTER_LEN = .28;
   const entPos = { x: 0, z: -4.6 };               // crowd-side spawn point
-  // the player avatar's real gloves — playerLook builds them hidden for the
-  // first-person view, but a gloveless boxer looks broken in the intro shot
+  // the player avatar's 3D gloves — playerLook builds them hidden because the
+  // page draws YOUR tracked hands as 2D mitts at the glove anchors; they're
+  // only unhidden when that overlay renderer isn't available (mittOk false),
+  // so the walk-on/outro shots never show a gloveless — or double-gloved — boxer
   const aGloves = [];
   for (const n of ['gloveL', 'gloveR'])
     playerAvatar.parts?.[n]?.children?.forEach(m => aGloves.push(m));
@@ -143,7 +149,8 @@ export async function createGame(opts = {}) {
     const dKey = Math.sign(+controls.dodge || 0);
     fightIn.dodge = dKey && dKey !== prevDodgeKey ? dKey : 0;
     prevDodgeKey = dKey;
-    fightIn.punches = punches; fightIn.guard = tracker.guard; fightIn.sway = sw;
+    fightIn.punches = punches; fightIn.sway = sw;
+    fightIn.guard = controls.guard ? GUARD_UP : tracker.guard;   // F key = gloves up
     fightIn.duck = Math.max(tracker.duck || 0, +controls.duck || 0);
     fightIn.distance = sim.distance();
     fight.step(waiting ? 0 : fdt, fightIn);
@@ -154,21 +161,31 @@ export async function createGame(opts = {}) {
     if (st.phase === 'intro' && (wallIntro >= 1 || skipRequested)) {
       fight.startNow(); skipRequested = false;
     }
-    const sign = st.phase === 'intro' ? (controls.sign || entranceSign(hs)) : 'idle';
+    /* Emotes belong to the END of the fight: once the bell decides it, the
+       camera pulls back onto your boxer and hand signs (or 1-5) play to the
+       crowd. The walk-on intro is just a ready stance — no sign prompts. */
+    const over = st.phase === 'win' || st.phase === 'lose';
+    outroT = over ? outroT + dt : 0;
+    const sign = over ? (controls.sign || entranceSign(hs)) : 'idle';
     const introU = Math.max(0, Math.min(1, Math.max(tNow / FIGHT_TUNING.introT, wallIntro)));
-    const showAv = st.phase === 'intro' && introU < .82;
+    const showAv = (st.phase === 'intro' && introU < .82) || (over && outroT > .7);   // once the lens has cleared its head
     playerAvatar.group.visible = showAv;
-    for (const m of aGloves) m.visible = showAv;    // real gloves for the walk-on shot
+    for (const m of aGloves) m.visible = showAv && controls.mittOk !== true;
     if (showAv) {
       playerAvatar.group.position.set(sim.player.pos.x, 0, sim.player.pos.z);
       // play to the camera — a boxer working the crowd, not swaying at air.
       // (uses last frame's cam position: fine, it pans smoothly anyway)
       const cdx = cam.position.x - sim.player.pos.x, cdz = cam.position.z - sim.player.pos.z;
       playerAvatar.group.rotation.y = Math.atan2(cdx, cdz) * .6 + Math.sin(tNow * .9) * .05;
-      const pose = INTRO_POSE[sign] || 'idle';
-      playerAvatar.pose(pose, pose === 'block' || pose === 'point' ? 1 : tNow * 1.3);
+      // intro: guard-up ready stance; outro: your sign, else win → victory, loss → dazed
+      const pose = over ? (INTRO_POSE[sign] || (st.phase === 'win' ? 'victory' : 'hurt')) : 'block';
+      playerAvatar.pose(pose, pose === 'block' || pose === 'point' ? 1 : pose === 'hurt' ? .45 : tNow * 1.3);
+      /* your live hands pin the glove anchors BEFORE the blend + limb solve:
+         close shot keeps them parked by the cheeks, the pulled-back outro
+         holds them inside a believable arm reach — hands you don't have
+         fall back to the pose's gloves on their own */
+      playerAvatar.trackHands(hs, over ? 'wide' : 'close');
       playerAvatar.tick(dt);
-      playerAvatar.trackHands(hs);
     }
     /* Challenger entrance: the ring is YOURS for the first half of the intro
        (npc hidden), then the opponent walks up the center aisle from the
@@ -283,13 +300,20 @@ export async function createGame(opts = {}) {
        breathing bob keeps the player alive between inputs. */
     if (cam) {
       const p = sim.player.pos, n = sim.npc.pos;
-      const dx = n.x - p.x, dz = n.z - p.z, d = Math.hypot(dx, dz) || 1;
+      /* the head turns to follow PIP only partway and with a lag — PIP's
+         footwork drifts across the frame instead of yanking the view; only
+         YOUR lean / dodge / step moves the camera with any speed */
+      const tgtX = p.x + (n.x - p.x) * .55;
+      lookX = lookX === null ? tgtX : lookX + (tgtX - lookX) * (1 - Math.exp(-dt * 3));
+      const dx = lookX - p.x, dz = n.z - p.z, d = Math.hypot(dx, dz) || 1;
       const fwdX = dx / d, fwdZ = dz / d, lx = -fwdZ, lz = fwdX;  // fwd + left-of-fwd
       const viewPull = .38 + Math.max(0, 1.2 - (cam.aspect || 1)) * 1.5;
       downCamT += st.phase === 'playerdown' ? dt : -dt * 3;
       downCamT = Math.max(0, Math.min(.8, downCamT));
       const fall = downCamT / .8;
-      camSway += (sw - camSway) * Math.min(1, dt * 14);   // was *8 — trailed the lean
+      // dead zone: tracking jitter / tiny posture shifts don't nudge the view
+      const swView = Math.abs(sw) < .18 ? 0 : Math.sign(sw) * (Math.abs(sw) - .18) / .82;
+      camSway += (swView - camSway) * Math.min(1, dt * 12);
       // committed dodge = a big, fast head move that eases home (snap out, drift back)
       const dd = st.player.dodge?.dir;
       const tx = dd === 'left' ? -1 : dd === 'right' ? 1 : 0;
@@ -303,12 +327,11 @@ export async function createGame(opts = {}) {
       const wob = st.player.hurtT > 0 ? Math.sin(tNow * 17) * st.player.hurtT * .09 : 0;   // rung bell
       const shk = shakeT > 0 ? Math.sin(tNow * 90) * shakeT * .06 : 0;
       const bob = Math.sin(tNow * 2.3) * .016 + Math.sin(tNow * 3.7) * .007;  // idle bob
-      const weave = Math.sin(tNow * .9) * .035;
       // anticipation pull — the lens breathes in as the telegraph charges,
       // then snaps back on release: reads as danger without slowing anything
       const ant = st.npc.action === 'windup' ? (st.npc.telegraph?.t01 || 0) : 0;
       const pull = push + shk + viewPull - ant * .055;
-      const lat = camSway * .55 + dodgeX * .46 + weave;
+      const lat = camSway * .5 + dodgeX * .46;
       const px = p.x + lx * lat - fwdX * pull;
       const py = EYE - Math.abs(camSway) * .09 - Math.abs(dodgeX) * .08 - dodgeY * .34
         + bob + push * .05 + pushUp;
@@ -318,17 +341,20 @@ export async function createGame(opts = {}) {
       const sweep = Math.max(0, Math.min(1, introU / .72));
       const sweepEase = sweep * sweep * (3 - 2 * sweep);
       const blendU = Math.max(0, Math.min(1, (introU - .70) / .30));
-      const blend = st.phase === 'intro' ? blendU * blendU * (3 - 2 * blendU) : 1;
-      const shotX = p.x - 1.35 + 2.6 * sweepEase;
-      const shotY = 1.32 + .2 * Math.sin(sweepEase * Math.PI);
-      const shotZ = p.z + 1.18 + .12 * Math.sin(sweepEase * Math.PI);
+      // outro: ease back out to a front shot of your boxer, PIP behind
+      const outU = Math.min(1, outroT / 1.4), outE = outU * outU * (3 - 2 * outU);
+      const blend = st.phase === 'intro' ? blendU * blendU * (3 - 2 * blendU) : 1 - outE;
+      const shotX = over ? p.x + .55 : p.x - 1.35 + 2.6 * sweepEase;
+      const shotY = over ? 1.25 : 1.32 + .2 * Math.sin(sweepEase * Math.PI);
+      const shotZ = over ? p.z + 1.45 : p.z + 1.18 + .12 * Math.sin(sweepEase * Math.PI);
       cam.position.set(
         shotX * (1 - blend) + px * blend,
         shotY * (1 - blend) + (py - fall * (py - .35)) * blend,
         shotZ * (1 - blend) + pz * blend);
-      cam.lookAt(p.x * (1 - blend) + n.x * blend,
-        .84 * (1 - blend) + (st.phase === 'npcdown' ? HEAD * .42 : HEAD) * blend,
-        p.z * (1 - blend) + n.z * blend);
+      const fpY = st.phase === 'npcdown' || (over && st.npc.action === 'down') ? HEAD * .42 : HEAD;
+      cam.lookAt((over ? p.x - .15 : p.x) * (1 - blend) + lookX * blend,
+        .84 * (1 - blend) + fpY * blend,
+        (over ? p.z - .25 : p.z) * (1 - blend) + n.z * blend);
       cam.rotateZ(-camSway * .14 - dodgeX * .2 * blend - push * .08 + fall * .5 + wob * blend);
       cam.rotateY(snapYaw * blend);                         // hook whips the head sideways
       cam.rotateX(push * .4 + pushUp * .6);                 // hits pitch the view upward
@@ -345,7 +371,7 @@ export async function createGame(opts = {}) {
     step,
     skipIntro() { if (fight.state.phase === 'intro') { tNow = FIGHT_TUNING.introT; skipRequested = true; } },
     calibrate() { tracker.calibrate?.(); if (lastFaceSize) neutralFaceSize = lastFaceSize; depthStep = 0; },
-    reset() { sim.reset(); fight.reset(); neutralFaceSize = lastFaceSize || 0; depthStep = 0; tNow = 0; skipRequested = false; hitStopT = 0; slowT = 0; holdT = 0; swingRes = null; introStartedAt = typeof performance !== 'undefined' ? performance.now() : 0; },
+    reset() { sim.reset(); fight.reset(); neutralFaceSize = lastFaceSize || 0; depthStep = 0; tNow = 0; skipRequested = false; hitStopT = 0; slowT = 0; holdT = 0; swingRes = null; outroT = 0; lookX = null; introStartedAt = typeof performance !== 'undefined' ? performance.now() : 0; },
     get hands() { return hands; }, get face() { return face; },
   };
 }

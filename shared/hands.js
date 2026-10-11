@@ -15,6 +15,7 @@
 */
 const LERP = 1;            // display raw measured motion; extra EMA caused visible lag
 const BOOT_MS = 30000;     // worker boot grace before inline covers the gap
+const INFER_W = 640;       // frames wider than this are downscaled for inference
 const INLINE_EVERY = 3;    // inline detects block the thread — third-rate only
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -112,25 +113,36 @@ export class Hands {
     }
     if (!this._worker) this.delegate = 'none';
   }
-  /* One frame in flight. The camera itself supplies a 640×480 frame;
-     VideoFrameInit has no resizeWidth/resizeHeight fields, so setting them
-     here used to silently send the entire 1280×720 camera image. */
+  /* One frame in flight. Inference cost scales with pixels (~20ms at
+     640×480 → ~150ms at 1280×720 — five frames' budget in one detect), so
+     anything wider than INFER_W is downscaled BEFORE it crosses to the
+     worker. getUserMedia 'ideal' doesn't guarantee 640×480 — cams with no
+     native 480p mode deliver 720p+, and ?vid= files are full-res — and
+     VideoFrame silently ignores resizeWidth on video elements; only
+     createImageBitmap honours it. */
   _send(v) {
     this._inFlight = true;
     this._sentAt = performance.now();
+    const vw = v.videoWidth || 0, vh = v.videoHeight || 0;
+    const post = (frame) => {
+      this.stats.frameWidth = frame.displayWidth || frame.width || vw;
+      this.stats.frameHeight = frame.displayHeight || frame.height || vh;
+      try { this._worker.postMessage({ type: 'frame', frame }, [frame]); }
+      catch { frame.close?.(); this._inFlight = false; }
+    };
+    const bmp = (opts) => createImageBitmap(v, opts || {}).then(post).catch(() => {
+      let f; try { f = new VideoFrame(v); } catch {}   // resize unsupported → full-res
+      if (f) post(f); else this._inFlight = false;
+    });
+    if (vw > INFER_W) return void bmp({
+      resizeWidth: INFER_W,
+      resizeHeight: Math.max(2, Math.round(INFER_W * vh / vw / 2) * 2),
+      resizeQuality: 'low' });
     let f;
     try { f = new VideoFrame(v); } catch { f = null; }
-    if (f) {
-      this.stats.frameWidth = f.displayWidth; this.stats.frameHeight = f.displayHeight;
-      try { this._worker.postMessage({ type: 'frame', frame: f }, [f]); }
-      catch { f.close(); this._inFlight = false; }
-      return;
-    }
+    if (f) return void post(f);
     // VideoFrame ctor unsupported → ImageBitmap is still zero-copy enough
-    createImageBitmap(v).then(bmp => {
-      try { this._worker.postMessage({ type: 'frame', frame: bmp }, [bmp]); }
-      catch { bmp.close(); this._inFlight = false; }
-    }).catch(() => { this._inFlight = false; });
+    bmp();
   }
   _pump(v) {
     const onNew = () => {   // only ever send a frame that's actually new
