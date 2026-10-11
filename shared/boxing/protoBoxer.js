@@ -40,10 +40,22 @@ const HOUSE = {
 };
 
 export const VARIANTS = ['bubble', 'blocky', 'bean'];
+/* koAvg = unlock gate: your AVERAGE knockout round must be this early or
+   earlier (needs ≥1 KO on record). No koAvg → always open. stats are 1–5
+   pips shown on the fighter card; special = the signature move the rival
+   busts out mid-fight (implemented in fight.js). */
 export const VARIANT_INFO = {
-  bubble: { label: 'BUBBLE', desc: 'sprout crown · springy stance' },
-  blocky: { label: 'BLOCKY', desc: 'flat top · compact guard' },
-  bean:   { label: 'BEAN',   desc: 'leaf cap · loose weave' },
+  bubble: { label: 'BUBBLE', desc: 'sprout crown · springy stance',
+    stats: { atk: 3, def: 3, spd: 4 },
+    special: { name: 'TRIPLE TAP', desc: '3 hits, one stamina' } },
+  blocky: { label: 'BLOCKY', desc: 'flat top · compact guard', koAvg: 3,
+    unlock: 'KO a rival',
+    stats: { atk: 5, def: 4, spd: 2 },
+    special: { name: 'SLEDGE', desc: 'guard-cracking haymaker' } },
+  bean:   { label: 'BEAN',   desc: 'leaf cap · loose weave', koAvg: 2,
+    unlock: 'avg KO by round 2',
+    stats: { atk: 2, def: 3, spd: 5 },
+    special: { name: 'PEPPER 1-2', desc: 'blink-fast double jab' } },
 };
 
 // each variant keeps its own flavor inside the house palette
@@ -182,6 +194,7 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     piv.add(bone);
     piv.userData.bone = bone;
     piv.userData.len = len;
+    piv.userData.rad = r;
     return mark(name, put(squash, piv));
   }
 
@@ -863,9 +876,13 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
     const d = Math.hypot(dx, dy, dz) || 1e-5;
     piv.rotation.x = -Math.atan2(dy, h);
     piv.rotation.y = Math.atan2(dx, dz);
-    // rubber hose: a lens-bound strike stretches the arm way out, but the
-    // bone never thins past half width so it still reads as an arm
-    const s = clamp(d / piv.userData.len, .55, 7), sh = Math.max(.5, 1 / Math.sqrt(s));
+    /* rubber hose: a lens-bound strike stretches the arm way out, but the
+       bone never thins past half width so it still reads as an arm.
+       playerLook: solve against len+rad so the far cap lands exactly ON the
+       glove anchor — the drawn mitt's cuff then sits on the arm tip instead
+       of the tip poking ~40% past it out the side of the flat mitt */
+    const s = clamp(d / (piv.userData.len + (playerLook ? piv.userData.rad : 0)),
+      .55, 7), sh = Math.max(.5, 1 / Math.sqrt(s));
     const b = piv.userData.bone;
     b.scale.set(sh, s, sh);
     b.position.z = piv.userData.len * s * .5;
@@ -877,9 +894,13 @@ export function buildBoxer(THREE, { variant = 'bubble', palette = {}, playerLook
      wire, not a limb, so the anchor is also reeled back toward the shoulder. */
   const HAND_SPACES = {
     close: { x: [.55, .9], bias: .2, y: [.28, 1.3], ym: 1.55, yb: .76,
-      z: [.12, .58], zm: 1.6, zb: .25, reach: Infinity },
+      z: [.08, .32], zm: 1.2, zb: .16, reach: Infinity },
+    /* 'wide' keeps z shallow: a glove far +Z from its shoulder makes the arm
+       point straight at the lens — it foreshortens to a dot on screen and the
+       mitt reads as floating off the body. Near the body plane the arm always
+       visibly bridges shoulder → wrist. */
     wide:  { x: [.2, .55], bias: .12, y: [.5, 1.18], ym: 1.3, yb: .78,
-      z: [.1, .45], zm: 1.2, zb: .2, reach: .46 },
+      z: [.04, .12], zm: 1.2, zb: .08, reach: .46 },
   };
 
   function trackHands(handsState, space = 'close') {

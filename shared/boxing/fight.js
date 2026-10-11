@@ -128,6 +128,31 @@ export const TUNING = {
   score: { hitMul: 5, block: 15, dodge: 30, perfect: 80, ko: 500, decision: 300 },
 };
 
+/* Signature specials per proto variant — every rival gets one the way PIP's
+   flurry works: gated behind ~specialEvery normals plus a stamina floor.
+     TRIPLE TAP (bubble) — the classic 3-punch flurry, one stamina burn.
+     SLEDGE     (blocky) — a slow guard-cracking haymaker: big telegraph,
+                           huge damage, and blocking only takes the edge off.
+     PEPPER 1-2 (bean)   — a blink-fast two-jab burst.
+   Unknown/GLB rivals fall back to the bubble flurry. */
+export const SPECIALS = {
+  bubble: { key: 'flurry', name: 'TRIPLE TAP', chain: 3, windupMul: 1,
+    stam: .4, cost: .15 },
+  blocky: { key: 'sledge', name: 'SLEDGE', dmgMul: 1.5, windup: 1.3, chip: .65,
+    stam: .45, cost: .3 },
+  bean:   { key: 'flurry', name: 'PEPPER 1-2', chain: 2, windupMul: .75,
+    stam: .35, cost: .12 },
+};
+/* light paper-stats: how each rival's card numbers translate in the ring.
+   dmg scales every swing, taken scales hits it absorbs, windup scales all
+   its telegraph times. bubble is the baseline — all 1s keeps every fight
+   number identical to the tuned table above. */
+export const VSTATS = {
+  bubble: { dmg: 1,    taken: 1,   windup: 1 },
+  blocky: { dmg: 1.12, taken: .9,  windup: 1.08 },
+  bean:   { dmg: .9,   taken: 1,   windup: .92 },
+};
+
 // deterministic PRNG — no Math.random anywhere in this file
 const mulberry32 = (s) => () => {
   s |= 0; s = s + 0x6D2B79F5 | 0;
@@ -143,7 +168,9 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 export class Fight {
   constructor(opts = {}) {
     this.opts = { playerHp: 100, npcHp: 100, npcName: 'PIP', roundLen: 90, seed: 1,
-      ai: true, practice: false, ...opts };
+      ai: true, practice: false, npcVariant: 'bubble', ...opts };
+    this._special = SPECIALS[this.opts.npcVariant] || SPECIALS.bubble;
+    this._stat = VSTATS[this.opts.npcVariant] || VSTATS.bubble;
     this.ai = this.opts.ai !== false;
     this.state = {
       phase: 'intro', round: 0, timeLeft: this.opts.roundLen, countdown: 0,
@@ -173,7 +200,9 @@ export class Fight {
     this._prevSway = 0; this._prevDuck = 0;   // dodge edge detection
     this._aim = 0;                    // what PIP aimed at: -1|1 held lean, 'duck', 0
     this._chain = 0;                  // swings thrown in the current combo
-    this._wantCombo = false;          // this attack is the 3-punch special
+    this._chainMax = TUNING.comboMax; // how deep this variant's flurry runs
+    this._wantCombo = false;          // this attack is the multi-hit special
+    this._wantSledge = false;         // this attack is the single haymaker special
     this._normals = 0;                // normal attacks since the last special
     this._swing = null;               // how the live swing resolved: hit|blocked|dodged|perfect|whiff
     s.phase = 'intro'; s.round = 0; s.timeLeft = o.roundLen; s.countdown = 0;
@@ -281,7 +310,7 @@ export class Fight {
     // the HUD's "armed" glint — the same gate _windup applies, made readable:
     // three normals banked and the legs under him again → the flurry is loaded
     s.npc.specialReady = this.ai && !s.npc.gassed
-      && this._normals >= T.specialEvery && s.npc.stamina >= T.specialStam;
+      && this._normals >= T.specialEvery && s.npc.stamina >= this._special.stam;
     return s;
   }
 
@@ -405,7 +434,7 @@ export class Fight {
     // clean hit — interrupts whatever PIP was doing, windups included
     const counter = p.counterT > 0;
     const dmg = T.dmg[kind] * (T.powFloor + (1 - T.powFloor) * power)
-      * (counter || flurry ? T.counterDamage : 1);
+      * (counter || flurry ? T.counterDamage : 1) * this._stat.taken;
     p.counterT = 0;
     p.combo = this._comboT > 0 ? p.combo + 1 : 1;
     p.bestCombo = Math.max(p.bestCombo, p.combo);
@@ -506,7 +535,7 @@ export class Fight {
       this._chain = 0;
       return this._setAct('whiff', T.whiffT);   // off-balance — counter window
     }
-    if (this.ai && this._wantCombo && this._chain < T.comboMax - 1 && !n.gassed && inp.distance <= T.npcReach)
+    if (this.ai && this._wantCombo && this._chain < this._chainMax - 1 && !n.gassed && inp.distance <= T.npcReach)
       return this._windup(true);   // the flurry is committed — next punch telegraphs
     this._chain = 0;
     if (res === 'hit') this._taunt(.4);        // showboats over a clean shot
@@ -515,21 +544,30 @@ export class Fight {
 
   _windup(combo = false, force = null) {
     const T = TUNING, n = this.state.npc, rage = this._rage(), inp = this._inp;
-    /* fresh attack → special or normal? The 3-punch flurry is the special:
-       it needs the stamina floor AND ~specialEvery normals since the last
-       one, then burns a chunk up front. Scripted swings are always singles. */
+    /* fresh attack → special or normal? Each variant's signature special
+       needs the stamina floor AND ~specialEvery normals since the last one,
+       then burns a chunk up front. Scripted swings are always singles. */
+    const spec = this._special;
     if (!combo) {
-      this._wantCombo = !force && this.ai && !n.gassed
-        && this._normals >= T.specialEvery && n.stamina >= T.specialStam;
+      const gate = !force && this.ai && !n.gassed
+        && this._normals >= T.specialEvery && n.stamina >= spec.stam;
+      this._wantCombo = gate && spec.key === 'flurry';
+      this._wantSledge = gate && spec.key === 'sledge';
       if (!force) {
-        if (this._wantCombo) { this._normals = 0; n.stamina = Math.max(0, n.stamina - T.specialCost); }
+        if (this._wantCombo || this._wantSledge) {
+          this._normals = 0;
+          this._chainMax = spec.chain || T.comboMax;   // bean's 1-2 ends early
+          n.stamina = Math.max(0, n.stamina - spec.cost);
+          this._emit('npc-special');          // HUD names the incoming move
+        }
         else this._normals++;
       }
     }
     const prev = this._pk.kind, r = this._rng();
     // PIP reads a HELD duck and digs an uppercut; combos follow real patterns
     const ducking = inp && inp.duck >= T.dodgeT;
-    let kind = force ? force.kind : ducking && this._rng() < .7 ? 'upper'
+    let kind = force ? force.kind : this._wantSledge ? 'upper'
+      : ducking && this._rng() < .7 ? 'upper'
       : combo ? (prev === 'jab' ? (r < .55 ? 'jab' : 'hook')
         : prev === 'hook' ? (r < .6 ? 'upper' : 'hook') : 'jab')
       : r < .5 - .1 * rage ? 'jab' : r < .8 ? 'hook' : 'upper';
@@ -544,11 +582,14 @@ export class Fight {
       : ducking ? 'duck' : 0;
     this._chain = combo ? this._chain + 1 : 0;
     n.stamina = Math.max(0, n.stamina - T.npcCost * (combo ? .6 : 1));
-    this._windupFor = force?.windup || (combo ? T.comboWindup : T.windup[kind]) * (1 - T.rageSpeed * rage)
-      * (n.gassed ? T.gasWindup : 1);   // tired arms telegraph slower
+    // sledge winds its own long telegraph; flurry swings run per-variant speed
+    this._windupFor = force?.windup || (this._wantSledge ? spec.windup
+        : combo ? T.comboWindup * (spec.windupMul || 1) : T.windup[kind])
+      * (1 - T.rageSpeed * rage) * (n.gassed ? T.gasWindup : 1) * this._stat.windup;
     this._pk = { kind, side };
     n.action = 'windup'; n.actionT = 0;
-    n.telegraph = { kind, side, t01: 0, combo: this._chain };   // side = PIP's glove (mirrored on screen)
+    n.telegraph = { kind, side, t01: 0, combo: this._chain,
+      special: (this._wantCombo || this._wantSledge) ? spec.name : null };   // side = PIP's glove (mirrored on screen)
   }
 
   // did the player get out of the way? → 'left'|'right'|'duck'|null (+ perfect)
@@ -583,15 +624,19 @@ export class Fight {
     // a gassed guard is sluggish: effective guard caps at gasGuard < guardT.
     const gCap = p.gassed ? T.gasGuard : 1;
     const g = duckedInto ? 0 : Math.min(side === 'left' ? inp.guard.right : inp.guard.left, gCap);
-    const dmg = T.npcDmg[kind] * (duckedInto ? T.duckUpperMul : 1);
+    const spec = this._special, sledge = this._wantSledge;
+    const dmg = T.npcDmg[kind] * this._stat.dmg * (sledge ? spec.dmgMul : 1)
+      * (duckedInto ? T.duckUpperMul : 1);
+    if (sledge || this._wantCombo) s.lastBlow.special = spec.name;
     this._landed = true;
     this._regenSlowT = T.hurtRegenT;        // getting tagged stalls your regen
     if (g >= T.guardT) {
-      p.hp = Math.max(0, p.hp - dmg * T.blockMul);
+      // a sledge CRACKS the guard — chip through at its own rate
+      p.hp = Math.max(0, p.hp - dmg * (sledge ? spec.chip : T.blockMul));
       p.hurtT = T.hurtT * .5;
       p.score += T.score.block;
       p.counterT = T.counterWindow;
-      s.lastBlow.result = 'blocked'; s.lastBlow.dmg = dmg * T.blockMul;
+      s.lastBlow.result = 'blocked'; s.lastBlow.dmg = dmg * (sledge ? spec.chip : T.blockMul);
       this._swing = 'blocked';
       this._emit('player-blocked');
     } else {

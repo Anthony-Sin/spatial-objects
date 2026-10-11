@@ -21,14 +21,15 @@
   #world { position: fixed; inset: 0; display: block; }
   #hands { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
 
-  /* bout card — chunky rounded paper sticker, parked top-left */
-  .card { position: fixed; top: 20px; left: 24px; transform: rotate(-1deg); z-index: 20;
-    min-width: 330px; border: 2.5px solid var(--ink); background: var(--paper);
+  /* your bout card rides bottom-centre like a real fight HUD — big segmented
+     blocks: each health block ≈ one clean hit left in you, each stamina
+     block ≈ one punch you can still throw before the gas tank needs a beat */
+  .card { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) rotate(-1deg); z-index: 20;
+    min-width: 400px; border: 2.5px solid var(--ink); background: var(--paper);
     border-radius: 20px; padding: 10px 18px 12px; color: var(--ink);
     box-shadow: 0 6px 0 rgba(43,33,24,.45), 0 14px 34px rgba(0,0,0,.45); }
-  .card .who { font-size: 10px; letter-spacing: .3em; text-transform: uppercase;
+  .card .who { font-size: 11px; letter-spacing: .3em; text-transform: uppercase;
     color: var(--coral); font-weight: 700; }
-  .card { min-width: 280px; }
 
   /* round + clock — one plate, top centre, like every fight broadcast */
   .timer { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 20;
@@ -50,7 +51,8 @@
   .nameplate .nm .gas { display: none; color: var(--sun); margin-left: 6px; }
   .nameplate .nm .gas.on { display: inline; }
   .nameplate .bar { height: 12px; border: 2.5px solid var(--ink); border-radius: 8px;
-    background: rgba(43,33,24,.35); overflow: hidden; box-shadow: 0 3px 0 rgba(43,33,24,.5); }
+    background: rgba(43,33,24,.35); overflow: hidden; box-shadow: 0 3px 0 rgba(43,33,24,.5);
+    position: relative; }
   .nameplate .bar i { display: block; height: 100%; background: var(--sky);
     transform-origin: left; transition: transform .18s cubic-bezier(.34,1.56,.64,1); }
   .nameplate .bar i.ghost { margin-top: -12px; background: rgba(255,248,236,.55);
@@ -59,24 +61,36 @@
      3-punch flurry and glows amber-hot when the next one is loaded — the
      cue to finish your guard-up before the windup. */
   .nameplate .stam { height: 5px; margin: 3px 14px 0; border: 1.5px solid var(--ink);
-    border-radius: 5px; background: rgba(43,33,24,.35); overflow: hidden; }
+    border-radius: 5px; background: rgba(43,33,24,.35); overflow: hidden; position: relative; }
   .nameplate .stam i { display: block; height: 100%; background: var(--sun);
     transform-origin: left; transition: transform .3s ease; }
   .nameplate .stam.on { border-color: var(--sun);
     box-shadow: 0 0 8px rgba(255,190,60,.8); animation: stamhot .55s ease-in-out infinite alternate; }
   @keyframes stamhot { to { box-shadow: 0 0 14px rgba(255,190,60,1); } }
-  .hp-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
-  .hp-row .lbl { width: 44px; font-size: 10px; font-weight: 700; letter-spacing: .18em;
+  .hp-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .hp-row .lbl { width: 44px; font-size: 11px; font-weight: 800; letter-spacing: .18em;
     text-transform: uppercase; }
-  .hp-row .track { flex: 1; height: 12px; border: 2px solid var(--ink); border-radius: 8px;
-    background: rgba(43,33,24,.12); overflow: hidden; }
+  .hp-row .track { flex: 1; height: 16px; border: 2px solid var(--ink); border-radius: 9px;
+    background: rgba(43,33,24,.12); overflow: hidden; position: relative; }
   .hp-row .track i { display: block; height: 100%; width: 100%;
     border-radius: 5px; transform-origin: left;
     transition: transform .18s cubic-bezier(.34,1.56,.64,1); }
+  /* 8 blocks: read 'em as ~one hit left / ~one punch in the tank each.
+     the fill glides under fixed dividers so a draining block still shows
+     the partial bite — regen visibly rebuilds the current block */
+  .track::after, .nameplate .bar::after, .nameplate .stam::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(90deg, transparent 0,
+      transparent calc(12.5% - 2px), var(--ink) calc(12.5% - 2px), var(--ink) 12.5%); }
   .hp-row.you .track i { background: var(--coral); }
   .hp-row.npc .track i { background: var(--sky); }
-  .hp-row.stam .track { height: 7px; }
+  .hp-row.stam .track { height: 10px; }
   .hp-row.stam .track i { background: var(--sun); }
+  /* COOLING DOWN — gassed: the tank pulses while it catches its breath,
+     punches stay weak until the amber rebuilds a block or two */
+  .hp-row.stam.on .track i { animation: stamCd .5s ease-in-out infinite alternate; }
+  .hp-row.stam.on .lbl { color: var(--coral); }
+  @keyframes stamCd { from { filter: brightness(.65); } to { filter: brightness(1.2); } }
 
   .score { position: fixed; top: 18px; right: 28px; z-index: 20; text-align: right; }
   .score .n { font-weight: 700; font-size: 38px; color: var(--sun);
@@ -217,8 +231,16 @@
   .replay.main { background: var(--coral); color: #fff; }
   .replay.menu { background: #fff; color: var(--ink); }
 
+  /* narrower windows can't centre a 400px card beside the webcam peep —
+     dock it bottom-right instead, clear of the peep's bottom-left corner */
+  @media (max-width: 1050px) {
+    .card { left: auto; right: 20px; transform: rotate(-1deg); min-width: 300px; }
+  }
   @media (max-width: 700px) {
-    .card { top: 76px; left: 14px; width: calc(100% - 28px); min-width: 0; padding: 8px 12px; }
+    .card { right: 14px; bottom: 14px; width: calc(100% - 150px); min-width: 0; padding: 8px 12px; }
+    .hp-row .lbl { width: 34px; font-size: 9px; }
+    .hp-row .track { height: 12px; }
+    .hp-row.stam .track { height: 7px; }
     .timer { top: 10px; }
     .score { top: 180px; right: 14px; }
     .score .n { font-size: 24px; }
@@ -236,7 +258,7 @@
   <div class="card">
     <div class="who">THE ROOKIE · <span data-npcname>PIP</span>'S CHALLENGER</div>
     <div class="hp-row you"><div class="lbl">YOU</div><div class="track"><i data-php></i></div></div>
-    <div class="hp-row stam"><div class="lbl">STAM</div><div class="track"><i data-stam></i></div></div>
+    <div class="hp-row stam" data-stamrow><div class="lbl">STAM</div><div class="track"><i data-stam></i></div></div>
   </div>
   <div class="timer"><div class="rd" data-round>RINGSIDE</div><div class="clock" data-time>1:30</div></div>
   <div class="nameplate off" data-plate>
@@ -290,7 +312,8 @@
     const status = $('[data-peep]');   // boot/face status lives on the webcam tag now
     const el = {
       round: $('[data-round]'), time: $('[data-time]'), php: $('[data-php]'),
-      nhp: $('[data-nhp]'), stam: $('[data-stam]'), score: $('[data-score]'), combo: $('[data-combo]'), counter: $('[data-counter]'), feed: $('[data-feed]'),
+      nhp: $('[data-nhp]'), stam: $('[data-stam]'), stamRow: $('[data-stamrow]'),
+      score: $('[data-score]'), combo: $('[data-combo]'), counter: $('[data-counter]'), feed: $('[data-feed]'),
       tele: $('[data-tele]'), flash: $('[data-flash]'), count: $('[data-count]'), end: $('[data-end]'),
       callout: $('[data-callout]'), world: $('#world'),
       vin: $('[data-vin]'),
@@ -415,9 +438,10 @@
       'player-miss': (s, lb) => `WHIFF${lb?.reason ? ' · ' + String(lb.reason).toUpperCase() : '…'}`,
       'npc-blocked': () => 'BLOCKED',
       'npc-punch': () => 'INCOMING',
+      'npc-special': (s) => `${s.npc.telegraph?.special || 'SPECIAL'} — WATCH IT`,
       'player-hit-taken': (s, lb) => lb?.reason === 'ducked-into' ? `DUCKED INTO IT −${Math.round(lb.dmg)}`
-        : lb?.dmg ? `OUCH −${Math.round(lb.dmg)}` : 'OUCH',
-      'player-blocked': () => 'BLOCKED IT',
+        : lb?.dmg ? `${lb.special ? lb.special + ' ' : ''}OUCH −${Math.round(lb.dmg)}` : 'OUCH',
+      'player-blocked': (s, lb) => lb?.special ? `${lb.special} — ON THE GLOVES` : 'BLOCKED IT',
       'player-dodged': (s, lb) => lb?.perfect ? 'PERFECT DODGE — UNLOAD!' : 'DODGED · COUNTER!',
       'counter': () => 'COUNTER! +35% POWER',
     };
@@ -437,7 +461,28 @@
       el.feed.prepend(d);
       while (el.feed.children.length > 2) el.feed.lastChild.remove();   // just the latest beats
     };
+    /* career record — the numbers the lineup's locks read.
+       boxing:ko = {n, sum} — every KO adds the round it happened in;
+       avg KO round = sum/n (a decimal, e.g. 2.3). Decisions don't count. */
+    const store = {
+      get: (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+      set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+    };
     let ended = false;
+    const recordEnd = (win, st) => {
+      if (practice) return 0;
+      const score = st.player.score || 0;
+      const best = Math.max(store.get('boxing:best', 0), score);
+      store.set('boxing:best', best);
+      if (win) store.set('boxing:wins', store.get('boxing:wins', 0) + 1);
+      return best;
+    };
+    const recordKo = (st) => {
+      if (practice || st.phase !== 'npcdown') return;
+      const ko = store.get('boxing:ko', { n: 0, sum: 0 });
+      ko.n += 1; ko.sum += st.round || 1;
+      store.set('boxing:ko', ko);
+    };
     const showEnd = (win, st) => {
       if (ended) return; ended = true;
       document.body.classList.add('ended');
@@ -446,7 +491,9 @@
       el.endTitle.textContent = win ? 'YOU WIN!' : 'DOWN GOES YOU';
       const name = (st.npc.name || 'PIP').toUpperCase();
       const score = (st.player.score || 0).toLocaleString();
-      el.endSub.textContent = win ? `${name} DEFEATED · ${score} PTS` : `ROUND ${st.round || 1} · ${score} PTS`;
+      const best = recordEnd(win, st);
+      const tail = best ? ` · BEST ${best.toLocaleString()}` : '';
+      el.endSub.textContent = (win ? `${name} DEFEATED · ${score} PTS` : `ROUND ${st.round || 1} · ${score} PTS`) + tail;
       el.end.classList.add('on');
     };
     $('[data-replay]').onclick = () => location.reload();
@@ -512,6 +559,7 @@
       bar('nstam', el.nstam, st.npc.stamina);
       tog('nstamR', el.nstamW, st.npc.specialReady && st.phase === 'fighting');
       bar('stam', el.stam, st.player.stamina);
+      tog('stamCd', el.stamRow, st.player.gassed && st.phase === 'fighting');   // tank's catching its breath
       placePlate(st);
       // 3-2-1: the big number pops in fresh every second
       const cd = st.phase === 'countdown' ? st.countdown : 0;
@@ -546,7 +594,8 @@
         const how = tg.kind === 'upper' ? 'UPPERCUT · SLIP ⟷  NO DUCK!'
           : tg.kind === 'hook' ? `HOOK · DUCK ↓ / GUARD ${guardSide}`
           : `JAB · SLIP ⟷ / GUARD ${guardSide}`;
-        txt('teleTxt', el.tele, tg.combo ? `COMBO ×${tg.combo + 1} — ${how}` : how);
+        const name = tg.special ? `${tg.special} — ` : '';
+        txt('teleTxt', el.tele, tg.combo ? `COMBO ×${tg.combo + 1} — ${name}${how}` : `${name}${how}`);
       }
       for (const e of out.events) {
         const lg = window.__boxing.log;
@@ -556,6 +605,8 @@
         if (e === 'player-hit-taken' || (e === 'ko' && st.phase === 'playerdown')) vinT = performance.now();
         if (e === 'perfect-dodge') callout('PERFECT!', 'perfect', 650);
         if (e === 'round-start') callout('FIGHT!', '', 750);
+        if (e === 'npc-special') callout(`${st.npc.telegraph?.special || 'SPECIAL'}!`, 'flurry', 850);
+        if (e === 'ko') recordKo(st);
         if (e === 'player-hit-taken' && st.lastBlow?.reason === 'ducked-into') callout('DUCKED INTO IT!', '', 800);
         if (e === 'win') showEnd(true, st);
         if (e === 'lose') showEnd(false, st);
@@ -933,13 +984,13 @@
         entrancePoint.project(cam);
         if (entrancePoint.z < -1 || entrancePoint.z > 1) continue;
         entranceEdge.project(cam);
-        const hnd = (hs.hands || []).find(h => h?.side === side && h.lm?.length >= 21);
         mittPos.x = (entrancePoint.x + 1) * hc.width * .5;
         mittPos.y = (1 - entrancePoint.y) * hc.height * .5;
         mittPos.size = Math.min(96, Math.max(30, Math.hypot(
           (entranceEdge.x - entrancePoint.x) * hc.width,
           (entranceEdge.y - entrancePoint.y) * hc.height) * .55));
         mittPos.ang = 0;
+        const hnd = (hs.hands || []).find(h => h?.side === side && h.lm?.length >= 21);
         mittOpts.side = side; mittOpts.kind = hnd?.kind || 'fist';
         mittOpts.reach = 1; mittOpts.squash = 0; mittOpts.dim = 1;
         if (hnd) {

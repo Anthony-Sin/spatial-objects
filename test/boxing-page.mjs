@@ -193,11 +193,16 @@ await new Promise(r => setTimeout(r, 180));
 const mobile = await pg.evaluate(() => {
   const card = document.querySelector('.card').getBoundingClientRect();
   const score = document.querySelector('.score').getBoundingClientRect();
-  return { cardBottom: card.bottom, scoreTop: score.top, width: document.documentElement.scrollWidth };
+  const peep = document.querySelector('.peep').getBoundingClientRect();
+  const overlap = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  return { cardVsScore: overlap(card, score), cardVsPeep: overlap(card, peep),
+    cardBottom: card.bottom, width: document.documentElement.scrollWidth,
+    vh: innerHeight };
 });
-check('mobile HUD keeps score clear of the bout card',
-  mobile.scoreTop >= mobile.cardBottom && mobile.width <= 390,
-  `cardBottom=${mobile.cardBottom.toFixed(0)} scoreTop=${mobile.scoreTop.toFixed(0)} width=${mobile.width}`);
+check('mobile HUD: bout card docks clear of score and webcam peep',
+  !mobile.cardVsScore && !mobile.cardVsPeep && mobile.width <= 390
+    && mobile.cardBottom <= mobile.vh + 1,
+  JSON.stringify(mobile));
 await pg.screenshot({ path: '/tmp/boxing-mobile.png' });
 await b.close();
 srv?.kill();

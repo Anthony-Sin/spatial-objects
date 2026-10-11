@@ -46,10 +46,18 @@
     position:relative; z-index:2;
     min-height:100vh; min-height:100svh;
     display:flex; flex-direction:column; justify-content:space-between; align-items:center;
-    text-align:center; padding:clamp(16px, 2.8vh, 32px) 20px clamp(24px, 3.8vh, 44px);
+    text-align:center; padding:clamp(16px, 2.5vh, 28px) 20px clamp(48px, 8.5vh, 88px);
     pointer-events:none;
   }
   .stage > * { pointer-events:auto; }
+
+  /* ---------- Bottom Arcade Menu Controls ---------- */
+  .menu-group {
+    display:flex; flex-direction:column; align-items:center; gap:clamp(10px, 1.6vmin, 16px);
+    filter:drop-shadow(0 8px 18px rgba(43,33,24,.12));
+    z-index:10;
+    margin-bottom:clamp(8px, 1.8vh, 22px);
+  }
 
   /* ---------- Sticker Logo with Comic Halftone & Sparkles ---------- */
   .logo-container {
@@ -176,6 +184,26 @@
     display:flex; flex-direction:row; align-items:center; justify-content:center;
     gap:clamp(12px, 1.8vmin, 20px);
     flex-wrap:wrap;
+  }
+
+  /* career record strip — paper pills under the menu */
+  .career {
+    display:flex; flex-direction:row; align-items:center; justify-content:center;
+    gap:10px; flex-wrap:wrap;
+  }
+  .cpill {
+    display:inline-flex; align-items:center; gap:7px;
+    padding:6px 15px; background:#fff;
+    border:2.5px solid var(--ink); border-radius:999px;
+    box-shadow:0 3.5px 0 var(--ink);
+    font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--ink);
+  }
+  .cpill b { color:var(--coral); font-size:14px; }
+  .cpill .ko-ic {
+    width:13px; height:13px; border-radius:50%;
+    background:var(--sun); border:2px solid var(--ink);
+    box-shadow:inset 0 0 0 2px #fff;
   }
 
   .btn {
@@ -432,14 +460,21 @@
       </label>
 
       <nav class="menu-row">
-        <a class="btn main" id="enter-btn" href="./boxing.html">Enter the Ring</a>
-        <a class="btn alt" href="./lineup.html">Choose Your Fighter</a>
+        <a class="btn main" id="enter-btn" href="./lineup.html">Choose Your Fighter</a>
         <button type="button" class="btn-gear" id="settings-open-btn" aria-label="Settings" title="Game Settings">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.45.17-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
           </svg>
         </button>
       </nav>
+
+      <!-- career record — the personal bests the lineup locks check against -->
+      <div class="career" id="career">
+        <span class="cpill">BEST <b data-best>0</b> PTS</span>
+        <span class="cpill"><b data-wins>0</b> WINS</span>
+        <span class="cpill"><i class="ko-ic"></i><b data-kos>0</b> KOs</span>
+        <span class="cpill">AVG KO <b data-koavg>—</b></span>
+      </div>
     </div>
   </main>
 
@@ -514,14 +549,24 @@
 
 <script type="module">
   import * as THREE from 'three';
-  import { buildBoxer, VARIANTS } from './shared/boxing/protoBoxer.js';
+  import { buildBoxer, VARIANTS, VARIANT_INFO } from './shared/boxing/protoBoxer.js';
   import { buildScene } from './shared/boxing/scene.js';
+
+  // career record pills — personal best pts, wins, KOs, average KO round
+  (function career() {
+    const get = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
+    const ko = get('boxing:ko', { n: 0, sum: 0 });
+    document.querySelector('[data-best]').textContent = get('boxing:best', 0).toLocaleString();
+    document.querySelector('[data-wins]').textContent = get('boxing:wins', 0);
+    document.querySelector('[data-kos]').textContent = ko.n;
+    document.querySelector('[data-koavg]').textContent = ko.n ? (ko.sum / ko.n).toFixed(1) : '—';
+  })();
 
   // tutorial checkmark syncs with Enter the Ring destination
   const tutToggle = document.getElementById('tut-toggle');
   const enterBtn = document.getElementById('enter-btn');
   function syncTutorial() {
-    enterBtn.href = tutToggle.checked ? './boxing.html?practice=1' : './boxing.html';
+    enterBtn.href = tutToggle.checked ? './lineup.html?practice=1' : './lineup.html';
   }
   try {
     if (localStorage.getItem('boxing:tutorial') === '1') {
@@ -632,7 +677,7 @@
     scene.background = new THREE.Color(0x0c101a);
     scene.fog = new THREE.Fog(0x0c101a, 8, 22);
 
-    // Remove arena outer wall and generic crowd; keep floor dark
+    // Remove default scene lights and generic arena crowd to control exposure precisely
     const toRemove = [];
     scene.traverse(o => {
       if (o.geometry?.type === 'CylinderGeometry' && o.material?.side === THREE.BackSide) {
@@ -644,6 +689,9 @@
       if (o.geometry?.type === 'CircleGeometry' && o.material) {
         o.material.color.set(0x080c14);
       }
+      if (o.isLight) {
+        toRemove.push(o);
+      }
     });
     toRemove.forEach(o => o.parent?.remove(o));
 
@@ -652,21 +700,31 @@
     ringGroup.rotation.y = Math.PI * 0.75;
     ringGroup.scale.set(0.74, 0.74, 0.74);
 
-    // Style the ring skirt and corner posts like the toy boxing ring
+    // Style the ring skirt and corner posts in dark arena tones
     const matFlat = (c) => new THREE.MeshLambertMaterial({ color: c });
-    const colWhite = 0xfaf5ec;
-    const colCoral = 0xff6b57;
-    const colBlue = 0x5da9e9;
-    const colApron = 0x2e65cf;
+    const colWhite = 0x9ca8be;
+    const colCoral = 0xa34538;
+    const colBlue = 0x3d6b99;
+    const colApron = 0x111624;
 
-    // Apron skirt base: toy blue
+    // Darken ring apron skirt
     ringGroup.traverse(o => {
       if (o.isMesh && o.geometry?.type === 'BoxGeometry' && o.geometry.parameters?.height === 0.55) {
         o.material = matFlat(colApron);
       }
     });
 
-    // Style 4 corner posts, caps, and turnbuckle pads using world coordinates
+    // Darken the outer square mat top so only the circular spotlight is brightly lit
+    if (sceneObj.ring.mat && Array.isArray(sceneObj.ring.mat.material)) {
+      sceneObj.ring.mat.material[2] = new THREE.MeshLambertMaterial({ color: 0x131926 });
+      sceneObj.ring.mat.material[0] = new THREE.MeshLambertMaterial({ color: 0x0f1420 });
+      sceneObj.ring.mat.material[1] = new THREE.MeshLambertMaterial({ color: 0x0f1420 });
+      sceneObj.ring.mat.material[3] = new THREE.MeshLambertMaterial({ color: 0x0f1420 });
+      sceneObj.ring.mat.material[4] = new THREE.MeshLambertMaterial({ color: 0x0f1420 });
+      sceneObj.ring.mat.material[5] = new THREE.MeshLambertMaterial({ color: 0x0f1420 });
+    }
+
+    // Style 4 corner posts, caps, and turnbuckle pads using world coordinates (darker atmospheric tone)
     ringGroup.updateMatrixWorld(true);
     const tmpV = new THREE.Vector3();
 
@@ -679,46 +737,95 @@
       if (isPost || isCap || isPad) {
         o.getWorldPosition(tmpV);
         if (tmpV.x < -1.1) {
-          o.material = matFlat(colCoral); // Left corner: Coral Red
+          o.material = matFlat(colCoral); // Left corner
         } else if (tmpV.x > 1.1) {
-          o.material = matFlat(colBlue);  // Right corner: Sky Blue
+          o.material = matFlat(colBlue);  // Right corner
         } else {
-          o.material = matFlat(colWhite); // Front & Back corners: Crisp White
+          o.material = matFlat(colWhite); // Front & Back corners
         }
       }
     });
 
-    // Ensure ropes are visible
+    // Ensure ropes are visible with subtle dark arena tone
     if (sceneObj.ring.ropes) {
       sceneObj.ring.ropes.forEach(r => {
         r.visible = true;
       });
     }
 
-    // ---------- Spotlight & Calibrated Exposure ----------
-    // Dark moody ambient fill for comfortable normal exposure (no blown-out whites)
-    scene.add(new THREE.AmbientLight(0x2e384c, 0.55));
+    // ---------- Distinct Circular Spotlight Pool on Characters ----------
+    // Generate warm stage spotlight texture (natural warm parchment tone, not bleached white)
+    function makeSpotCircleTexture() {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 512;
+      const ctx = cv.getContext('2d');
+      const grad = ctx.createRadialGradient(256, 256, 0, 256, 256, 256);
+      grad.addColorStop(0, '#ebd4b7');
+      grad.addColorStop(0.50, '#d9bd96');
+      grad.addColorStop(0.78, '#b89467');
+      grad.addColorStop(0.92, 'rgba(160, 120, 70, 0.35)');
+      grad.addColorStop(0.99, 'rgba(80, 50, 25, 0.04)');
+      grad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(256, 256, 254, 0, Math.PI * 2);
+      ctx.fill();
 
-    // Overhead theatrical spotlight focused directly onto Pip & the Rival
-    const spot = new THREE.SpotLight(0xfff5e6, 32);
-    spot.position.set(0, 5.8, 0.1);
-    spot.target.position.set(0, 0.40, 0);
-    spot.angle = 0.42;
-    spot.penumbra = 0.72;
+      // Faint ring canvas accent within the circular pool
+      ctx.strokeStyle = 'rgba(43, 33, 24, 0.20)';
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.arc(256, 256, 228, 0, Math.PI * 2);
+      ctx.stroke();
+
+      const tex = new THREE.CanvasTexture(cv);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      return tex;
+    }
+
+    const circleRadius = 1.76;
+    const spotCircleGeo = new THREE.CircleGeometry(circleRadius, 64);
+    spotCircleGeo.rotateX(-Math.PI / 2);
+    const spotCircleMat = new THREE.MeshLambertMaterial({
+      map: makeSpotCircleTexture(),
+      transparent: true,
+      opacity: 0.82,
+    });
+    const spotCircleMesh = new THREE.Mesh(spotCircleGeo, spotCircleMat);
+    spotCircleMesh.position.set(0, 0.012, 0.05);
+    spotCircleMesh.receiveShadow = true;
+    scene.add(spotCircleMesh);
+
+    // ---------- Overhead Spotlight & Triangular Light Beam ----------
+    // Ambient fill to preserve rich cartoon colors without overexposing
+    scene.add(new THREE.AmbientLight(0x283244, 0.65));
+
+    // Warm key directional light focused on the fighters
+    const keyLight = new THREE.DirectionalLight(0xffe2bf, 0.85);
+    keyLight.position.set(2, 6, 4);
+    keyLight.target.position.set(0, 0.4, 0.05);
+    scene.add(keyLight, keyLight.target);
+
+    // Calibrated overhead spotlight (warm amber tone, controlled exposure)
+    const spot = new THREE.SpotLight(0xffe6c8, 12);
+    spot.position.set(0, 5.8, 0.05);
+    spot.target.position.set(0, 0.40, 0.05);
+    spot.angle = 0.34;
+    spot.penumbra = 0.30;
     spot.decay = 1.0;
-    spot.distance = 15;
+    spot.distance = 14;
     spot.castShadow = true;
     spot.shadow.mapSize.set(1024, 1024);
     spot.shadow.bias = -0.001;
     scene.add(spot, spot.target);
 
-    // Visible theatrical spotlight beam cone
-    const beamGeo = new THREE.CylinderGeometry(0.22, 2.35, 5.4, 32, 1, true);
-    beamGeo.translate(0, -2.7, 0);
+    // Prominent theatrical triangular spotlight beam
+    const beamGeo = new THREE.CylinderGeometry(0.12, 2.20, 5.75, 48, 1, true);
+    beamGeo.translate(0, -2.875, 0);
     const beamMat = new THREE.MeshBasicMaterial({
-      color: 0xfff4db,
+      color: 0xffdfaa,
       transparent: true,
-      opacity: 0.18,
+      opacity: 0.22,
       side: THREE.DoubleSide,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -729,108 +836,100 @@
     beam.rotateX(Math.PI / 2);
     scene.add(beam);
 
-    // Subtle colored rim lights for dramatic separation
-    const rimL = new THREE.PointLight(0xff6b57, 3.5, 6.0);
-    rimL.position.set(-2.8, 1.8, -0.8);
-    const rimR = new THREE.PointLight(0x5da9e9, 3.5, 6.0);
-    rimR.position.set(2.8, 1.8, -0.8);
+    // Front-facing triangular planar beam matching camera angle for crisp cartoon silhouette
+    const triGeo = new THREE.BufferGeometry();
+    const triVerts = new Float32Array([
+      0, 5.8, -0.2,
+      -2.2, 0.05, 0.2,
+      2.2, 0.05, 0.2
+    ]);
+    triGeo.setAttribute('position', new THREE.BufferAttribute(triVerts, 3));
+    const triMat = new THREE.MeshBasicMaterial({
+      color: 0xffdfaa,
+      transparent: true,
+      opacity: 0.12,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    const triMesh = new THREE.Mesh(triGeo, triMat);
+    scene.add(triMesh);
+
+    // Soft rim accents for the characters
+    const rimL = new THREE.PointLight(0xff6b57, 1.0, 5.0);
+    rimL.position.set(-2.4, 1.8, -0.6);
+    const rimR = new THREE.PointLight(0x5da9e9, 1.0, 5.0);
+    rimR.position.set(2.4, 1.8, -0.6);
     scene.add(rimL, rimR);
 
-    // Soft crowd fill lights to illuminate spectator bleachers on left and right
-    const crowdFillL = new THREE.PointLight(0x7da4d9, 6.0, 8.0);
+    // Dim crowd atmospheric fill: audience bleachers remain moody silhouettes in the dark
+    const crowdFillL = new THREE.PointLight(0x3e5272, 1.0, 7.0);
     crowdFillL.position.set(-3.8, 2.2, -1.0);
-    const crowdFillR = new THREE.PointLight(0x7da4d9, 6.0, 8.0);
+    const crowdFillR = new THREE.PointLight(0x3e5272, 1.0, 7.0);
     crowdFillR.position.set(3.8, 2.2, -1.0);
     scene.add(crowdFillL, crowdFillR);
 
-    // ---------- Character Audience (Left & Right Bleachers Only - No Bottom) ----------
+    // ---------- Simple Geometric Audience Heads (Circles Left & Squares Right - No Details) ----------
     const crowdGroup = new THREE.Group();
     scene.add(crowdGroup);
 
-    const benchMat = new THREE.MeshLambertMaterial({ color: 0x161e2e });
-    // Tiers strictly flanking the ring on left & right, staying away from bottom (z <= 0.5)
+    // Simple bench stands in the stadium darkness
+    const benchMat = new THREE.MeshLambertMaterial({ color: 0x141a26 });
     const tiers = [
-      { xDist: 2.95, y: 0.35, zMin: -2.8, zMax: 0.45 },
-      { xDist: 3.70, y: 0.85, zMin: -3.1, zMax: 0.45 },
-      { xDist: 4.45, y: 1.35, zMin: -3.4, zMax: 0.45 },
+      { xDist: 2.85, y: 0.35, zMin: -2.9, zMax: 0.35 },
+      { xDist: 3.55, y: 0.80, zMin: -3.2, zMax: 0.35 },
+      { xDist: 4.25, y: 1.25, zMin: -3.5, zMax: 0.35 },
+      { xDist: 4.95, y: 1.70, zMin: -3.8, zMax: 0.25 },
     ];
 
     tiers.forEach(t => {
-      const len = t.zMax - t.zMin + 0.6;
+      const len = t.zMax - t.zMin + 0.5;
       const midZ = (t.zMin + t.zMax) / 2;
-      const bL = new THREE.Mesh(new THREE.BoxGeometry(0.70, 0.18, len), benchMat);
+      const bL = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.16, len), benchMat);
       bL.position.set(-t.xDist, t.y - 0.1, midZ);
-      const bR = new THREE.Mesh(new THREE.BoxGeometry(0.70, 0.18, len), benchMat);
+      const bR = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.16, len), benchMat);
       bR.position.set(t.xDist, t.y - 0.1, midZ);
       crowdGroup.add(bL, bR);
     });
 
-    const crowdColors = [0xff6b57, 0xffc53d, 0x4fb06d, 0x5da9e9, 0xb565d8, 0xfff8ec, 0xff9a3c];
-    const spectatorTypes = ['bubble', 'blocky', 'bean'];
+    const crowdColors = [0xff6b57, 0xffc53d, 0x4fb06d, 0x5da9e9, 0xb565d8, 0xfff8ec, 0xffa052, 0x3ac4b2];
     const spectators = [];
 
-    function makeSpectator(type, colHex) {
-      const g = new THREE.Group();
-      let head;
-      if (type === 'blocky') {
-        head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.32), new THREE.MeshLambertMaterial({ color: colHex }));
-      } else if (type === 'bean') {
-        head = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.14, 8, 12), new THREE.MeshLambertMaterial({ color: colHex }));
-      } else {
-        head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), new THREE.MeshLambertMaterial({ color: colHex }));
-      }
-      g.add(head);
+    // Left bleachers: CIRCLES (spheres - Pip's crowd)
+    // Right bleachers: SQUARES (cubes - Blocky's crowd)
+    // Clean, non-detailed geometric shapes
+    const sphereGeo = new THREE.SphereGeometry(0.18, 14, 12);
+    const boxGeo = new THREE.BoxGeometry(0.32, 0.32, 0.32);
 
-      const eyeGeo = new THREE.SphereGeometry(0.032, 6, 6);
-      const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111622 });
-      const e1 = new THREE.Mesh(eyeGeo, eyeMat);
-      const e2 = new THREE.Mesh(eyeGeo, eyeMat);
-      e1.position.set(-0.065, 0.03, 0.16);
-      e2.position.set(0.065, 0.03, 0.16);
-      g.add(e1, e2);
-
-      if (type === 'bubble') {
-        const sprout = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.11, 5), new THREE.MeshLambertMaterial({ color: 0x4fb06d }));
-        sprout.position.set(0, 0.21, 0);
-        g.add(sprout);
-      } else if (type === 'blocky') {
-        const band = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.065, 0.34), new THREE.MeshLambertMaterial({ color: 0xff6b57 }));
-        band.position.set(0, 0.07, 0);
-        g.add(band);
-      }
-      return g;
-    }
-
-    let charIdx = 0;
+    let headIdx = 0;
     tiers.forEach(t => {
-      for (let z = t.zMin; z <= t.zMax; z += 0.52) {
-        // Left side spectator
-        const cTypeL = spectatorTypes[charIdx % spectatorTypes.length];
-        const colL = crowdColors[charIdx % crowdColors.length];
-        const specL = makeSpectator(cTypeL, colL);
-        specL.position.set(-t.xDist + (Math.random() - 0.5) * 0.10, t.y + 0.18, z + (Math.random() - 0.5) * 0.08);
-        specL.lookAt(0, 0.5, 0);
-        crowdGroup.add(specL);
+      for (let z = t.zMin; z <= t.zMax; z += 0.44) {
+        // Left side: Circle heads
+        const colL = crowdColors[headIdx % crowdColors.length];
+        const matL = new THREE.MeshLambertMaterial({ color: colL });
+        const meshL = new THREE.Mesh(sphereGeo, matL);
+        meshL.position.set(-t.xDist + (Math.random() - 0.5) * 0.10, t.y + 0.16, z + (Math.random() - 0.5) * 0.08);
+        meshL.lookAt(0, 0.5, 0);
+        crowdGroup.add(meshL);
         spectators.push({
-          group: specL, y0: specL.position.y,
-          ph: Math.random() * 6.28, sp: 2.4 + Math.random() * 2.2,
-          amp: 0.04 + Math.random() * 0.04
+          mesh: meshL, y0: meshL.position.y,
+          ph: Math.random() * 6.28, sp: 2.2 + Math.random() * 2.0,
+          amp: 0.03 + Math.random() * 0.035
         });
-        charIdx++;
 
-        // Right side spectator
-        const cTypeR = spectatorTypes[charIdx % spectatorTypes.length];
-        const colR = crowdColors[charIdx % crowdColors.length];
-        const specR = makeSpectator(cTypeR, colR);
-        specR.position.set(t.xDist + (Math.random() - 0.5) * 0.10, t.y + 0.18, z + (Math.random() - 0.5) * 0.08);
-        specR.lookAt(0, 0.5, 0);
-        crowdGroup.add(specR);
+        // Right side: Square heads
+        const colR = crowdColors[(headIdx + 3) % crowdColors.length];
+        const matR = new THREE.MeshLambertMaterial({ color: colR });
+        const meshR = new THREE.Mesh(boxGeo, matR);
+        meshR.position.set(t.xDist + (Math.random() - 0.5) * 0.10, t.y + 0.16, z + (Math.random() - 0.5) * 0.08);
+        meshR.lookAt(0, 0.5, 0);
+        crowdGroup.add(meshR);
         spectators.push({
-          group: specR, y0: specR.position.y,
-          ph: Math.random() * 6.28, sp: 2.4 + Math.random() * 2.2,
-          amp: 0.04 + Math.random() * 0.04
+          mesh: meshR, y0: meshR.position.y,
+          ph: Math.random() * 6.28, sp: 2.2 + Math.random() * 2.2,
+          amp: 0.03 + Math.random() * 0.035
         });
-        charIdx++;
+        headIdx++;
       }
     });
 
@@ -841,13 +940,15 @@
     p1.group.rotation.y = Math.PI / 2 - 0.22;
     scene.add(p1.group);
 
-    // Boxer 2: Rival (Blocky, or chosen contender from lineup)
+    // Boxer 2: Rival BLOCKY (square fighter to face round Pip)
     let rivalVariant = 'blocky';
     try {
-      const saved = localStorage.getItem('boxing:npc');
-      if (saved && saved.startsWith('proto:')) {
-        const v = saved.split(':')[1];
-        if (VARIANTS.includes(v) && v !== 'bubble') rivalVariant = v;
+      const saved = localStorage.getItem('boxing:npc') || '';
+      const ko = JSON.parse(localStorage.getItem('boxing:ko') || 'null');
+      if (saved.startsWith('proto:')) {
+        const v = saved.split(':')[1], need = VARIANT_INFO[v]?.koAvg;
+        const open = VARIANTS.includes(v) && (need == null || (ko && ko.n > 0 && ko.sum / ko.n <= need));
+        if (open) rivalVariant = v;
       }
     } catch {}
     const p2 = buildBoxer(THREE, { variant: rivalVariant });
@@ -871,60 +972,50 @@
     updateCamera();
     window.addEventListener('resize', updateCamera);
 
-    // Sparring / bob-and-weave animation loop
+    // Smooth, seamless sparring choreography loop (continuous 6.8s cycle)
     let t = 0;
-    let jabTimer = 2.5;
-    let jabAttacker = 0;
-    let jabProgress = 0;
 
     function renderFrame() {
       requestAnimationFrame(renderFrame);
       const dt = 0.016;
       t += dt;
 
-      jabTimer -= dt;
-      if (jabTimer <= 0) {
-        jabAttacker = jabAttacker === 1 ? 2 : 1;
-        jabProgress = 0;
-        jabTimer = 3.2 + Math.random() * 1.6;
-      }
+      // 6.8-second seamlessly repeating sparring cycle with smooth sine easing
+      const loopTime = t % 6.8;
 
-      if (jabAttacker === 1) {
-        jabProgress += dt * 3.2;
-        if (jabProgress < 1.0) {
-          p1.pose('jab', jabProgress);
-          p2.pose('block', jabProgress);
-        } else {
-          jabAttacker = 0;
-        }
-      } else if (jabAttacker === 2) {
-        jabProgress += dt * 3.2;
-        if (jabProgress < 1.0) {
-          p2.pose('jab', jabProgress);
-          p1.pose('block', jabProgress);
-        } else {
-          jabAttacker = 0;
-        }
-      }
-
-      if (jabAttacker === 0) {
-        // Natural boxing idle bobbing
+      if (loopTime < 1.4) {
+        // Phase 1: Pip throws a smooth jab (bell curve 0 -> 1 -> 0)
+        const p = loopTime / 1.4;
+        const jabT = Math.sin(p * Math.PI);
+        p1.pose('jab', jabT);
+        p2.pose('block', jabT * 0.85);
+      } else if (loopTime < 3.4) {
+        // Phase 2: Smooth idle bobbing and weaving
+        const idle1 = (Math.sin(t * 3.6) + 1) * 0.5;
+        const idle2 = (Math.cos(t * 3.4) + 1) * 0.5;
+        p1.pose('idle', idle1);
+        p2.pose('idle', idle2);
+      } else if (loopTime < 4.8) {
+        // Phase 3: Rival throws a smooth cross (bell curve 0 -> 1 -> 0)
+        const p = (loopTime - 3.4) / 1.4;
+        const jabT = Math.sin(p * Math.PI);
+        p2.pose('jab', jabT);
+        p1.pose('block', jabT * 0.85);
+      } else {
+        // Phase 4: Smooth idle bobbing and weaving back into Phase 1
         const idle1 = (Math.sin(t * 3.6) + 1) * 0.5;
         const idle2 = (Math.cos(t * 3.4) + 1) * 0.5;
         p1.pose('idle', idle1);
         p2.pose('idle', idle2);
       }
 
-      // Animate character audience bobbing with crowd excitement
+      // Smooth crowd head bobbing
       spectators.forEach(s => {
-        const cheer = jabAttacker !== 0 ? 0.07 : 0;
-        s.group.position.y = s.y0 + Math.sin(t * s.sp + s.ph) * (s.amp + cheer);
+        s.mesh.position.y = s.y0 + Math.sin(t * s.sp + s.ph) * s.amp;
       });
 
-      // Subtle pulse and tracking for spotlight beam
-      beamMat.opacity = 0.11 + Math.sin(t * 1.8) * 0.025;
-      const targetX = jabAttacker === 1 ? -0.18 : jabAttacker === 2 ? 0.18 : 0;
-      spot.target.position.x = THREE.MathUtils.lerp(spot.target.position.x, targetX, 0.06);
+      // Smooth spotlight beam breathing
+      beamMat.opacity = 0.22 + Math.sin(t * 1.6) * 0.035;
 
       p1.tick(dt);
       p2.tick(dt);

@@ -22,9 +22,21 @@
    landed-hit hold even after the fight state has moved on.
 */
 
+/* A stored proto pick only counts if the fighter is actually unlocked —
+   the lineup gates variants by your average KO round (koAvg). Anything
+   still locked falls back to the house favorite. */
+const ownedPick = (pick) => {
+  try {
+    if (!pick.startsWith('proto:')) return pick;
+    const need = { 'proto:blocky': 3, 'proto:bean': 2 }[pick];
+    if (need == null) return pick;
+    const ko = JSON.parse(localStorage.getItem('boxing:ko') || 'null');
+    return ko && ko.n > 0 && ko.sum / ko.n <= need ? pick : 'proto:bubble';
+  } catch { return 'proto:bubble'; }
+};
 const pickId = () => {
   // no stored pick → the house-made favorite
-  try { return localStorage.getItem('boxing:npc') || 'proto:bubble'; }
+  try { return ownedPick(localStorage.getItem('boxing:npc') || 'proto:bubble'); }
   catch { return 'proto:bubble'; }
 };
 

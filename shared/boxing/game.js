@@ -41,7 +41,8 @@ export async function createGame(opts = {}) {
       glove: 0xff6b57, gloveDeep: 0xb43f39, gloveShine: 0xffa18c } });
   world.scene.add(playerAvatar.group);
   const tracker = new FistTracker(opts.fistOpts || {});
-  const fight = new Fight({ npcName: npc.name?.toUpperCase?.() || 'PIP', ...(opts.fightOpts || {}) });
+  const fight = new Fight({ npcName: npc.name?.toUpperCase?.() || 'PIP',
+    npcVariant: npc.variant, ...(opts.fightOpts || {}) });
 
   // webcam trackers: use the ones the page hands in; create only if a video
   // element is provided (dynamic imports keep this file node-safe)
@@ -95,6 +96,7 @@ export async function createGame(opts = {}) {
   const aGloves = [];
   for (const n of ['gloveL', 'gloveR'])
     playerAvatar.parts?.[n]?.children?.forEach(m => aGloves.push(m));
+
   // per-frame input/output objects are persistent — re-allocated each frame
   // otherwise and it all becomes GC pressure at 60fps
   const simIn = {}, fightIn = {}, worldIn = {}, npcIn = {}, tp = { x: 0, z: 0 };

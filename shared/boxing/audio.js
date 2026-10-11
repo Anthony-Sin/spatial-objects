@@ -22,6 +22,7 @@ export const EVENT_SFX = {
   'player-punch': 'whoosh',     // airier if lastBlow.result === 'miss'
   'player-miss': 'whoosh',
   'npc-punch': 'whoosh',
+  'npc-special': 'bell',        // signature move telegraph — the warning ding
   'player-hit': 'thwack',       // player glove connects on PIP
   'npc-hit': 'thwack',          // same blow — layered a hair late for chunk
   'npc-blocked': 'thud',        // player punch eats PIP's gloves
@@ -122,6 +123,8 @@ export class BoxingAudio {
         return this.play('dodge', { perfect: true });
       case 'round-start':
         return this.play('bell', { times: 3 });
+      case 'npc-special':   // signature move telegraph — the warning ding
+        return this.play('bell', { times: 1 });
       case 'countdown':
         return this.play('thud', { beep: state?.countdown || 1 });
       case 'ko':

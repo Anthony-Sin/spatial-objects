@@ -17,40 +17,80 @@
   * { box-sizing: border-box; margin: 0; }
   html, body { min-height: 100%; background: var(--paper2); }
   body { font-family: "Fredoka","Baloo 2","Avenir Next","Trebuchet MS",system-ui,sans-serif;
-    color: var(--ink); padding: 26px 30px 120px; }
+    color: var(--ink); padding: 26px 30px 120px; text-align: center; }
 
-  .mast { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+  .mast { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap;
+    justify-content: center; }
   .wm { font-weight: 700; font-size: 26px; letter-spacing: .08em; color: var(--ink); }
   .wm span { display: block; font-weight: 500; font-size: 10px; letter-spacing: .3em;
     text-transform: uppercase; color: rgba(43,33,24,.55); margin-top: 3px; }
-  .back { margin-left: auto; font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+  .back { font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
     color: var(--ink); text-decoration: none; border-bottom: 2px solid rgba(43,33,24,.35);
     padding-bottom: 2px; }
   .back + .back { margin-left: 14px; }
   .back:hover { color: var(--coral); border-color: var(--coral); }
-  .note { margin-top: 8px; font-size: 12px; color: rgba(43,33,24,.6); letter-spacing: .06em; }
+  .note { margin-top: 8px; font-size: 12px; color: rgba(43,33,24,.6); letter-spacing: .06em;
+    text-align: center; }
 
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 18px; margin-top: 22px; max-width: 1100px; }
+  /* career record strip — best points, KOs, average KO round */
+  .pills { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 14px; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 15px;
+    background: var(--paper); border: 2.5px solid var(--ink); border-radius: 999px;
+    box-shadow: 0 3.5px 0 rgba(43,33,24,.35); font-size: 11px; font-weight: 700;
+    letter-spacing: .14em; text-transform: uppercase; }
+  .pill b { color: var(--coral); font-size: 14px; }
+  .pill .ko-ic { width: 13px; height: 13px; border-radius: 50%; background: var(--sun);
+    border: 2px solid var(--ink); box-shadow: inset 0 0 0 2px var(--paper); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 240px));
+    justify-content: center; gap: 18px; margin: 22px auto 0; max-width: 1100px; }
   .cell { position: relative; background: var(--paper); border: 2.5px solid var(--ink);
-    border-radius: 20px; overflow: hidden; cursor: pointer;
+    border-radius: 20px; overflow: hidden; cursor: pointer; text-align: left;
     box-shadow: 0 5px 0 rgba(43,33,24,.35); transition: transform .18s cubic-bezier(.34,1.56,.64,1); }
   .cell:nth-child(3n+1) { transform: rotate(-1.2deg); }
   .cell:nth-child(3n+2) { transform: rotate(.8deg); }
   .cell:hover { transform: translateY(-4px) rotate(0deg); }
   .cell canvas { width: 100%; display: block; aspect-ratio: 6 / 5; }
   .cell .nm { padding: 9px 14px 2px; font-weight: 700; font-size: 15px; letter-spacing: .04em; }
-  .cell .lic { padding: 0 14px 12px; font-size: 10px; letter-spacing: .16em;
+  .cell .lic { padding: 0 14px 4px; font-size: 10px; letter-spacing: .16em;
     text-transform: uppercase; color: rgba(43,33,24,.55); }
   .cell .st { position: absolute; top: 10px; right: 10px; font-size: 9px; font-weight: 700;
     letter-spacing: .14em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px;
-    border: 2px solid var(--ink); background: var(--sun); }
+    border: 2px solid var(--ink); background: var(--sun); z-index: 3; }
   .cell.sel { border-color: var(--coral); border-width: 3.5px;
     box-shadow: 0 7px 0 rgba(255,107,87,.55); }
   .cell.sel .st { background: var(--coral); color: var(--paper); }
   .cell.dead { cursor: not-allowed; opacity: .45; filter: grayscale(.7); }
   .cell.dead .st { background: rgba(43,33,24,.15); }
   .cell.proto .st { background: var(--leaf); color: var(--paper); }
+  .cell.locked .st { background: var(--ink); color: var(--paper); }
+
+  /* paper stats — atk / def / spd pips + the signature move */
+  .stats { padding: 2px 14px 12px; display: flex; flex-direction: column; gap: 4px; }
+  .srow { display: flex; align-items: center; gap: 8px; font-size: 9px; font-weight: 800;
+    letter-spacing: .18em; color: rgba(43,33,24,.6); }
+  .srow em { width: 26px; font-style: normal; }
+  .pips { display: flex; gap: 3px; }
+  .pips i { width: 13px; height: 7px; border-radius: 4px; border: 1.5px solid var(--ink);
+    background: rgba(43,33,24,.08); }
+  .pips i.on { background: var(--coral); }
+  .spec { padding: 0 14px 12px; font-size: 10px; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--berry); }
+
+  /* lock overlay — covers the card until your record says you're ready */
+  .lock { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 8px; text-align: center;
+    background: rgba(43,33,24,.55); backdrop-filter: blur(2.5px) grayscale(.3); }
+  .lock svg { width: 46px; height: 46px; fill: var(--paper);
+    filter: drop-shadow(0 3px 0 rgba(0,0,0,.45)); }
+  .lock .req { padding: 4px 13px; border-radius: 999px; border: 2px solid var(--ink);
+    background: var(--sun); color: var(--ink); font-size: 10px; font-weight: 800;
+    letter-spacing: .14em; text-transform: uppercase; }
+  .lock .hint { font-size: 9.5px; font-weight: 700; letter-spacing: .16em;
+    text-transform: uppercase; color: rgba(255,248,236,.85); }
+  .cell.no { animation: nudge .38s ease-in-out; }
+  @keyframes nudge { 25% { transform: translateX(-5px) rotate(-1deg); }
+    75% { transform: translateX(5px) rotate(1deg); } }
 
   .enterbar { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
     display: flex; align-items: center; gap: 16px; background: var(--paper);
@@ -73,6 +113,12 @@
     <div class="wm">PICK YOUR RIVAL<span>scrap! · character lineup</span></div>
     <a class="back" href="./">menu</a>
   </header>
+  <div class="pills">
+    <span class="pill">BEST <b data-best>0</b> PTS</span>
+    <span class="pill"><b data-wins>0</b> WINS</span>
+    <span class="pill"><i class="ko-ic"></i><b data-kos>0</b> KOs</span>
+    <span class="pill">AVG KO <b data-koavg>—</b></span>
+  </div>
   <div class="note" data-note>loading the lineup…</div>
   <div class="grid" data-grid></div>
 
@@ -89,6 +135,24 @@
     const grid = $('[data-grid]'), note = $('[data-note]');
     const SLOT_W = 240, SLOT_H = 200, GAP = 3;
 
+    /* ---------- career record — the lock gate ----------
+       Every KO win writes {n, sum} into boxing:ko; a fighter unlocks when
+       your average KO round is early enough (proto VARIANT_INFO .koAvg). */
+    const ls = {
+      get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); }
+        catch { return d; } },
+      set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+    };
+    const ko = ls.get('boxing:ko', { n: 0, sum: 0 });
+    const koAvg = ko.n > 0 ? ko.sum / ko.n : 0;
+    const best = ls.get('boxing:best', 0), wins = ls.get('boxing:wins', 0);
+    $('[data-best]').textContent = best.toLocaleString();
+    $('[data-wins]').textContent = wins;
+    $('[data-kos]').textContent = ko.n;
+    $('[data-koavg]').textContent = ko.n ? koAvg.toFixed(1) : '—';
+
+    const practice = new URLSearchParams(location.search).get('practice') ? '?practice=1' : '';
+
     /* ---------- roster: manifest candidates + protoBoxer VARIANTS ---------- */
     const manifest = await fetch('./shared/boxing/assetManifest.json')
       .then(r => r.ok ? r.json() : { candidates: [] })
@@ -96,14 +160,27 @@
     const proto = await import('./shared/boxing/protoBoxer.js').catch(() => null);
     const VARIANTS = proto?.VARIANTS || [];
     const VINFO = proto?.VARIANT_INFO || {};
+    // locked = has a KO-round gate you haven't cleared yet
+    const isLocked = (e) => {
+      const need = e.info?.koAvg;
+      return need != null && !(ko.n > 0 && koAvg <= need);
+    };
+    const pips = (v) => '<span class="pips">' + Array.from({ length: 5 },
+      (_, i) => `<i${i < v ? ' class="on"' : ''}></i>`).join('') + '</span>';
+    const statsHtml = (info) => !info?.stats ? '' :
+      `<div class="stats">${['atk', 'def', 'spd'].map(k =>
+        `<div class="srow"><em>${k.toUpperCase()}</em>${pips(info.stats[k])}</div>`).join('')}</div>`;
+    const specHtml = (info) => !info?.special ? '' :
+      `<div class="spec">★ ${info.special.name} — ${info.special.desc}</div>`;
+    const LOCK_SVG = `<svg viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 1 1 6 0v3H9zm3 4a1.8 1.8 0 0 1 .9 3.35V19a.9.9 0 1 1-1.8 0v-1.65A1.8 1.8 0 0 1 12 14z"/></svg>`;
 
     // manifest "PROP" entries (ring/gloves/bag) are set dressing, not fighters
     const fighters = (manifest.candidates || [])
       .filter(c => !/^PROP/i.test(c.notes || '') && (c.type || 'glb') === 'glb');
     // full roster: house-made proto variants FIRST (they're the favorites),
     // then the downloaded GLB contenders
-    const protos = VARIANTS.map(v => ({ id: `proto:${v}`, name: VINFO[v]?.name || v,
-      type: 'proto', lic: VINFO[v]?.desc || 'original fighter', variant: v }));
+    const protos = VARIANTS.map(v => ({ id: `proto:${v}`, name: VINFO[v]?.label || v,
+      type: 'proto', lic: VINFO[v]?.desc || 'original fighter', variant: v, info: VINFO[v] }));
     const entries = [...protos,
       ...fighters.map(c => ({ id: c.id, name: c.name || c.id,
         type: c.type || 'glb', lic: c.license || 'unknown', cand: c }))];
@@ -113,15 +190,25 @@
 
     /* ---------- DOM cells ---------- */
     const cells = entries.map((e, i) => {
+      const locked = isLocked(e);
       const d = document.createElement('div');
-      d.className = 'cell' + (e.type === 'proto' ? ' proto' : '');
+      d.className = 'cell' + (e.type === 'proto' ? ' proto' : '') + (locked ? ' locked' : '');
       d.innerHTML = `<canvas width="${SLOT_W}" height="${SLOT_H}"></canvas>
-        <div class="st">${e.type === 'proto' ? 'original' : 'glb'}</div>
-        <div class="nm">${e.name}</div><div class="lic">${e.lic}</div>`;
+        <div class="st">${locked ? 'locked' : e.type === 'proto' ? 'original' : 'glb'}</div>
+        <div class="nm">${e.name}</div><div class="lic">${e.lic}</div>
+        ${statsHtml(e.info)}${specHtml(e.info)}
+        ${locked ? `<div class="lock">${LOCK_SVG}
+          <div class="req">${e.info.unlock || `avg KO ≤ R${e.info.koAvg}`}</div>
+          <div class="hint">${ko.n ? `your avg KO: ${koAvg.toFixed(1)}` : 'no KOs yet — go fight'}</div>
+        </div>` : ''}`;
       grid.append(d);
-      const rec = { e, i, el: d, ctx: d.querySelector('canvas').getContext('2d'),
+      const rec = { e, i, el: d, locked, ctx: d.querySelector('canvas').getContext('2d'),
         obj: null, impl: null, ok: false };
-      d.onclick = () => select(rec);
+      d.onclick = () => rec.locked
+        ? (rec.el.classList.add('no'),
+           setTimeout(() => rec.el.classList.remove('no'), 420),
+           note.textContent = `${e.name} is locked — ${e.info.unlock || `drop your avg KO to round ${e.info.koAvg}`} first`)
+        : select(rec);
       return rec;
     });
 
@@ -217,15 +304,17 @@
     let picked = null;
     try { picked = localStorage.getItem('boxing:npc'); } catch {}
     function select(rec) {
-      if (!rec.ok || rec.el.classList.contains('dead')) return;
+      if (!rec.ok || rec.locked || rec.el.classList.contains('dead')) return;
       picked = rec.e.id;
       try { localStorage.setItem('boxing:npc', picked); } catch {}
       for (const c of cells) c.el.classList.toggle('sel', c === rec);
       pickEl.textContent = rec.e.name.toUpperCase();
       enterEl.classList.remove('dim');
+      enterEl.href = './boxing.html' + practice;
       note.textContent = `${rec.e.name} wraps their hands — see you in the ring`;
     }
-    const pre = cells.find(c => c.e.id === picked && c.ok) || cells.find(c => c.ok);
+    const pre = cells.find(c => c.e.id === picked && c.ok && !c.locked)
+      || cells.find(c => c.ok && !c.locked);
     if (pre) select(pre);
 
     /* ---------- thumbnail loop ---------- */
