@@ -6,3 +6,4 @@ live-qr.png
 .env.*
 *.log
 
+.*.mjs
